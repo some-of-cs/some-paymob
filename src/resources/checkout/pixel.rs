@@ -4,7 +4,7 @@
 //! Provides [`PixelConfig`], [`PixelConfigBuilder`], [`PixelPaymentMethod`],
 //! [`ApplePaySettings`], and [`GooglePaySettings`] for generating typed JSON
 //! configurations for Paymob's embedded Pixel JS checkout component using only
-//! [`PublicKey`](crate::core::credentials::PublicKey) (`pk_*`).
+//! [`PublicKey`] (`pk_*`).
 
 use std::fmt;
 

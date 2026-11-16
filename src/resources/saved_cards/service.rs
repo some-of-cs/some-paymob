@@ -370,7 +370,7 @@ pub struct HeadlessPayResponse {
 }
 
 impl HeadlessPayResponse {
-    /// Parses a [`HeadlessPayResponse`](self::HeadlessPayResponse) from a raw JSON [`Value`].
+    /// Parses a [`HeadlessPayResponse`] from a raw JSON [`Value`].
     ///
     /// # Errors
     ///

@@ -1,0 +1,37 @@
+name: Rust CI (Module 7)
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "patch/**"
+  pull_request:
+    branches:
+      - main
+      - "feat/**"
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 1
+
+jobs:
+  check-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --check
+      - name: Check --no-default-features
+        run: cargo check --no-default-features
+      - name: Check --all-features
+        run: cargo check --all-features
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Unit & Integration Tests
+        run: cargo test --all-features
+      - name: Doc Tests
+        run: cargo test --doc --all-features

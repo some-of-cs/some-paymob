@@ -1,0 +1,25 @@
+[package]
+name = "some-paymob"
+version = "0.7.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+description = "Fail-closed, constant-time Paymob Rust SDK and cryptographic webhook verification engine."
+repository = "https://github.com/some-of-cs/some-paymob"
+
+[features]
+default = ["webhooks"]
+core = []
+webhooks = ["dep:hmac", "dep:sha2", "dep:subtle", "dep:hex"]
+webhook-engine = ["webhooks"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+secrecy = { version = "0.10", features = ["serde"] }
+zeroize = { version = "1.8", features = ["derive"] }
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
+subtle = { version = "2.6", optional = true }
+hex = { version = "0.4", optional = true }

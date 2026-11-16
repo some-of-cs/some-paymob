@@ -640,7 +640,9 @@ fn trim_opt(value: String) -> Option<String> {
     }
 }
 
-fn validate_required_amount(amount: Option<MinorUnitAmount>) -> Result<MinorUnitAmount, PaymobError> {
+fn validate_required_amount(
+    amount: Option<MinorUnitAmount>,
+) -> Result<MinorUnitAmount, PaymobError> {
     let amt = amount.ok_or_else(|| PaymobError::ValidationError {
         field: "amount",
         reason: "amount is required".to_owned(),
@@ -750,19 +752,23 @@ fn validate_card_tokens(tokens: Option<&[String]>) -> Result<(), PaymobError> {
 }
 
 fn has_any_update_field(p: &UpdateIntentionParams) -> bool {
-    p.amount.is_some()
-        || p.currency.is_some()
-        || p.payment_methods.is_some()
-        || p.items.is_some()
-        || p.billing_data.is_some()
-        || p.customer.is_some()
-        || p.extras.is_some()
-        || p.special_reference.is_some()
-        || p.expiration.is_some()
-        || p.notification_url.is_some()
-        || p.redirection_url.is_some()
-        || p.pre_selected_plan.is_some()
-        || p.card_tokens.is_some()
+    [
+        p.amount.is_some(),
+        p.currency.is_some(),
+        p.payment_methods.is_some(),
+        p.items.is_some(),
+        p.billing_data.is_some(),
+        p.customer.is_some(),
+        p.extras.is_some(),
+        p.special_reference.is_some(),
+        p.expiration.is_some(),
+        p.notification_url.is_some(),
+        p.redirection_url.is_some(),
+        p.pre_selected_plan.is_some(),
+        p.card_tokens.is_some(),
+    ]
+    .into_iter()
+    .any(|present| present)
 }
 
 fn validate_update_params(p: &UpdateIntentionParams) -> Result<(), PaymobError> {

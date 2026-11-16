@@ -106,6 +106,33 @@ struct CustomUrlInputs<'a> {
     payouts_staging_base_url: &'a str,
 }
 
+/// Identifies a [`PaymobRegion::Custom`] URL field for validation errors.
+#[derive(Clone, Copy)]
+enum CustomUrlField {
+    AcceptBaseUrl,
+    CheckoutBaseUrl,
+    PayoutsBaseUrl,
+    PayoutsStagingBaseUrl,
+}
+
+impl CustomUrlField {
+    /// Returns the static field name used in [`PaymobError::ValidationError`].
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::AcceptBaseUrl => "accept_base_url",
+            Self::CheckoutBaseUrl => "checkout_base_url",
+            Self::PayoutsBaseUrl => "payouts_base_url",
+            Self::PayoutsStagingBaseUrl => "payouts_staging_base_url",
+        }
+    }
+}
+
+/// Borrowed base URL and endpoint path pair for [`join_base_and_path`].
+struct JoinPathRequest<'a> {
+    base: &'a str,
+    path: &'a str,
+}
+
 impl PaymobRegion {
     /// Resolves and validates the [`RegionalEndpoints`] for this region.
     ///
@@ -259,7 +286,10 @@ impl RegionalEndpoints {
     ///
     /// Returns [`PaymobError::ValidationError`] if `path` is empty or whitespace.
     pub fn accept_url(&self, path: &str) -> Result<String, PaymobError> {
-        join_base_and_path(&self.accept_base_url, path)
+        join_base_and_path(JoinPathRequest {
+            base: &self.accept_base_url,
+            path,
+        })
     }
 
     /// Builds a full Unified Checkout URL for `path` using [`normalize_endpoint_path`].
@@ -268,7 +298,10 @@ impl RegionalEndpoints {
     ///
     /// Returns [`PaymobError::ValidationError`] if `path` is empty or whitespace.
     pub fn checkout_url(&self, path: &str) -> Result<String, PaymobError> {
-        join_base_and_path(&self.checkout_base_url, path)
+        join_base_and_path(JoinPathRequest {
+            base: &self.checkout_base_url,
+            path,
+        })
     }
 
     /// Builds a full Payouts URL (production when `staging == false`, staging when
@@ -290,7 +323,10 @@ impl RegionalEndpoints {
                 reason: "Payouts API is not available for this Paymob region".to_string(),
             });
         };
-        join_base_and_path(base_url, path)
+        join_base_and_path(JoinPathRequest {
+            base: base_url,
+            path,
+        })
     }
 }
 
@@ -334,11 +370,13 @@ pub fn normalize_endpoint_path(path: &str) -> String {
 
 /// Validates and resolves all four base URLs for [`PaymobRegion::Custom`].
 fn resolve_custom_endpoints(inputs: CustomUrlInputs<'_>) -> Result<RegionalEndpoints, PaymobError> {
-    let accept = validate_custom_url("accept_base_url", inputs.accept_base_url)?;
-    let checkout = validate_custom_url("checkout_base_url", inputs.checkout_base_url)?;
-    let payouts = validate_custom_url("payouts_base_url", inputs.payouts_base_url)?;
-    let payouts_staging =
-        validate_custom_url("payouts_staging_base_url", inputs.payouts_staging_base_url)?;
+    let accept = validate_custom_url(CustomUrlField::AcceptBaseUrl, inputs.accept_base_url)?;
+    let checkout = validate_custom_url(CustomUrlField::CheckoutBaseUrl, inputs.checkout_base_url)?;
+    let payouts = validate_custom_url(CustomUrlField::PayoutsBaseUrl, inputs.payouts_base_url)?;
+    let payouts_staging = validate_custom_url(
+        CustomUrlField::PayoutsStagingBaseUrl,
+        inputs.payouts_staging_base_url,
+    )?;
 
     Ok(RegionalEndpoints {
         accept_base_url: accept,
@@ -350,17 +388,18 @@ fn resolve_custom_endpoints(inputs: CustomUrlInputs<'_>) -> Result<RegionalEndpo
 
 /// Validates a single custom URL field for non-emptiness, valid syntax, host
 /// presence, scheme policy, and absence of credentials, queries, or fragments.
-fn validate_custom_url(field: &'static str, raw: &str) -> Result<String, PaymobError> {
+fn validate_custom_url(field: CustomUrlField, raw: &str) -> Result<String, PaymobError> {
+    let field_name = field.as_str();
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must not be empty"),
+            field: field_name,
+            reason: format!("{field_name} must not be empty"),
         });
     }
     let parsed = Url::parse(trimmed).map_err(|err| PaymobError::ValidationError {
-        field,
-        reason: format!("invalid URL for {field}: {err}"),
+        field: field_name,
+        reason: format!("invalid URL for {field_name}: {err}"),
     })?;
     validate_custom_url_scheme(field, &parsed)?;
     validate_custom_url_parts(field, &parsed)?;
@@ -368,11 +407,12 @@ fn validate_custom_url(field: &'static str, raw: &str) -> Result<String, PaymobE
 }
 
 /// Enforces host presence, `https` for remote hosts, and `http` only on loopback/local test hosts.
-fn validate_custom_url_scheme(field: &'static str, parsed: &Url) -> Result<(), PaymobError> {
+fn validate_custom_url_scheme(field: CustomUrlField, parsed: &Url) -> Result<(), PaymobError> {
+    let field_name = field.as_str();
     let Some(host) = parsed.host_str() else {
         return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must include a host"),
+            field: field_name,
+            reason: format!("{field_name} must include a host"),
         });
     };
     if parsed.scheme() == "https" {
@@ -382,23 +422,24 @@ fn validate_custom_url_scheme(field: &'static str, parsed: &Url) -> Result<(), P
         return Ok(());
     }
     Err(PaymobError::ValidationError {
-        field,
-        reason: format!("{field} must use https unless targeting a local/loopback host"),
+        field: field_name,
+        reason: format!("{field_name} must use https unless targeting a local/loopback host"),
     })
 }
 
 /// Rejects embedded credentials (`username`/`password`) and `query`/`fragment` parts.
-fn validate_custom_url_parts(field: &'static str, parsed: &Url) -> Result<(), PaymobError> {
+fn validate_custom_url_parts(field: CustomUrlField, parsed: &Url) -> Result<(), PaymobError> {
+    let field_name = field.as_str();
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must not contain embedded credentials"),
+            field: field_name,
+            reason: format!("{field_name} must not contain embedded credentials"),
         });
     }
     if parsed.query().is_some() || parsed.fragment().is_some() {
         return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must not contain query or fragment components"),
+            field: field_name,
+            reason: format!("{field_name} must not contain query or fragment components"),
         });
     }
     Ok(())
@@ -414,8 +455,8 @@ fn is_loopback_or_local_host(host: &str) -> bool {
 }
 
 /// Joins a base URL with a normalized endpoint path.
-fn join_base_and_path(base: &str, path: &str) -> Result<String, PaymobError> {
-    let trimmed_path = path.trim();
+fn join_base_and_path(req: JoinPathRequest<'_>) -> Result<String, PaymobError> {
+    let trimmed_path = req.path.trim();
     if trimmed_path.is_empty() {
         return Err(PaymobError::ValidationError {
             field: "path",
@@ -423,7 +464,7 @@ fn join_base_and_path(base: &str, path: &str) -> Result<String, PaymobError> {
         });
     }
     let normalized = normalize_endpoint_path(trimmed_path);
-    let base_clean = base.trim_end_matches('/');
+    let base_clean = req.base.trim_end_matches('/');
     Ok(format!("{base_clean}{normalized}"))
 }
 

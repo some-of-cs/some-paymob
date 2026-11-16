@@ -365,8 +365,14 @@ mod tests {
             "type": "TOKEN",
             "obj": { "id": 15978654, "token": "tok_test" }
         });
-        assert_eq!(detect_webhook_kind(&sub_val), Some(DetectedWebhookKind::Subscription));
-        assert_eq!(detect_webhook_kind(&tok_val), Some(DetectedWebhookKind::CardToken));
+        assert_eq!(
+            detect_webhook_kind(&sub_val),
+            Some(DetectedWebhookKind::Subscription)
+        );
+        assert_eq!(
+            detect_webhook_kind(&tok_val),
+            Some(DetectedWebhookKind::CardToken)
+        );
     }
 
     #[test]
@@ -392,7 +398,10 @@ mod tests {
     fn detects_payout_topup_and_disbursement() {
         let topup = serde_json::json!({ "topup_id": 42, "status": "Approved" });
         let disb = serde_json::json!({ "transaction_id": "tx_99", "issuer": "bank_wallet" });
-        assert_eq!(detect_webhook_kind(&topup), Some(DetectedWebhookKind::PayoutTopup));
+        assert_eq!(
+            detect_webhook_kind(&topup),
+            Some(DetectedWebhookKind::PayoutTopup)
+        );
         assert_eq!(
             detect_webhook_kind(&disb),
             Some(DetectedWebhookKind::PayoutDisbursement)
@@ -464,7 +473,9 @@ mod tests {
         let engine = PaymobWebhookEngine::new(SAMPLE_SECRET).expect("engine");
         let disb_json = "{\"transaction_id\":\"tx_7\",\"issuer\":\"bank_card\",\
             \"amount_cents\":900,\"currency\":\"EGP\",\"status\":\"ok\"}";
-        let disb_evt = engine.construct_event(disb_json, None).expect("disb dispatch");
+        let disb_evt = engine
+            .construct_event(disb_json, None)
+            .expect("disb dispatch");
         assert!(disb_evt.is_payout_disbursement());
         assert_eq!(disb_evt.event_type(), "payout_disbursement");
         assert!(disb_evt.as_payout_disbursement().is_some());

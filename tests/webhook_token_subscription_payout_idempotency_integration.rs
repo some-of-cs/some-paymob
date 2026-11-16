@@ -27,8 +27,7 @@ const TOKEN_VECTOR_JSON: &str = r#"{
     }
 }"#;
 
-const TOKEN_VECTOR_HMAC: &str =
-    "38ac96769330ae1b446ba94220b4a0fbf4a536ff407710d0637b32efc1c17cc1\
+const TOKEN_VECTOR_HMAC: &str = "38ac96769330ae1b446ba94220b4a0fbf4a536ff407710d0637b32efc1c17cc1\
      7dde92a831467724a16e09ea7b7054806275d78ce726ba243cc2fea25f30be0d";
 
 const TX_VECTOR_JSON: &str = r#"{
@@ -56,8 +55,7 @@ const TX_VECTOR_JSON: &str = r#"{
     }
 }"#;
 
-const TX_VECTOR_HMAC: &str =
-    "28f19ec85986d4534f77201b00bf750948334753847f437b538cc699f3de447c\
+const TX_VECTOR_HMAC: &str = "28f19ec85986d4534f77201b00bf750948334753847f437b538cc699f3de447c\
      d0d62a5f521c7b20069bd255f48e8d891f0033167ad35b434d532b61e85a3da7";
 
 const REDIRECT_316004_HMAC: &str =
@@ -104,8 +102,8 @@ fn construct_event_dispatches_protocols_a_c_d_and_e() -> WebhookResult<()> {
     let engine = PaymobWebhookEngine::new(TEST_SECRET)?.with_payouts_secret(PAYOUT_SECRET)?;
 
     let tx_evt = engine.construct_event(TX_VECTOR_JSON, Some(TX_VECTOR_HMAC))?;
-    let tok_evt = engine
-        .construct_event_from_slice(TOKEN_VECTOR_JSON.as_bytes(), Some(TOKEN_VECTOR_HMAC))?;
+    let tok_evt =
+        engine.construct_event_from_slice(TOKEN_VECTOR_JSON.as_bytes(), Some(TOKEN_VECTOR_HMAC))?;
 
     let sub_sig = sign_hex(TEST_SECRET, "suspendedfor1264");
     let sub_body = format!(
@@ -144,9 +142,18 @@ fn idempotency_tuples_work_across_all_six_webhook_event_variants() -> WebhookRes
         \"currency\":\"EGP\",\"status\":\"Approved\"}";
     let top_evt = engine.construct_event(top_body, None)?;
 
-    assert_eq!(tx_evt.idempotency_tuple(), ("192036465".into(), "217503754".into()));
-    assert_eq!(redir_evt.idempotency_tuple(), ("316004".into(), "378804".into()));
-    assert_eq!(tok_evt.idempotency_tuple(), ("15978654".into(), "593881581".into()));
+    assert_eq!(
+        tx_evt.idempotency_tuple(),
+        ("192036465".into(), "217503754".into())
+    );
+    assert_eq!(
+        redir_evt.idempotency_tuple(),
+        ("316004".into(), "378804".into())
+    );
+    assert_eq!(
+        tok_evt.idempotency_tuple(),
+        ("15978654".into(), "593881581".into())
+    );
     assert_eq!(sub_evt.idempotency_tuple(), ("req-77".into(), "77".into()));
     assert_eq!(disb_evt.idempotency_tuple(), ("d_9".into(), "d_9".into()));
     assert_eq!(top_evt.idempotency_tuple(), ("t_9".into(), "t_9".into()));

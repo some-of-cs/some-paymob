@@ -144,13 +144,23 @@ pub trait WebhookIdempotencyStore {
     }
 }
 
-#[derive(Default)]
 struct DeduplicatorState {
     entries: HashMap<DedupKey, Instant>,
     order: VecDeque<(DedupKey, Instant)>,
+    max_capacity: usize,
+    ttl: Option<Duration>,
 }
 
 impl DeduplicatorState {
+    fn new(max_capacity: usize, ttl: Option<Duration>) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            max_capacity: max_capacity.max(1),
+            ttl,
+        }
+    }
+
     fn is_front_expired(&self, now: Instant, ttl_dur: Duration) -> bool {
         self.order
             .front()
@@ -165,31 +175,26 @@ impl DeduplicatorState {
         }
     }
 
-    fn evict_expired(&mut self, now: Instant, ttl: Option<Duration>) {
-        let Some(ttl_dur) = ttl else { return };
+    fn evict_expired(&mut self, now: Instant) {
+        let Some(ttl_dur) = self.ttl else { return };
         while self.is_front_expired(now, ttl_dur) {
             self.pop_front_entry();
         }
     }
 
-    fn evict_oldest_while_full(&mut self, max_capacity: usize) {
-        while self.entries.len() >= max_capacity && !self.order.is_empty() {
+    fn evict_oldest_while_full(&mut self) {
+        while self.entries.len() >= self.max_capacity && !self.order.is_empty() {
             self.pop_front_entry();
         }
     }
 
-    fn check_and_insert(
-        &mut self,
-        tuple: DedupKey,
-        now: Instant,
-        max_capacity: usize,
-        ttl: Option<Duration>,
-    ) -> bool {
-        self.evict_expired(now, ttl);
+    fn check_and_insert(&mut self, tuple: DedupKey) -> bool {
+        let now = Instant::now();
+        self.evict_expired(now);
         if self.entries.contains_key(&tuple) {
             return false;
         }
-        self.evict_oldest_while_full(max_capacity);
+        self.evict_oldest_while_full();
         self.entries.insert(tuple.clone(), now);
         self.order.push_back((tuple, now));
         true
@@ -237,7 +242,7 @@ impl InMemoryWebhookDeduplicator {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            state: Mutex::new(DeduplicatorState::default()),
+            state: Mutex::new(DeduplicatorState::new(DEFAULT_DEDUPLICATOR_CAPACITY, None)),
             max_capacity: DEFAULT_DEDUPLICATOR_CAPACITY,
             ttl: None,
         }
@@ -247,9 +252,10 @@ impl InMemoryWebhookDeduplicator {
     /// (clamped to at least `1`).
     #[must_use]
     pub fn with_max_capacity(max_capacity: usize) -> Self {
+        let clamped = max_capacity.max(1);
         Self {
-            state: Mutex::new(DeduplicatorState::default()),
-            max_capacity: max_capacity.max(1),
+            state: Mutex::new(DeduplicatorState::new(clamped, None)),
+            max_capacity: clamped,
             ttl: None,
         }
     }
@@ -259,7 +265,10 @@ impl InMemoryWebhookDeduplicator {
     #[must_use]
     pub fn with_ttl(ttl: Duration) -> Self {
         Self {
-            state: Mutex::new(DeduplicatorState::default()),
+            state: Mutex::new(DeduplicatorState::new(
+                DEFAULT_DEDUPLICATOR_CAPACITY,
+                Some(ttl),
+            )),
             max_capacity: DEFAULT_DEDUPLICATOR_CAPACITY,
             ttl: Some(ttl),
         }
@@ -269,9 +278,10 @@ impl InMemoryWebhookDeduplicator {
     /// (clamped to at least `1`) and an entry time-to-live `ttl`.
     #[must_use]
     pub fn with_capacity_and_ttl(max_capacity: usize, ttl: Duration) -> Self {
+        let clamped = max_capacity.max(1);
         Self {
-            state: Mutex::new(DeduplicatorState::default()),
-            max_capacity: max_capacity.max(1),
+            state: Mutex::new(DeduplicatorState::new(clamped, Some(ttl))),
+            max_capacity: clamped,
             ttl: Some(ttl),
         }
     }
@@ -300,9 +310,8 @@ impl InMemoryWebhookDeduplicator {
     /// is a duplicate delivery.
     pub fn check_and_mark(&self, guard: &impl IdempotentWebhookGuard) -> bool {
         let tuple = guard.idempotency_tuple();
-        let now = Instant::now();
         let mut state = self.lock_state();
-        state.check_and_insert(tuple, now, self.max_capacity, self.ttl)
+        state.check_and_insert(tuple)
     }
 
     /// Returns `true` if `guard`'s idempotency tuple is currently active in the deduplicator.
@@ -311,7 +320,7 @@ impl InMemoryWebhookDeduplicator {
         let tuple = guard.idempotency_tuple();
         let now = Instant::now();
         let mut state = self.lock_state();
-        state.evict_expired(now, self.ttl);
+        state.evict_expired(now);
         state.entries.contains_key(&tuple)
     }
 
@@ -367,11 +376,7 @@ impl InMemoryWebhookDeduplicator {
     /// # Errors
     ///
     /// Returns any error `E` produced by `handler` after releasing the idempotency claim.
-    pub fn process_with_rollback<G, T, E, F>(
-        &self,
-        guard: &G,
-        handler: F,
-    ) -> Result<Option<T>, E>
+    pub fn process_with_rollback<G, T, E, F>(&self, guard: &G, handler: F) -> Result<Option<T>, E>
     where
         G: IdempotentWebhookGuard,
         F: FnOnce() -> Result<T, E>,
@@ -393,7 +398,7 @@ impl InMemoryWebhookDeduplicator {
     pub fn len(&self) -> usize {
         let now = Instant::now();
         let mut state = self.lock_state();
-        state.evict_expired(now, self.ttl);
+        state.evict_expired(now);
         state.entries.len()
     }
 
@@ -534,7 +539,8 @@ mod tests {
         assert!(dedup.check_and_mark(&g2));
         assert!(dedup.check_and_mark(&g3));
         assert_eq!(dedup.len(), 2);
-        assert!(!dedup.contains(&g1) && dedup.contains(&g2) && dedup.contains(&g3));
+        assert!(!dedup.contains(&g1));
+        assert!(dedup.contains(&g2) && dedup.contains(&g3));
     }
 
     #[test]

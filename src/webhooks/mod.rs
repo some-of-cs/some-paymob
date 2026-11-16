@@ -42,18 +42,18 @@ pub use protocol_a_post::build_protocol_a_canonical_string;
 pub use protocol_b_get::build_protocol_b_canonical_string;
 /// Re-export of the Protocol B query parameter trait and verified redirect parameters struct.
 pub use protocol_b_get::{QueryParams, TransactionRedirectParams};
-/// Re-export of the Protocol C 8-key static HMAC key table.
-pub use protocol_c_token::TOKEN_HMAC_KEYS;
 /// Re-export of the Protocol C 8-key canonical string builder.
 pub use protocol_c_token::build_protocol_c_canonical_string;
+/// Re-export of the Protocol C 8-key static HMAC key table.
+pub use protocol_c_token::TOKEN_HMAC_KEYS;
 /// Re-export of Protocol C card token webhook models and type aliases.
 pub use protocol_c_token::{
     CardTokenObj, CardTokenObject, CardTokenWebhook, CardTokenWebhookEvent,
 };
-/// Re-export of the Protocol D 12-trigger static lookup table.
-pub use protocol_d_subscription::KNOWN_SUBSCRIPTION_TRIGGERS;
 /// Re-export of the Protocol D canonical subscription message builder.
 pub use protocol_d_subscription::canonical_subscription_message;
+/// Re-export of the Protocol D 12-trigger static lookup table.
+pub use protocol_d_subscription::KNOWN_SUBSCRIPTION_TRIGGERS;
 /// Re-export of Protocol D subscription webhook models and trigger enum.
 pub use protocol_d_subscription::{
     SubscriptionClientInfo, SubscriptionData, SubscriptionTriggerType, SubscriptionWebhookEvent,

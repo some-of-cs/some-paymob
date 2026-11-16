@@ -292,13 +292,19 @@ impl TransactionWebhookObj {
     /// Returns `true` if the transaction succeeded, is not pending, and has no error flag.
     #[must_use]
     pub const fn is_approved(&self) -> bool {
-        self.success && !self.pending && !self.error_occured
+        if self.pending || self.error_occured {
+            return false;
+        }
+        self.success
     }
 
     /// Returns `true` if the transaction is not pending and either failed or recorded an error.
     #[must_use]
     pub const fn is_declined_or_failed(&self) -> bool {
-        !self.pending && (!self.success || self.error_occured)
+        if self.pending {
+            return false;
+        }
+        !self.success || self.error_occured
     }
 
     /// Returns `true` if the transaction is currently pending settlement.
@@ -328,7 +334,10 @@ impl TransactionWebhookObj {
     /// Returns `true` if the transaction is an uncaptured authorization hold.
     #[must_use]
     pub const fn is_auth_only(&self) -> bool {
-        self.is_auth && !self.is_captured && !self.is_capture
+        if self.is_captured() {
+            return false;
+        }
+        self.is_auth
     }
 
     /// Returns `true` if 3-D Secure authentication was performed.
@@ -341,7 +350,10 @@ impl TransactionWebhookObj {
     /// voids, uncaptured auth holds, partial captures, and refunds.
     #[must_use]
     pub fn net_settled_cents(&self) -> u64 {
-        if !self.is_approved() || self.is_voided || self.is_auth_only() {
+        if !self.is_approved() || self.is_voided {
+            return 0;
+        }
+        if self.is_auth_only() {
             return 0;
         }
         let gross = self
@@ -361,8 +373,7 @@ impl TransactionWebhookObj {
 
 impl fmt::Debug for TransactionWebhookObj {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let claims_redacted: Option<&str> =
-            self.payment_key_claims.as_ref().map(|_| "[REDACTED]");
+        let claims_redacted: Option<&str> = self.payment_key_claims.as_ref().map(|_| "[REDACTED]");
         f.debug_struct("TransactionWebhookObj")
             .field("amount_cents", &self.amount_cents)
             .field("created_at", &self.created_at)
@@ -539,8 +550,14 @@ mod tests {
             serde_json::from_value(val.clone()).expect("null amounts");
         assert_optional_amounts_absent(&null_parsed);
 
-        val["obj"].as_object_mut().unwrap().remove("refunded_amount_cents");
-        val["obj"].as_object_mut().unwrap().remove("captured_amount");
+        val["obj"]
+            .as_object_mut()
+            .unwrap()
+            .remove("refunded_amount_cents");
+        val["obj"]
+            .as_object_mut()
+            .unwrap()
+            .remove("captured_amount");
         let omitted_parsed: TransactionProcessedEvent =
             serde_json::from_value(val).expect("omitted amounts");
         assert_optional_amounts_absent(&omitted_parsed);
@@ -568,7 +585,10 @@ mod tests {
         obj.id = u64::MAX;
         let raw = serde_json::to_string(&obj).expect("serialize");
         let parsed: TransactionObject = serde_json::from_str(&raw).expect("deserialize");
-        assert_eq!((parsed.amount_cents(), parsed.transaction_id()), (0, u64::MAX));
+        assert_eq!(
+            (parsed.amount_cents(), parsed.transaction_id()),
+            (0, u64::MAX)
+        );
 
         let mut bad_val = serde_json::to_value(&obj).expect("to value");
         bad_val["order"] = serde_json::Value::Null;
@@ -581,8 +601,12 @@ mod tests {
             event_type: "TRANSACTION".to_owned(),
             obj: sample_transaction_obj(),
         };
-        assert_eq!((event.currency(), event.net_settled_cents()), ("EGP", 15000));
-        assert!(event.is_approved() && event.is_3ds_authenticated() && !event.is_pending());
+        assert_eq!(
+            (event.currency(), event.net_settled_cents()),
+            ("EGP", 15000)
+        );
+        assert!(event.is_approved() && event.is_3ds_authenticated());
+        assert!(!event.is_pending());
 
         event.obj.refunded_amount_cents = Some(5000);
         assert_eq!(event.net_settled_cents(), 10000);
@@ -609,7 +633,8 @@ mod tests {
         event.obj.is_voided = true;
         event.obj.is_refunded = true;
         event.obj.success = false;
-        assert!(event.is_voided() && event.is_refunded() && event.is_declined_or_failed());
+        assert!(event.is_voided() && event.is_refunded());
+        assert!(event.is_declined_or_failed());
         assert_eq!(event.net_settled_cents(), 0);
     }
 }

@@ -345,9 +345,8 @@ pub(crate) fn parse_webhook_json_slice<T: serde::de::DeserializeOwned>(
 }
 
 pub(crate) fn decode_webhook_utf8(raw_bytes: &[u8]) -> WebhookResult<&str> {
-    std::str::from_utf8(raw_bytes).map_err(|_| {
-        WebhookError::InvalidJsonPayload("webhook body is not valid UTF-8".to_owned())
-    })
+    std::str::from_utf8(raw_bytes)
+        .map_err(|_| WebhookError::InvalidJsonPayload("webhook body is not valid UTF-8".to_owned()))
 }
 
 #[cfg(test)]
@@ -408,25 +407,37 @@ mod tests {
     #[test]
     fn verify_concatenated_str_positive_lowercase_uppercase_and_padded() {
         let engine = PaymobWebhookEngine::new(VEC_1_SECRET).expect("valid secret");
-        assert_eq!(engine.verify_concatenated_str(VEC_1_PAYLOAD, VEC_1_SIG), Ok(()));
+        assert_eq!(
+            engine.verify_concatenated_str(VEC_1_PAYLOAD, VEC_1_SIG),
+            Ok(())
+        );
         assert_eq!(
             engine.verify_concatenated_str(VEC_1_PAYLOAD, &VEC_1_SIG.to_ascii_uppercase()),
             Ok(())
         );
         let padded = format!("  \t{VEC_1_SIG}\n ");
-        assert_eq!(engine.verify_concatenated_str(VEC_1_PAYLOAD, &padded), Ok(()));
+        assert_eq!(
+            engine.verify_concatenated_str(VEC_1_PAYLOAD, &padded),
+            Ok(())
+        );
     }
 
     #[test]
     fn verify_concatenated_str_boundary_empty_and_multibyte_utf8() {
         let engine = PaymobWebhookEngine::new(VEC_1_SECRET).expect("valid secret");
-        assert_eq!(engine.verify_concatenated_str("", EMPTY_PAYLOAD_SIG), Ok(()));
+        assert_eq!(
+            engine.verify_concatenated_str("", EMPTY_PAYLOAD_SIG),
+            Ok(())
+        );
 
         let rocket_payload = "🚀".repeat(32);
         let mut mac = HmacSha512::new_from_slice(VEC_1_SECRET.as_bytes()).expect("valid key");
         mac.update(rocket_payload.as_bytes());
         let rocket_sig = hex::encode(mac.finalize().into_bytes());
-        assert_eq!(engine.verify_concatenated_str(&rocket_payload, &rocket_sig), Ok(()));
+        assert_eq!(
+            engine.verify_concatenated_str(&rocket_payload, &rocket_sig),
+            Ok(())
+        );
     }
 
     #[test]
@@ -488,10 +499,28 @@ mod tests {
         };
         let cfg = WebhookError::InvalidSecretKeyLength;
 
-        assert_eq!((sig.is_signature_error(), sig.suggested_http_status_code()), (true, 401));
-        assert_eq!((bad.is_malformed_payload(), bad.suggested_http_status_code()), (true, 400));
-        assert_eq!((dup.is_replay_or_duplicate(), dup.suggested_http_status_code()), (true, 409));
-        assert_eq!((cfg.is_configuration_error(), cfg.suggested_http_status_code()), (true, 500));
+        assert_eq!(
+            (sig.is_signature_error(), sig.suggested_http_status_code()),
+            (true, 401)
+        );
+        assert_eq!(
+            (bad.is_malformed_payload(), bad.suggested_http_status_code()),
+            (true, 400)
+        );
+        assert_eq!(
+            (
+                dup.is_replay_or_duplicate(),
+                dup.suggested_http_status_code()
+            ),
+            (true, 409)
+        );
+        assert_eq!(
+            (
+                cfg.is_configuration_error(),
+                cfg.suggested_http_status_code()
+            ),
+            (true, 500)
+        );
         assert!(cfg.is_retryable() && !sig.is_retryable());
     }
 

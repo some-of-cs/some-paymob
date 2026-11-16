@@ -540,7 +540,10 @@ mod tests {
         for (wire, expected_variant) in KNOWN_SUBSCRIPTION_TRIGGERS {
             let parsed = SubscriptionTriggerType::from_wire(wire);
             assert_eq!((&parsed, parsed.is_known()), (expected_variant, true));
-            assert_eq!((parsed.as_wire(), parsed.to_string().as_str()), (*wire, *wire));
+            assert_eq!(
+                (parsed.as_wire(), parsed.to_string().as_str()),
+                (*wire, *wire)
+            );
 
             let serialized = serde_json::to_string(&parsed).expect("serialize trigger");
             assert_eq!(serialized, format!("\"{wire}\""));
@@ -563,7 +566,9 @@ mod tests {
             "{{\"paymob_request_id\":\"req-9\",\"subscription_data\":{{\"id\":1264}},\
              \"trigger_type\":\"custom_future_trigger\",\"hmac\":\"{sig}\"}}"
         );
-        let verified = engine.verify_subscription(&body).expect("unknown trigger must verify");
+        let verified = engine
+            .verify_subscription(&body)
+            .expect("unknown trigger must verify");
         assert_eq!(verified.trigger_type, trigger);
     }
 
@@ -576,7 +581,10 @@ mod tests {
         assert_eq!(event.subscription_data.id, 1264);
         assert_eq!(event.subscription_data.plan_id, Some(1186));
         assert_eq!(event.subscription_data.amount_cents, Some(330));
-        assert_eq!(event.paymob_request_id, "df9e4ecf-12e0-4925-b258-65423f32bc98");
+        assert_eq!(
+            event.paymob_request_id,
+            "df9e4ecf-12e0-4925-b258-65423f32bc98"
+        );
         assert_eq!(event.canonical_message(), "suspendedfor1264");
     }
 
@@ -635,7 +643,9 @@ mod tests {
         );
         assert_eq!(
             engine.verify_subscription(blank_req_id),
-            Err(WebhookError::MissingRequiredField("paymob_request_id".into()))
+            Err(WebhookError::MissingRequiredField(
+                "paymob_request_id".into()
+            ))
         );
     }
 

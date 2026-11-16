@@ -307,7 +307,10 @@ mod tests {
         }"#;
         let approved: TopupCallback =
             serde_json::from_str(approved_json).expect("valid approved topup");
-        assert_eq!((approved.status, approved.amount_cents), (TopupStatus::Approved, 500_000));
+        assert_eq!(
+            (approved.status, approved.amount_cents),
+            (TopupStatus::Approved, 500_000)
+        );
 
         let rejected_json = r#"{
             "topup_id": "top_2",
@@ -317,7 +320,10 @@ mod tests {
         }"#;
         let rejected: TopupCallback =
             serde_json::from_str(rejected_json).expect("valid rejected topup");
-        assert_eq!((rejected.status, rejected.amount_cents), (TopupStatus::Rejected, 0));
+        assert_eq!(
+            (rejected.status, rejected.amount_cents),
+            (TopupStatus::Rejected, 0)
+        );
     }
 
     #[test]

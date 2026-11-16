@@ -152,7 +152,10 @@ impl TransactionRedirectParams {
     /// Returns `true` if `success == "true"`, `pending == "false"`, and `error_occured == "false"`.
     #[must_use]
     pub fn is_approved(&self) -> bool {
-        self.success == "true" && self.pending == "false" && self.error_occured == "false"
+        if self.pending != "false" || self.error_occured != "false" {
+            return false;
+        }
+        self.success == "true"
     }
 
     /// Returns `true` if `pending == "true"`.
@@ -394,6 +397,10 @@ fn resolve_order_id_param<P: QueryParams + ?Sized>(params: &P) -> WebhookResult<
     }
 }
 
+fn is_primary_redirect_id_key(key: &str) -> bool {
+    key == "id" || key == "order_id"
+}
+
 fn resolve_redirect_param<'a, P: QueryParams + ?Sized>(
     params: &'a P,
     key: &str,
@@ -405,7 +412,7 @@ fn resolve_redirect_param<'a, P: QueryParams + ?Sized>(
             .get_param(key)
             .ok_or_else(|| WebhookError::MissingRequiredField(key.to_string()))?
     };
-    if (key == "id" || key == "order_id") && value.trim().is_empty() {
+    if is_primary_redirect_id_key(key) && value.trim().is_empty() {
         return Err(WebhookError::MissingRequiredField(key.to_string()));
     }
     Ok(value)
@@ -448,26 +455,32 @@ fn decode_hex_pair(hi: u8, lo: u8) -> WebhookResult<u8> {
     Ok(out[0])
 }
 
+fn decode_percent_escape(bytes: &[u8], idx: usize) -> WebhookResult<(u8, usize)> {
+    if idx + 2 >= bytes.len() {
+        return Err(WebhookError::InvalidJsonPayload(
+            "truncated percent-encoding in query".into(),
+        ));
+    }
+    let decoded = decode_hex_pair(bytes[idx + 1], bytes[idx + 2])?;
+    Ok((decoded, idx + 3))
+}
+
+fn decode_next_query_byte(bytes: &[u8], idx: usize) -> WebhookResult<(u8, usize)> {
+    match bytes[idx] {
+        b'+' => Ok((b' ', idx + 1)),
+        b'%' => decode_percent_escape(bytes, idx),
+        byte => Ok((byte, idx + 1)),
+    }
+}
+
 fn percent_decode_str(input: &str) -> WebhookResult<String> {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut idx = 0;
     while idx < bytes.len() {
-        if bytes[idx] == b'+' {
-            out.push(b' ');
-            idx += 1;
-        } else if bytes[idx] == b'%' {
-            if idx + 2 >= bytes.len() {
-                return Err(WebhookError::InvalidJsonPayload(
-                    "truncated percent-encoding in query".into(),
-                ));
-            }
-            out.push(decode_hex_pair(bytes[idx + 1], bytes[idx + 2])?);
-            idx += 3;
-        } else {
-            out.push(bytes[idx]);
-            idx += 1;
-        }
+        let (decoded, next_idx) = decode_next_query_byte(bytes, idx)?;
+        out.push(decoded);
+        idx = next_idx;
     }
     String::from_utf8(out)
         .map_err(|_| WebhookError::InvalidJsonPayload("decoded query is not valid UTF-8".into()))
@@ -508,7 +521,11 @@ mod tests {
          826ef93f1d502f8d354d775ecb5bd519a02ee730028137b07e66fed2bb6c1812";
 
     fn vector_316004_btreemap(use_order_id_key: bool) -> BTreeMap<String, String> {
-        let order_key = if use_order_id_key { "order_id" } else { "order" };
+        let order_key = if use_order_id_key {
+            "order_id"
+        } else {
+            "order"
+        };
         [
             ("amount_cents", "50000"),
             ("created_at", "2024-06-25T15:16:25.910710+04:00"),
@@ -547,7 +564,10 @@ mod tests {
 
         assert_eq!(verified.id, "316004");
         assert_eq!(verified.order_id, "378804");
-        assert_eq!((verified.amount_cents.as_str(), verified.currency.as_str()), ("50000", "EGP"));
+        assert_eq!(
+            (verified.amount_cents.as_str(), verified.currency.as_str()),
+            ("50000", "EGP")
+        );
         assert_eq!(verified.source_data_pan, "2346");
         assert_eq!(verified.source_data_sub_type, "MasterCard");
         assert!(verified.is_approved() && verified.is_3ds_authenticated());
@@ -561,7 +581,9 @@ mod tests {
     fn vector_316004_order_id_hashmap_and_slice_containers_succeed() {
         let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
         let params: HashMap<String, String> = vector_316004_btreemap(true).into_iter().collect();
-        let verified = engine.verify_transaction_get(&params).expect("hashmap verify");
+        let verified = engine
+            .verify_transaction_get(&params)
+            .expect("hashmap verify");
         assert_eq!(verified.transaction_id_u64(), Ok(316004));
         assert_eq!(verified.order_id_u64(), Ok(378804));
         assert_eq!(verified.amount_cents_u64(), Ok(50000));
@@ -661,7 +683,9 @@ mod tests {
 
         let dup_query = format!("{raw_query}&amount_cents=100");
         assert!(matches!(
-            engine.verify_transaction_get_query_str(&dup_query).unwrap_err(),
+            engine
+                .verify_transaction_get_query_str(&dup_query)
+                .unwrap_err(),
             WebhookError::InvalidJsonPayload(_)
         ));
     }

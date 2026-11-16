@@ -341,7 +341,10 @@ mod tests {
                 SAMPLE_TEST_VECTOR_15978654_HMAC,
             )
             .expect("valid HMAC over test vector 15978654 must succeed");
-        assert_eq!((event.event_type.as_str(), event.obj.id), ("TOKEN", 15978654));
+        assert_eq!(
+            (event.event_type.as_str(), event.obj.id),
+            ("TOKEN", 15978654)
+        );
         assert_eq!(event.obj.merchant_id, 302852);
         assert_eq!(event.obj.token, "tok_test_15978654_abcdef");
 

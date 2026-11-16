@@ -139,6 +139,7 @@ impl PaymobClient {
             config,
             endpoints,
             http,
+            auth: AuthManager::new(),
         };
         Ok(Self {
             inner: Arc::new(core),

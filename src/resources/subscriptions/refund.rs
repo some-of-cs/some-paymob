@@ -8,7 +8,7 @@
 //! (`POST /api/acceptance/void_refund/refund`).
 
 use reqwest::header::{AUTHORIZATION, HeaderMap};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
 use crate::core::auth::{

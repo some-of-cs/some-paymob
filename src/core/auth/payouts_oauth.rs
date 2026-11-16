@@ -22,6 +22,10 @@ use url::Url;
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::core::auth::cache::{CachedToken, TokenCache};
+use crate::core::auth::{
+    build_default_auth_client, format_sanitized_transport_error, format_sensitive_auth_header,
+    join_http_url,
+};
 
 /// Relative endpoint path for Paymob Payouts OAuth 2.0 token issuance and renewal.
 pub const PAYOUTS_OAUTH_TOKEN_PATH: &str = "/api/secure/o/token/";
@@ -63,7 +67,13 @@ pub enum PayoutsOAuthError {
 
     /// Underlying HTTP transport or JSON deserialization failure.
     #[error("HTTP transport error during Payouts OAuth2 operation: {0}")]
-    Transport(#[from] reqwest::Error),
+    Transport(String),
+}
+
+impl From<reqwest::Error> for PayoutsOAuthError {
+    fn from(err: reqwest::Error) -> Self {
+        Self::Transport(format_sanitized_transport_error(&err))
+    }
 }
 
 /// Credentials required for Regime 3 Paymob Payouts OAuth 2.0 (`grant_type=password`).
@@ -130,9 +140,15 @@ impl fmt::Debug for PayoutsCredentials {
 
 #[derive(Deserialize)]
 struct OAuthTokenResponse {
-    access_token: String,
-    refresh_token: Option<String>,
+    access_token: SecretString,
+    refresh_token: Option<SecretString>,
     expires_in: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct OAuthErrorBody {
+    error: Option<String>,
+    detail: Option<String>,
 }
 
 /// Regime 3 Paymob Payouts OAuth 2.0 provider backed by [`TokenCache`].
@@ -180,11 +196,12 @@ impl PayoutsOAuthProvider {
     /// # Errors
     ///
     /// Returns [`PayoutsOAuthError::InvalidBaseUrl`] if `base_url` is not a valid `http`/`https` URL.
+    /// Returns [`PayoutsOAuthError::Transport`] if building the default HTTP client fails.
     pub fn new(base_url: &str, credentials: PayoutsCredentials) -> Result<Self, PayoutsOAuthError> {
         Self::with_client_and_cache(
             base_url,
             credentials,
-            Client::new(),
+            build_default_auth_client()?,
             Arc::new(TokenCache::default()),
         )
     }
@@ -324,20 +341,12 @@ pub fn format_basic_auth_header(
         client_id.expose_secret(),
         client_secret.expose_secret()
     ));
-    let encoded = Zeroizing::new(BASE64_STANDARD.encode(raw.as_bytes()));
-    let header_str = Zeroizing::new(format!("Basic {}", encoded.as_str()));
-    let mut value = HeaderValue::from_str(header_str.as_str())
-        .map_err(|_| PayoutsOAuthError::InvalidHeaderValue)?;
-    value.set_sensitive(true);
-    Ok(value)
+    let encoded = SecretString::from(BASE64_STANDARD.encode(raw.as_bytes()));
+    format_sensitive_auth_header("Basic", &encoded).ok_or(PayoutsOAuthError::InvalidHeaderValue)
 }
 
 fn format_bearer_header(token: &SecretString) -> Result<HeaderValue, PayoutsOAuthError> {
-    let raw = Zeroizing::new(format!("Bearer {}", token.expose_secret()));
-    let mut value =
-        HeaderValue::from_str(raw.as_str()).map_err(|_| PayoutsOAuthError::InvalidHeaderValue)?;
-    value.set_sensitive(true);
-    Ok(value)
+    format_sensitive_auth_header("Bearer", token).ok_or(PayoutsOAuthError::InvalidHeaderValue)
 }
 
 fn require_non_empty(field: &'static str, secret: &SecretString) -> Result<(), PayoutsOAuthError> {
@@ -348,16 +357,7 @@ fn require_non_empty(field: &'static str, secret: &SecretString) -> Result<(), P
 }
 
 fn build_token_url(base_url: &str) -> Result<Url, PayoutsOAuthError> {
-    let parsed =
-        Url::parse(base_url).map_err(|e| PayoutsOAuthError::InvalidBaseUrl(e.to_string()))?;
-    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-        return Err(PayoutsOAuthError::InvalidBaseUrl(String::from(
-            "expected http(s) URL with host",
-        )));
-    }
-    parsed
-        .join(PAYOUTS_OAUTH_TOKEN_PATH)
-        .map_err(|e| PayoutsOAuthError::InvalidBaseUrl(e.to_string()))
+    join_http_url(base_url, PAYOUTS_OAUTH_TOKEN_PATH).map_err(PayoutsOAuthError::InvalidBaseUrl)
 }
 
 async fn parse_token_response(
@@ -369,27 +369,49 @@ async fn parse_token_response(
         return Err(PayoutsOAuthError::InvalidCredentials);
     }
     if !status.is_success() {
-        let detail = response.text().await.unwrap_or_default();
-        return Err(PayoutsOAuthError::UnexpectedStatus {
-            status: status.as_u16(),
-            detail,
-        });
+        return Err(classify_error_response(response, status).await);
     }
     let body: OAuthTokenResponse = response.json().await?;
-    if body.access_token.trim().is_empty() {
+    if body.access_token.expose_secret().trim().is_empty() {
         return Err(PayoutsOAuthError::MissingAccessToken);
     }
     let ttl_secs = body.expires_in.filter(|&s| s > 0).unwrap_or(PAYOUTS_TOKEN_TTL_SECS);
     let refresh = body
         .refresh_token
-        .filter(|s| !s.trim().is_empty())
-        .map(SecretString::from)
+        .filter(|s| !s.expose_secret().trim().is_empty())
         .or(fallback_refresh);
     Ok(CachedToken::new(
         body.access_token,
         refresh,
         Duration::from_secs(ttl_secs),
     ))
+}
+
+async fn classify_error_response(response: Response, status: StatusCode) -> PayoutsOAuthError {
+    let bytes = response.bytes().await.unwrap_or_default();
+    let parsed = serde_json::from_slice::<OAuthErrorBody>(&bytes).ok();
+    if status == StatusCode::BAD_REQUEST && is_invalid_grant(parsed.as_ref()) {
+        return PayoutsOAuthError::InvalidCredentials;
+    }
+    let detail = extract_sanitized_detail(status, parsed);
+    PayoutsOAuthError::UnexpectedStatus {
+        status: status.as_u16(),
+        detail,
+    }
+}
+
+fn is_invalid_grant(parsed: Option<&OAuthErrorBody>) -> bool {
+    parsed
+        .and_then(|body| body.error.as_deref())
+        .is_some_and(|err| err.eq_ignore_ascii_case("invalid_grant"))
+}
+
+fn extract_sanitized_detail(status: StatusCode, parsed: Option<OAuthErrorBody>) -> String {
+    parsed
+        .and_then(|body| body.error.or(body.detail))
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| status.canonical_reason().unwrap_or("unknown error").to_owned())
 }
 
 #[cfg(test)]
@@ -553,5 +575,118 @@ mod tests {
             provider_401.access_token().await,
             Err(PayoutsOAuthError::InvalidCredentials)
         ));
+    }
+
+    #[test]
+    fn tc_1_2_4_rejects_empty_username() {
+        let err = PayoutsCredentials::new("cid", "csec", "   ", "pass")
+            .expect_err("empty username must fail");
+        assert!(matches!(err, PayoutsOAuthError::EmptyCredential("username")));
+    }
+
+    #[tokio::test]
+    async fn tc_1_2_4_rejects_malformed_json_and_non_401_status() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{bad-json"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = setup_provider(&server, Duration::from_secs(60));
+        let err = provider.access_token().await.expect_err("malformed json");
+        assert!(matches!(err, PayoutsOAuthError::Transport(_)));
+    }
+
+    #[tokio::test]
+    async fn tc_1_2_4_unexpected_status_sanitizes_raw_response_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
+            .respond_with(
+                ResponseTemplate::new(502)
+                    .set_body_string("raw secret=super_secret_leaked_token"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = setup_provider(&server, Duration::from_secs(60));
+        let err = provider.access_token().await.expect_err("502 error");
+        assert!(matches!(
+            err,
+            PayoutsOAuthError::UnexpectedStatus { status: 502, ref detail } if detail == "Bad Gateway"
+        ));
+    }
+
+    #[tokio::test]
+    async fn tc_1_2_4_400_invalid_grant_refresh_falls_back_to_password() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_json(serde_json::json!({ "error": "invalid_grant" })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
+            .and(body_string_contains("grant_type=password"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(token_body("acc-400-fb", Some("ref-new"), 3600)),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = setup_provider(&server, Duration::from_secs(3600));
+        provider.cache().store(CachedToken::new(
+            "stale",
+            Some(SecretString::from("bad-ref")),
+            Duration::from_secs(5),
+        ));
+        let tok = provider.access_token().await.expect("fallback succeeds");
+        assert_eq!(tok.expose_secret(), "acc-400-fb");
+    }
+
+    #[tokio::test]
+    async fn tc_1_2_4_zero_and_omitted_expires_in_default_to_60_minutes() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "acc-zero-exp",
+                "expires_in": 0
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = setup_provider(&server, Duration::from_secs(60));
+        let tok = provider.access_token().await.expect("zero expires_in uses default");
+        assert_eq!(tok.expose_secret(), "acc-zero-exp");
+        assert!(provider.cache().get_if_fresh().is_some());
+    }
+
+    #[tokio::test]
+    async fn tc_1_2_4_omitted_expires_in_defaults_to_60_minutes() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "acc-omitted-exp"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = setup_provider(&server, Duration::from_secs(60));
+        let tok = provider.access_token().await.expect("omitted expires_in uses default");
+        assert_eq!(tok.expose_secret(), "acc-omitted-exp");
+        assert!(provider.cache().get_if_fresh().is_some());
     }
 }

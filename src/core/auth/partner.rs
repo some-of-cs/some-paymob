@@ -19,6 +19,8 @@ use thiserror::Error;
 use url::Url;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+use crate::core::auth::format_sensitive_auth_header;
+
 /// Default HTTP header name used when injecting a partner API key.
 pub const DEFAULT_PARTNER_API_KEY_HEADER: &str = "X-Api-Key";
 
@@ -121,10 +123,12 @@ pub struct PartnerAuthContext {
     bearer_token: Option<SecretString>,
     api_key: Option<SecretString>,
     api_key_location: PartnerApiKeyLocation,
-    api_key_header_name: String,
+    #[zeroize(skip)]
+    api_key_header_name: HeaderName,
     api_key_query_param: String,
     merchant_id: Option<String>,
-    merchant_id_header_name: String,
+    #[zeroize(skip)]
+    merchant_id_header_name: HeaderName,
 }
 
 impl PartnerAuthContext {
@@ -132,16 +136,16 @@ impl PartnerAuthContext {
     ///
     /// Returns [`PartnerAuthError::EmptyBearerToken`] if `token` is empty or whitespace-only.
     pub fn bearer(token: impl Into<String>) -> Result<Self, PartnerAuthError> {
-        let validated = validate_non_empty(token.into(), PartnerAuthError::EmptyBearerToken)?;
+        let validated = validate_non_empty_secret(token, PartnerAuthError::EmptyBearerToken)?;
         Ok(Self {
             mode: PartnerAuthMode::PartnerBearer,
-            bearer_token: Some(SecretString::from(validated)),
+            bearer_token: Some(validated),
             api_key: None,
             api_key_location: PartnerApiKeyLocation::Header,
-            api_key_header_name: DEFAULT_PARTNER_API_KEY_HEADER.to_owned(),
+            api_key_header_name: HeaderName::from_static("x-api-key"),
             api_key_query_param: DEFAULT_PARTNER_API_KEY_QUERY_PARAM.to_owned(),
             merchant_id: None,
-            merchant_id_header_name: DEFAULT_MERCHANT_ID_HEADER.to_owned(),
+            merchant_id_header_name: HeaderName::from_static("x-merchant-id"),
         })
     }
 
@@ -160,17 +164,17 @@ impl PartnerAuthContext {
         api_key: impl Into<String>,
         header_name: impl Into<String>,
     ) -> Result<Self, PartnerAuthError> {
-        let validated_key = validate_non_empty(api_key.into(), PartnerAuthError::EmptyApiKey)?;
+        let validated_key = validate_non_empty_secret(api_key, PartnerAuthError::EmptyApiKey)?;
         let validated_header = build_header_name(header_name.into())?;
         Ok(Self {
             mode: PartnerAuthMode::PartnerApiKey,
             bearer_token: None,
-            api_key: Some(SecretString::from(validated_key)),
+            api_key: Some(validated_key),
             api_key_location: PartnerApiKeyLocation::Header,
-            api_key_header_name: validated_header.as_str().to_owned(),
+            api_key_header_name: validated_header,
             api_key_query_param: DEFAULT_PARTNER_API_KEY_QUERY_PARAM.to_owned(),
             merchant_id: None,
-            merchant_id_header_name: DEFAULT_MERCHANT_ID_HEADER.to_owned(),
+            merchant_id_header_name: HeaderName::from_static("x-merchant-id"),
         })
     }
 
@@ -189,18 +193,18 @@ impl PartnerAuthContext {
         api_key: impl Into<String>,
         param_name: impl Into<String>,
     ) -> Result<Self, PartnerAuthError> {
-        let validated_key = validate_non_empty(api_key.into(), PartnerAuthError::EmptyApiKey)?;
+        let validated_key = validate_non_empty_secret(api_key, PartnerAuthError::EmptyApiKey)?;
         let validated_param =
             validate_non_empty(param_name.into(), PartnerAuthError::EmptyQueryParamName)?;
         Ok(Self {
             mode: PartnerAuthMode::PartnerApiKey,
             bearer_token: None,
-            api_key: Some(SecretString::from(validated_key)),
+            api_key: Some(validated_key),
             api_key_location: PartnerApiKeyLocation::Query,
-            api_key_header_name: DEFAULT_PARTNER_API_KEY_HEADER.to_owned(),
+            api_key_header_name: HeaderName::from_static("x-api-key"),
             api_key_query_param: validated_param,
             merchant_id: None,
-            merchant_id_header_name: DEFAULT_MERCHANT_ID_HEADER.to_owned(),
+            merchant_id_header_name: HeaderName::from_static("x-merchant-id"),
         })
     }
 
@@ -225,7 +229,7 @@ impl PartnerAuthContext {
         header_name: impl Into<String>,
     ) -> Result<Self, PartnerAuthError> {
         let validated_header = build_header_name(header_name.into())?;
-        self.merchant_id_header_name = validated_header.as_str().to_owned();
+        self.merchant_id_header_name = validated_header;
         Ok(self)
     }
 
@@ -273,8 +277,17 @@ impl PartnerAuthContext {
         let Some(key) = self.api_key.as_ref() else {
             return Err(PartnerAuthError::MissingCredential);
         };
-        url.query_pairs_mut()
-            .append_pair(&self.api_key_query_param, key.expose_secret());
+        let retained: Vec<(String, String)> = url
+            .query_pairs()
+            .filter(|(k, _)| k != &self.api_key_query_param)
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        let mut pairs = url.query_pairs_mut();
+        pairs.clear();
+        for (k, v) in retained {
+            pairs.append_pair(&k, &v);
+        }
+        pairs.append_pair(&self.api_key_query_param, key.expose_secret());
         Ok(())
     }
 
@@ -301,8 +314,8 @@ impl PartnerAuthContext {
             .bearer_token
             .as_ref()
             .ok_or(PartnerAuthError::MissingCredential)?;
-        let formatted = Zeroizing::new(format!("Bearer {}", token.expose_secret()));
-        let value = build_header_value(&formatted, true)?;
+        let value = format_sensitive_auth_header("Bearer", token)
+            .ok_or(PartnerAuthError::InvalidHeaderValue)?;
         headers.insert(AUTHORIZATION, value);
         Ok(())
     }
@@ -318,9 +331,8 @@ impl PartnerAuthContext {
             .api_key
             .as_ref()
             .ok_or(PartnerAuthError::MissingCredential)?;
-        let name = build_header_name(self.api_key_header_name.clone())?;
         let value = build_header_value(key.expose_secret(), true)?;
-        headers.insert(name, value);
+        headers.insert(self.api_key_header_name.clone(), value);
         Ok(())
     }
 
@@ -328,9 +340,8 @@ impl PartnerAuthContext {
         let Some(id) = self.merchant_id.as_deref() else {
             return Ok(());
         };
-        let name = build_header_name(self.merchant_id_header_name.clone())?;
         let value = build_header_value(id, false)?;
-        headers.insert(name, value);
+        headers.insert(self.merchant_id_header_name.clone(), value);
         Ok(())
     }
 }
@@ -345,20 +356,33 @@ impl fmt::Debug for PartnerAuthContext {
             )
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .field("api_key_location", &self.api_key_location)
-            .field("api_key_header_name", &self.api_key_header_name)
+            .field("api_key_header_name", &self.api_key_header_name.as_str())
             .field("api_key_query_param", &self.api_key_query_param)
             .field("merchant_id", &self.merchant_id)
-            .field("merchant_id_header_name", &self.merchant_id_header_name)
+            .field("merchant_id_header_name", &self.merchant_id_header_name.as_str())
             .finish()
     }
 }
 
 fn validate_non_empty(value: String, err: PartnerAuthError) -> Result<String, PartnerAuthError> {
-    let trimmed = value.trim();
+    let raw = Zeroizing::new(value);
+    let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(err);
     }
     Ok(trimmed.to_owned())
+}
+
+fn validate_non_empty_secret(
+    value: impl Into<String>,
+    err: PartnerAuthError,
+) -> Result<SecretString, PartnerAuthError> {
+    let raw = Zeroizing::new(value.into());
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(err);
+    }
+    Ok(SecretString::from(trimmed.to_owned()))
 }
 
 fn build_header_name(name: String) -> Result<HeaderName, PartnerAuthError> {
@@ -486,24 +510,25 @@ mod tests {
     #[test]
     fn tc_1_2_5_rejects_empty_and_malformed_inputs() {
         assert_eq!(
-            PartnerAuthContext::bearer(""),
-            Err(PartnerAuthError::EmptyBearerToken)
+            PartnerAuthContext::bearer("").expect_err("empty bearer"),
+            PartnerAuthError::EmptyBearerToken
         );
         assert_eq!(
-            PartnerAuthContext::bearer("   \t\n "),
-            Err(PartnerAuthError::EmptyBearerToken)
+            PartnerAuthContext::bearer("   \t\n ").expect_err("whitespace bearer"),
+            PartnerAuthError::EmptyBearerToken
         );
         assert_eq!(
-            PartnerAuthContext::api_key_header("   "),
-            Err(PartnerAuthError::EmptyApiKey)
+            PartnerAuthContext::api_key_header("   ").expect_err("empty header key"),
+            PartnerAuthError::EmptyApiKey
         );
         assert_eq!(
-            PartnerAuthContext::api_key_query(""),
-            Err(PartnerAuthError::EmptyApiKey)
+            PartnerAuthContext::api_key_query("").expect_err("empty query key"),
+            PartnerAuthError::EmptyApiKey
         );
         assert_eq!(
-            PartnerAuthContext::api_key_with_query_param("valid_key", "  "),
-            Err(PartnerAuthError::EmptyQueryParamName)
+            PartnerAuthContext::api_key_with_query_param("valid_key", "  ")
+                .expect_err("empty query param"),
+            PartnerAuthError::EmptyQueryParamName
         );
         assert!(matches!(
             PartnerAuthContext::api_key_with_header_name("valid_key", "bad header name"),
@@ -512,12 +537,25 @@ mod tests {
 
         let base = PartnerAuthContext::bearer("valid_tok").expect("valid bearer");
         assert_eq!(
-            base.clone().with_merchant_id(""),
-            Err(PartnerAuthError::EmptyMerchantId)
+            base.clone().with_merchant_id("").expect_err("empty merchant"),
+            PartnerAuthError::EmptyMerchantId
         );
         assert_eq!(
-            base.with_merchant_id("   "),
-            Err(PartnerAuthError::EmptyMerchantId)
+            base.with_merchant_id("   ").expect_err("whitespace merchant"),
+            PartnerAuthError::EmptyMerchantId
+        );
+    }
+
+    #[test]
+    fn tc_1_2_5_apply_query_replaces_existing_api_key_without_duplication() {
+        let ctx = PartnerAuthContext::api_key_query("new_key").expect("valid query ctx");
+        let mut url =
+            Url::parse("https://accept.paymob.com/api/partner/hmac?region=egy&api_key=old_key")
+                .expect("valid url");
+        ctx.apply_query(&mut url).expect("apply query succeeds");
+        assert_eq!(
+            url.as_str(),
+            "https://accept.paymob.com/api/partner/hmac?region=egy&api_key=new_key"
         );
     }
 

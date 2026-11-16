@@ -16,6 +16,25 @@ use crate::core::region::PaymobRegion;
 /// Redacted placeholder emitted by all credential `Debug` and `Display` implementations.
 const REDACTED: &str = "[REDACTED]";
 
+/// Implements [`fmt::Debug`] and [`fmt::Display`] emitting `"[REDACTED]"` for secret types.
+macro_rules! impl_redacted_fmt {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl fmt::Debug for $ty {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str(REDACTED)
+                }
+            }
+
+            impl fmt::Display for $ty {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str(REDACTED)
+                }
+            }
+        )+
+    };
+}
+
 /// Paymob operating environment inferred from credential prefixes or configured explicitly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum EnvironmentMode {
@@ -152,6 +171,30 @@ pub const KNOWN_PREFIXES: &[(&str, KeyKind, EnvironmentMode, Option<PaymobRegion
         Some(PaymobRegion::SaudiArabia),
     ),
     (
+        "sau_sk_test_",
+        KeyKind::Secret,
+        EnvironmentMode::Test,
+        Some(PaymobRegion::SaudiArabia),
+    ),
+    (
+        "sau_sk_live_",
+        KeyKind::Secret,
+        EnvironmentMode::Live,
+        Some(PaymobRegion::SaudiArabia),
+    ),
+    (
+        "sau_pk_test_",
+        KeyKind::Public,
+        EnvironmentMode::Test,
+        Some(PaymobRegion::SaudiArabia),
+    ),
+    (
+        "sau_pk_live_",
+        KeyKind::Public,
+        EnvironmentMode::Live,
+        Some(PaymobRegion::SaudiArabia),
+    ),
+    (
         "uae_sk_test_",
         KeyKind::Secret,
         EnvironmentMode::Test,
@@ -171,6 +214,30 @@ pub const KNOWN_PREFIXES: &[(&str, KeyKind, EnvironmentMode, Option<PaymobRegion
     ),
     (
         "uae_pk_live_",
+        KeyKind::Public,
+        EnvironmentMode::Live,
+        Some(PaymobRegion::Uae),
+    ),
+    (
+        "are_sk_test_",
+        KeyKind::Secret,
+        EnvironmentMode::Test,
+        Some(PaymobRegion::Uae),
+    ),
+    (
+        "are_sk_live_",
+        KeyKind::Secret,
+        EnvironmentMode::Live,
+        Some(PaymobRegion::Uae),
+    ),
+    (
+        "are_pk_test_",
+        KeyKind::Public,
+        EnvironmentMode::Test,
+        Some(PaymobRegion::Uae),
+    ),
+    (
+        "are_pk_live_",
         KeyKind::Public,
         EnvironmentMode::Live,
         Some(PaymobRegion::Uae),
@@ -231,6 +298,7 @@ pub const KNOWN_PREFIXES: &[(&str, KeyKind, EnvironmentMode, Option<PaymobRegion
 
 /// Parses a Paymob key prefix using [`KNOWN_PREFIXES`] in `CC <= 3`.
 ///
+/// Trims surrounding whitespace and normalizes ASCII casing before matching.
 /// Returns `None` if `raw` does not start with any known regional or generic prefix.
 ///
 /// # Examples
@@ -246,9 +314,10 @@ pub const KNOWN_PREFIXES: &[(&str, KeyKind, EnvironmentMode, Option<PaymobRegion
 /// ```
 #[must_use]
 pub fn parse_key_prefix(raw: &str) -> Option<ParsedKeyPrefix> {
+    let normalized = raw.trim().to_ascii_lowercase();
     KNOWN_PREFIXES
         .iter()
-        .find(|(prefix, _, _, _)| raw.starts_with(prefix))
+        .find(|(prefix, _, _, _)| normalized.starts_with(prefix))
         .map(|(_, kind, mode, region)| ParsedKeyPrefix {
             kind: *kind,
             mode: *mode,
@@ -256,33 +325,45 @@ pub fn parse_key_prefix(raw: &str) -> Option<ParsedKeyPrefix> {
         })
 }
 
-/// Validates that `raw` is non-empty (after trimming) and wraps it in a [`SecretString`].
+/// Trims surrounding whitespace, validates non-emptiness, and wraps in [`SecretString`].
 fn non_empty_secret(
     field: &'static str,
     raw: impl Into<String>,
 ) -> Result<SecretString, PaymobError> {
     let value = raw.into();
-    if value.trim().is_empty() {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
         return Err(PaymobError::ValidationError {
             field,
             reason: format!("{field} must not be empty"),
         });
     }
-    Ok(SecretString::from(value))
+    Ok(SecretString::from(trimmed.to_owned()))
 }
 
-/// Returns `true` if `raw` carries a publishable public-key prefix (`pk_*` or `*_pk_*`).
+/// Checks whether a lowercase, trimmed key starts with `tag` (e.g., `"pk_"`)
+/// or `<3-ascii-letters>_<tag>` (e.g., `"egy_pk_"`).
+fn has_leading_key_tag(normalized: &str, tag: &str, region_tag: &str) -> bool {
+    if normalized.starts_with(tag) {
+        return true;
+    }
+    normalized.len() >= 3 + region_tag.len()
+        && normalized.as_bytes()[..3].iter().all(u8::is_ascii_alphabetic)
+        && normalized[3..].starts_with(region_tag)
+}
+
+/// Returns `true` if `raw` starts with a publishable public-key prefix (`pk_*` or `<cc>_pk_*`).
 fn is_public_key_prefix(raw: &str) -> bool {
-    matches!(parse_key_prefix(raw), Some(p) if p.kind == KeyKind::Public)
-        || raw.starts_with("pk_")
-        || raw.contains("_pk_")
+    let normalized = raw.trim().to_ascii_lowercase();
+    matches!(parse_key_prefix(&normalized), Some(p) if p.kind == KeyKind::Public)
+        || has_leading_key_tag(&normalized, "pk_", "_pk_")
 }
 
-/// Returns `true` if `raw` carries a server secret-key prefix (`sk_*` or `*_sk_*`).
+/// Returns `true` if `raw` starts with a server secret-key prefix (`sk_*` or `<cc>_sk_*`).
 fn is_secret_key_prefix(raw: &str) -> bool {
-    matches!(parse_key_prefix(raw), Some(p) if p.kind == KeyKind::Secret)
-        || raw.starts_with("sk_")
-        || raw.contains("_sk_")
+    let normalized = raw.trim().to_ascii_lowercase();
+    matches!(parse_key_prefix(&normalized), Some(p) if p.kind == KeyKind::Secret)
+        || has_leading_key_tag(&normalized, "sk_", "_sk_")
 }
 
 /// Server-side Paymob secret key (`sk_*` or `<region>_sk_*`) wrapped in [`SecretString`].
@@ -349,18 +430,6 @@ impl SecretKey {
     #[must_use]
     pub fn expose_secret(&self) -> &str {
         self.inner.expose_secret()
-    }
-}
-
-impl fmt::Debug for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
-    }
-}
-
-impl fmt::Display for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
     }
 }
 
@@ -431,18 +500,6 @@ impl PublicKey {
     }
 }
 
-impl fmt::Debug for PublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
-    }
-}
-
-impl fmt::Display for PublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
-    }
-}
-
 /// Paymob Accept API key used for Regime 2 JWT exchange (`POST /api/auth/tokens`).
 #[derive(Clone, ZeroizeOnDrop)]
 pub struct ApiKey {
@@ -477,18 +534,6 @@ impl ApiKey {
     }
 }
 
-impl fmt::Debug for ApiKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
-    }
-}
-
-impl fmt::Display for ApiKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
-    }
-}
-
 /// Paymob HMAC-SHA512 webhook verification secret wrapped in [`SecretString`].
 #[derive(Clone, ZeroizeOnDrop)]
 pub struct HmacSecret {
@@ -520,18 +565,6 @@ impl HmacSecret {
     #[must_use]
     pub fn expose_secret(&self) -> &str {
         self.inner.expose_secret()
-    }
-}
-
-impl fmt::Debug for HmacSecret {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
-    }
-}
-
-impl fmt::Display for HmacSecret {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
     }
 }
 
@@ -595,18 +628,6 @@ impl PayoutsCredentials {
     #[must_use]
     pub fn password(&self) -> &str {
         self.password.expose_secret()
-    }
-}
-
-impl fmt::Debug for PayoutsCredentials {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
-    }
-}
-
-impl fmt::Display for PayoutsCredentials {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
     }
 }
 
@@ -678,21 +699,22 @@ impl PartnerCredentials {
     }
 }
 
-impl fmt::Debug for PartnerCredentials {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
-    }
-}
-
-impl fmt::Display for PartnerCredentials {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(REDACTED)
-    }
-}
+impl_redacted_fmt!(
+    SecretKey,
+    PublicKey,
+    ApiKey,
+    HmacSecret,
+    PayoutsCredentials,
+    PartnerCredentials,
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_redacted<T: fmt::Debug + fmt::Display>(value: &T) {
+        assert_eq!((format!("{value:?}"), format!("{value}")), (REDACTED.to_owned(), REDACTED.to_owned()));
+    }
 
     #[test]
     fn tc_1_1_2_prefix_parser_infers_region_and_mode() {
@@ -704,19 +726,13 @@ mod tests {
                 Some(PaymobRegion::Egypt),
             ),
             (
-                "egy_pk_live_999xxx",
-                KeyKind::Public,
-                EnvironmentMode::Live,
-                Some(PaymobRegion::Egypt),
-            ),
-            (
-                "ksa_sk_live_abc",
+                "sau_sk_live_abc",
                 KeyKind::Secret,
                 EnvironmentMode::Live,
                 Some(PaymobRegion::SaudiArabia),
             ),
             (
-                "uae_pk_test_xyz",
+                "are_pk_test_xyz",
                 KeyKind::Public,
                 EnvironmentMode::Test,
                 Some(PaymobRegion::Uae),
@@ -739,181 +755,142 @@ mod tests {
 
         for (raw, expected_kind, expected_mode, expected_region) in cases {
             let parsed = parse_key_prefix(raw).expect("prefix should parse");
-            assert_eq!(parsed.kind, expected_kind);
-            assert_eq!(parsed.mode, expected_mode);
-            assert_eq!(parsed.region, expected_region);
+            assert_eq!(
+                (parsed.kind, parsed.mode, parsed.region),
+                (expected_kind, expected_mode, expected_region)
+            );
         }
 
         assert!(parse_key_prefix("unknown_prefix_123").is_none());
     }
 
     #[test]
-    fn tc_1_1_2_secret_key_validation_and_redaction() {
-        let sk = SecretKey::new("egy_sk_test_supersecret").expect("valid secret key");
-        assert_eq!(sk.mode(), EnvironmentMode::Test);
-        assert_eq!(sk.region(), Some(&PaymobRegion::Egypt));
-        assert_eq!(sk.expose_secret(), "egy_sk_test_supersecret");
-        assert_eq!(format!("{sk:?}"), "[REDACTED]");
-        assert_eq!(format!("{sk}"), "[REDACTED]");
-
-        assert!(matches!(
-            SecretKey::new(""),
-            Err(PaymobError::ValidationError {
-                field: "secret_key",
-                ..
-            })
-        ));
-        assert!(matches!(
-            SecretKey::new("   \t\n "),
-            Err(PaymobError::ValidationError {
-                field: "secret_key",
-                ..
-            })
-        ));
-        assert!(matches!(
-            SecretKey::new("egy_pk_test_12345"),
-            Err(PaymobError::ValidationError {
-                field: "secret_key",
-                ..
-            })
-        ));
-        assert!(matches!(
-            SecretKey::new("pk_live_12345"),
-            Err(PaymobError::ValidationError {
-                field: "secret_key",
-                ..
-            })
-        ));
+    fn tc_1_1_2_secret_key_accepts_valid_and_trims_whitespace() {
+        let sk = SecretKey::new("  egy_sk_test_supersecret  ").expect("valid secret key");
+        assert_eq!(
+            (sk.mode(), sk.region(), sk.expose_secret()),
+            (
+                EnvironmentMode::Test,
+                Some(&PaymobRegion::Egypt),
+                "egy_sk_test_supersecret",
+            )
+        );
+        assert_redacted(&sk);
     }
 
     #[test]
-    fn tc_1_1_2_public_key_validation_and_redaction() {
-        let pk = PublicKey::new("ksa_pk_live_publicval").expect("valid public key");
-        assert_eq!(pk.mode(), EnvironmentMode::Live);
-        assert_eq!(pk.region(), Some(&PaymobRegion::SaudiArabia));
-        assert_eq!(pk.expose_secret(), "ksa_pk_live_publicval");
-        assert_eq!(format!("{pk:?}"), "[REDACTED]");
-        assert_eq!(format!("{pk}"), "[REDACTED]");
+    fn tc_1_1_2_secret_key_rejects_empty_and_case_or_whitespace_pk_bypass() {
+        for bad in ["", "   \t\n ", "  pk_test_123", "PK_TEST_123", "egy_pk_test_12345"] {
+            assert!(matches!(
+                SecretKey::new(bad),
+                Err(PaymobError::ValidationError { field: "secret_key", .. })
+            ));
+        }
+        let valid_with_pk_substr =
+            SecretKey::new("sk_live_abcd_pk_efgh").expect("substring _pk_ must not false-reject");
+        assert_eq!(valid_with_pk_substr.mode(), EnvironmentMode::Live);
+    }
 
-        assert!(matches!(
-            PublicKey::new(""),
-            Err(PaymobError::ValidationError {
-                field: "public_key",
-                ..
-            })
-        ));
-        assert!(matches!(
-            PublicKey::new("egy_sk_test_626xxx"),
-            Err(PaymobError::ValidationError {
-                field: "public_key",
-                ..
-            })
-        ));
-        assert!(matches!(
-            PublicKey::new("sk_live_999"),
-            Err(PaymobError::ValidationError {
-                field: "public_key",
-                ..
-            })
-        ));
+    #[test]
+    fn tc_1_1_2_public_key_accepts_valid_and_rejects_sk_bypass() {
+        let pk = PublicKey::new("ksa_pk_live_publicval").expect("valid public key");
+        assert_eq!(
+            (pk.mode(), pk.region(), pk.expose_secret()),
+            (
+                EnvironmentMode::Live,
+                Some(&PaymobRegion::SaudiArabia),
+                "ksa_pk_live_publicval",
+            )
+        );
+        assert_redacted(&pk);
+    }
+
+    #[test]
+    fn tc_1_1_2_public_key_rejects_empty_and_sk_prefixes_without_substring_false_positive() {
+        for bad in ["", "  sk_live_999", "SK_LIVE_999", "egy_sk_test_626xxx"] {
+            assert!(matches!(
+                PublicKey::new(bad),
+                Err(PaymobError::ValidationError { field: "public_key", .. })
+            ));
+        }
+        let valid_with_sk_substr =
+            PublicKey::new("pk_live_abcd_sk_efgh").expect("substring _sk_ must not false-reject");
+        assert_eq!(valid_with_sk_substr.mode(), EnvironmentMode::Live);
     }
 
     #[test]
     fn tc_1_1_2_api_key_and_hmac_secret_validation_and_redaction() {
-        let api = ApiKey::new("api_secret_value").expect("valid api key");
+        let api = ApiKey::new("  api_secret_value  ").expect("valid api key");
         assert_eq!(api.expose_secret(), "api_secret_value");
-        assert_eq!(format!("{api:?}"), "[REDACTED]");
-        assert_eq!(format!("{api}"), "[REDACTED]");
+        assert_redacted(&api);
+    }
+
+    #[test]
+    fn tc_1_1_2_api_key_and_hmac_secret_reject_empty() {
         assert!(matches!(
             ApiKey::new("  "),
-            Err(PaymobError::ValidationError {
-                field: "api_key",
-                ..
-            })
+            Err(PaymobError::ValidationError { field: "api_key", .. })
         ));
-
-        let hmac = HmacSecret::new("hmac_secret_value").expect("valid hmac secret");
-        assert_eq!(hmac.expose_secret(), "hmac_secret_value");
-        assert_eq!(format!("{hmac:?}"), "[REDACTED]");
-        assert_eq!(format!("{hmac}"), "[REDACTED]");
         assert!(matches!(
             HmacSecret::new(""),
-            Err(PaymobError::ValidationError {
-                field: "hmac_secret",
-                ..
-            })
+            Err(PaymobError::ValidationError { field: "hmac_secret", .. })
         ));
     }
 
     #[test]
-    fn tc_1_1_2_payouts_and_partner_credentials_validation_and_redaction() {
+    fn tc_1_1_2_payouts_credentials_validation_and_redaction() {
         let payouts = PayoutsCredentials::new("cid", "csec", "usr", "pwd").expect("valid payouts");
-        assert_eq!(payouts.client_id(), "cid");
-        assert_eq!(payouts.client_secret(), "csec");
-        assert_eq!(payouts.username(), "usr");
-        assert_eq!(payouts.password(), "pwd");
-        assert_eq!(format!("{payouts:?}"), "[REDACTED]");
-        assert_eq!(format!("{payouts}"), "[REDACTED]");
+        assert_eq!(
+            (payouts.client_id(), payouts.client_secret(), payouts.username(), payouts.password()),
+            ("cid", "csec", "usr", "pwd")
+        );
+        assert_redacted(&payouts);
+    }
 
-        assert!(matches!(
-            PayoutsCredentials::new("", "csec", "usr", "pwd"),
-            Err(PaymobError::ValidationError {
-                field: "payouts_client_id",
-                ..
-            })
-        ));
-        assert!(matches!(
-            PayoutsCredentials::new("cid", "", "usr", "pwd"),
-            Err(PaymobError::ValidationError {
-                field: "payouts_client_secret",
-                ..
-            })
-        ));
-        assert!(matches!(
-            PayoutsCredentials::new("cid", "csec", " ", "pwd"),
-            Err(PaymobError::ValidationError {
-                field: "payouts_username",
-                ..
-            })
-        ));
-        assert!(matches!(
-            PayoutsCredentials::new("cid", "csec", "usr", ""),
-            Err(PaymobError::ValidationError {
-                field: "payouts_password",
-                ..
-            })
-        ));
+    #[test]
+    fn tc_1_1_2_payouts_credentials_reject_empty_fields() {
+        for (cid, csec, usr, pwd, expected_field) in [
+            ("", "csec", "usr", "pwd", "payouts_client_id"),
+            ("cid", "", "usr", "pwd", "payouts_client_secret"),
+            ("cid", "csec", " ", "pwd", "payouts_username"),
+            ("cid", "csec", "usr", "", "payouts_password"),
+        ] {
+            let err = PayoutsCredentials::new(cid, csec, usr, pwd).expect_err("empty field");
+            assert!(matches!(err, PaymobError::ValidationError { field, .. } if field == expected_field));
+        }
+    }
 
-        let partner = PartnerCredentials::new("p_key").expect("valid partner");
-        assert_eq!(partner.api_key(), "p_key");
-        assert!(partner.bearer_token().is_none());
-        assert_eq!(format!("{partner:?}"), "[REDACTED]");
-        assert_eq!(format!("{partner}"), "[REDACTED]");
+    #[test]
+    fn tc_1_1_2_partner_credentials_validation_and_redaction() {
+        let partner = PartnerCredentials::with_bearer_token("p_key", "b_tok").expect("valid partner");
+        assert_eq!(
+            (partner.api_key(), partner.bearer_token()),
+            ("p_key", Some("b_tok"))
+        );
+        assert_redacted(&partner);
+    }
 
-        let partner_with_tok =
-            PartnerCredentials::with_bearer_token("p_key", "b_tok").expect("valid partner+token");
-        assert_eq!(partner_with_tok.bearer_token(), Some("b_tok"));
-        assert_eq!(format!("{partner_with_tok:?}"), "[REDACTED]");
-
+    #[test]
+    fn tc_1_1_2_partner_credentials_reject_empty_inputs() {
+        assert!(matches!(
+            PartnerCredentials::new("   "),
+            Err(PaymobError::ValidationError { field: "partner_api_key", .. })
+        ));
         assert!(matches!(
             PartnerCredentials::with_bearer_token("p_key", ""),
-            Err(PaymobError::ValidationError {
-                field: "partner_bearer_token",
-                ..
-            })
+            Err(PaymobError::ValidationError { field: "partner_bearer_token", .. })
         ));
     }
 
     #[test]
     fn tc_1_1_2_environment_mode_helpers() {
-        assert!(EnvironmentMode::Test.is_test());
-        assert!(!EnvironmentMode::Test.is_live());
-        assert_eq!(EnvironmentMode::Test.as_str(), "test");
-        assert_eq!(format!("{}", EnvironmentMode::Test), "test");
-
-        assert!(EnvironmentMode::Live.is_live());
-        assert!(!EnvironmentMode::Live.is_test());
-        assert_eq!(EnvironmentMode::Live.as_str(), "live");
-        assert_eq!(format!("{}", EnvironmentMode::Live), "live");
+        assert_eq!(
+            (EnvironmentMode::Test.is_test(), EnvironmentMode::Test.is_live(), EnvironmentMode::Test.as_str()),
+            (true, false, "test")
+        );
+        assert_eq!(
+            (EnvironmentMode::Live.is_live(), EnvironmentMode::Live.is_test(), format!("{}", EnvironmentMode::Live)),
+            (true, false, "live".to_string())
+        );
     }
 }

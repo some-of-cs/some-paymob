@@ -141,13 +141,23 @@ some-paymob/
 ├── Cargo.toml                                  # Seeded on Module/Story base branch
 ├── src/
 │   ├── lib.rs                                  # Seeded on Module base branch
-│   ├── src/core/auth/strategy.rs               # Owned exclusively by unit-1 (feat/us-1.2.0/unit-1-auth-strategy)
-│   ├── src/core/auth/cache.rs                  # Owned exclusively by unit-2 (feat/us-1.2.0/unit-2-lockfree-token-cache)
-│   ├── src/core/auth/accept_jwt.rs             # Owned exclusively by unit-3 (feat/us-1.2.0/unit-3-accept-jwt-provider)
-│   ├── src/core/auth/payouts_oauth.rs          # Owned exclusively by unit-4 (feat/us-1.2.0/unit-4-payouts-oauth2-provider)
-│   ├── src/core/auth/partner.rs                # Owned exclusively by unit-5 (feat/us-1.2.0/unit-5-partner-delegated-auth)
+│   └── core/
+│       └── auth/
+│           ├── mod.rs                          # Shared auth helpers, re-exports, and PaymobError conversions
+│           ├── strategy.rs                     # Owned exclusively by unit-1 (feat/us-1.2.0/unit-1-auth-strategy)
+│           ├── cache.rs                        # Owned exclusively by unit-2 (feat/us-1.2.0/unit-2-lockfree-token-cache)
+│           ├── accept_jwt.rs                   # Owned exclusively by unit-3 (feat/us-1.2.0/unit-3-accept-jwt-provider)
+│           ├── payouts_oauth.rs                # Owned exclusively by unit-4 (feat/us-1.2.0/unit-4-payouts-oauth2-provider)
+│           └── partner.rs                      # Owned exclusively by unit-5 (feat/us-1.2.0/unit-5-partner-delegated-auth)
 └── tests/
-    └── multi_regime_auth_integration.rs         # Executed by story-leader after unit-1..5 merge
+    └── multi_regime_auth_integration/          # Executed by story-leader after unit-1..5 merge
+        ├── main.rs
+        ├── common.rs
+        ├── strategy.rs
+        ├── cache.rs
+        ├── accept_jwt.rs
+        ├── payouts_oauth.rs
+        └── partner.rs
 ```
 
 ---

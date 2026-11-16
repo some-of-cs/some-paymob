@@ -22,9 +22,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use url::Url;
-use zeroize::Zeroizing;
 
 use crate::core::auth::cache::{CachedToken, TokenCache};
+use crate::core::auth::{
+    build_default_auth_client, format_sanitized_transport_error, format_sensitive_auth_header,
+    join_http_url,
+};
 
 /// Relative endpoint path for Paymob Accept JWT acquisition.
 pub const ACCEPT_AUTH_TOKENS_PATH: &str = "/api/auth/tokens";
@@ -75,11 +78,13 @@ pub enum AcceptJwtError {
 
     /// Underlying HTTP transport or JSON deserialization failure.
     #[error("HTTP transport error during Accept JWT operation: {0}")]
-    Transport(#[from] reqwest::Error),
+    Transport(String),
+}
 
-    /// Token cache failed to produce or refresh a valid token.
-    #[error("token cache error: {0}")]
-    Cache(String),
+impl From<reqwest::Error> for AcceptJwtError {
+    fn from(err: reqwest::Error) -> Self {
+        Self::Transport(format_sanitized_transport_error(&err))
+    }
 }
 
 #[derive(Serialize)]
@@ -89,7 +94,7 @@ struct AuthTokenRequest<'a> {
 
 #[derive(Deserialize)]
 struct AuthTokenResponse {
-    token: String,
+    token: SecretString,
 }
 
 #[derive(Deserialize)]
@@ -145,8 +150,14 @@ impl AcceptJwtProvider {
     ///
     /// Returns [`AcceptJwtError::EmptyApiKey`] if `api_key` is empty/whitespace, or
     /// [`AcceptJwtError::InvalidBaseUrl`] if `base_url` is not a valid `http`/`https` URL.
+    /// Returns [`AcceptJwtError::Transport`] if building the default HTTP client fails.
     pub fn new(base_url: &str, api_key: SecretString) -> Result<Self, AcceptJwtError> {
-        Self::with_client_and_cache(base_url, api_key, Client::new(), Arc::new(TokenCache::default()))
+        Self::with_client_and_cache(
+            base_url,
+            api_key,
+            build_default_auth_client()?,
+            Arc::new(TokenCache::default()),
+        )
     }
 
     /// Creates a new [`AcceptJwtProvider`] with caller-supplied HTTP client and shared [`TokenCache`].
@@ -237,16 +248,17 @@ impl AcceptJwtProvider {
         Fut: Future<Output = Result<Response, AcceptJwtError>>,
     {
         let token = self.token().await?;
-        let response = build_and_send(token).await?;
+        let response = build_and_send(token.clone()).await?;
         if response.status() != StatusCode::UNAUTHORIZED {
             return Ok(response);
         }
 
-        self.refresh_and_retry(response, build_and_send).await
+        self.refresh_and_retry(&token, response, build_and_send).await
     }
 
     async fn refresh_and_retry<F, Fut>(
         &self,
+        stale_token: &SecretString,
         response: Response,
         mut build_and_send: F,
     ) -> Result<Response, AcceptJwtError>
@@ -260,7 +272,7 @@ impl AcceptJwtProvider {
             return Err(AcceptJwtError::InvalidCredentials);
         }
 
-        self.cache.evict();
+        self.cache.evict_if_matches(stale_token).await;
         let fresh_token = self.token().await?;
         build_and_send(fresh_token).await
     }
@@ -298,11 +310,7 @@ impl AcceptJwtProvider {
 ///
 /// Returns [`AcceptJwtError::InvalidHeaderValue`] if the token contains invalid HTTP header bytes.
 pub fn format_bearer_header(token: &SecretString) -> Result<HeaderValue, AcceptJwtError> {
-    let raw = Zeroizing::new(format!("Bearer {}", token.expose_secret()));
-    let mut value =
-        HeaderValue::from_str(raw.as_str()).map_err(|_| AcceptJwtError::InvalidHeaderValue)?;
-    value.set_sensitive(true);
-    Ok(value)
+    format_sensitive_auth_header("Bearer", token).ok_or(AcceptJwtError::InvalidHeaderValue)
 }
 
 /// Injects `"auth_token": "<auth_token>"` into a JSON object [`Value`].
@@ -370,15 +378,7 @@ fn validate_api_key(api_key: &SecretString) -> Result<(), AcceptJwtError> {
 }
 
 fn build_auth_url(base_url: &str) -> Result<Url, AcceptJwtError> {
-    let parsed = Url::parse(base_url).map_err(|err| AcceptJwtError::InvalidBaseUrl(err.to_string()))?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(AcceptJwtError::InvalidBaseUrl(String::from(
-            "scheme must be http or https",
-        )));
-    }
-    parsed
-        .join(ACCEPT_AUTH_TOKENS_PATH)
-        .map_err(|err| AcceptJwtError::InvalidBaseUrl(err.to_string()))
+    join_http_url(base_url, ACCEPT_AUTH_TOKENS_PATH).map_err(AcceptJwtError::InvalidBaseUrl)
 }
 
 async fn parse_token_response(response: Response) -> Result<SecretString, AcceptJwtError> {
@@ -395,10 +395,10 @@ async fn parse_token_response(response: Response) -> Result<SecretString, Accept
     }
 
     let parsed: AuthTokenResponse = response.json().await?;
-    if parsed.token.trim().is_empty() {
+    if parsed.token.expose_secret().trim().is_empty() {
         return Err(AcceptJwtError::MissingTokenField);
     }
-    Ok(SecretString::from(parsed.token))
+    Ok(parsed.token)
 }
 
 fn parse_error_detail(body: &[u8]) -> Option<String> {
@@ -721,6 +721,33 @@ mod tests {
         assert!(matches!(
             assert_fetch_token_error(502, json!({})).await,
             AcceptJwtError::UnexpectedStatus { status: 502, ref detail } if detail == "Bad Gateway"
+        ));
+    }
+
+    #[tokio::test]
+    async fn tc_1_2_3_fetch_token_rejects_malformed_json_and_missing_token_key() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(ACCEPT_AUTH_TOKENS_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{not-json"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(&server.uri());
+        let err = provider.fetch_fresh_token().await.expect_err("malformed json");
+        assert!(matches!(err, AcceptJwtError::Transport(_)));
+    }
+
+    #[tokio::test]
+    async fn tc_1_2_3_fetch_token_rejects_missing_token_key_and_400_status() {
+        let err_missing = assert_fetch_token_error(200, json!({})).await;
+        assert!(matches!(err_missing, AcceptJwtError::Transport(_)));
+
+        let err_400 = assert_fetch_token_error(400, json!({ "detail": "bad api key" })).await;
+        assert!(matches!(
+            err_400,
+            AcceptJwtError::UnexpectedStatus { status: 400, .. }
         ));
     }
 }

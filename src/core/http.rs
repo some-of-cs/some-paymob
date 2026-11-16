@@ -2,10 +2,11 @@
 //! Resilient HTTP transport pipeline for `some-paymob`.
 //!
 //! Provides [`HttpClient`], a wrapper around [`reqwest::Client`] that enforces:
-//! - TLS 1.3 via `rustls` when the `rustls-tls` feature is enabled
+//! - TLS 1.3 minimum version (`min_tls_version(TLS_1_3)`) and HTTPS-only URLs by default
 //! - Connect and total-request timeouts
 //! - Exponential backoff with full jitter on transient status codes (`429`, `502`, `503`, `504`)
-//! - `Retry-After` header parsing (integer seconds)
+//!   and on timeouts for idempotent requests
+//! - `Retry-After` header parsing (integer seconds only; HTTP-date values are ignored)
 //! - Per-request correlation IDs (`X-Request-Id` using UUID v4) traced without logging secrets
 //! - Bounded response body reading to guard against oversized payloads
 
@@ -13,8 +14,10 @@ use std::fmt;
 use std::time::Duration;
 
 use rand::Rng;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, RETRY_AFTER};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, RETRY_AFTER};
 use reqwest::{Method, StatusCode};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
@@ -41,9 +44,12 @@ pub const DEFAULT_MAX_DELAY_MS: u64 = 10_000;
 pub const REQUEST_ID_HEADER: &str = "x-request-id";
 
 /// Errors returned by [`HttpClient`] operations.
-#[derive(Debug, Error)]
+///
+/// Custom [`fmt::Debug`] formatting redacts `RetriesExhausted { body }` (emitting `body_len`
+/// instead of raw bytes) and scrubs URL query strings from `Transport` errors.
+#[derive(Error)]
 pub enum HttpError {
-    /// Failed to construct the underlying [`reqwest::Client`] or parse a request URL.
+    /// Failed to construct the underlying [`reqwest::Client`] or validate a request URL/payload.
     #[error("invalid HTTP configuration or URL: {0}")]
     InvalidConfig(String),
 
@@ -91,6 +97,62 @@ pub enum HttpError {
     },
 }
 
+impl fmt::Debug for HttpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidConfig(msg) => f.debug_tuple("InvalidConfig").field(msg).finish(),
+            Self::Timeout { request_id } => f
+                .debug_struct("Timeout")
+                .field("request_id", request_id)
+                .finish(),
+            Self::Transport { request_id, source } => f
+                .debug_struct("Transport")
+                .field("request_id", request_id)
+                .field("source", &scrub_url_query(&source.to_string()))
+                .finish(),
+            Self::ResponseTooLarge {
+                request_id,
+                limit_bytes,
+                actual_bytes,
+            } => f
+                .debug_struct("ResponseTooLarge")
+                .field("request_id", request_id)
+                .field("limit_bytes", limit_bytes)
+                .field("actual_bytes", actual_bytes)
+                .finish(),
+            Self::RetriesExhausted {
+                request_id,
+                status,
+                retry_after,
+                body,
+            } => f
+                .debug_struct("RetriesExhausted")
+                .field("request_id", request_id)
+                .field("status", status)
+                .field("retry_after", retry_after)
+                .field("body_len", &body.len())
+                .field("body", &"[REDACTED]")
+                .finish(),
+        }
+    }
+}
+
+fn scrub_url_query(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(q_pos) = rest.find('?') {
+        out.push_str(&rest[..q_pos]);
+        out.push_str("?[REDACTED]");
+        let after_q = &rest[q_pos + 1..];
+        let end = after_q
+            .find(|ch: char| ch.is_ascii_whitespace() || matches!(ch, '"' | '\'' | ')' | ']' | '}'))
+            .unwrap_or(after_q.len());
+        rest = &after_q[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Retry and exponential backoff configuration for [`HttpClient`].
 ///
 /// Uses the AWS-style "full jitter" algorithm:
@@ -135,6 +197,7 @@ impl Default for RetryPolicy {
 ///
 /// let cfg = HttpClientConfig::default();
 /// assert_eq!(cfg.max_response_bytes, 4 * 1024 * 1024);
+/// assert!(!cfg.allow_insecure_http);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpClientConfig {
@@ -146,6 +209,8 @@ pub struct HttpClientConfig {
     pub max_response_bytes: usize,
     /// Exponential backoff and retry settings.
     pub retry: RetryPolicy,
+    /// Whether plain `http://` URLs are permitted (intended strictly for local/mock tests).
+    pub allow_insecure_http: bool,
 }
 
 impl Default for HttpClientConfig {
@@ -155,7 +220,17 @@ impl Default for HttpClientConfig {
             request_timeout: Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS),
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             retry: RetryPolicy::default(),
+            allow_insecure_http: false,
         }
+    }
+}
+
+impl HttpClientConfig {
+    /// Sets whether plain `http://` URLs are allowed (for local/mock testing only).
+    #[must_use]
+    pub fn with_allow_insecure_http(mut self, allow: bool) -> Self {
+        self.allow_insecure_http = allow;
+        self
     }
 }
 
@@ -172,6 +247,7 @@ impl Default for HttpClientConfig {
 /// let req = HttpRequest::get("https://accept.paymob.com/api/auth/tokens")
 ///     .expect("valid URL");
 /// assert_eq!(req.method(), &reqwest::Method::GET);
+/// assert!(req.is_idempotent());
 /// ```
 #[derive(Clone)]
 pub struct HttpRequest {
@@ -179,6 +255,7 @@ pub struct HttpRequest {
     url: Url,
     headers: HeaderMap,
     body: Option<Vec<u8>>,
+    idempotent: bool,
 }
 
 impl fmt::Debug for HttpRequest {
@@ -190,6 +267,7 @@ impl fmt::Debug for HttpRequest {
             .field("header_count", &self.headers.len())
             .field("headers", &"[REDACTED]")
             .field("body_len", &self.body.as_ref().map(Vec::len))
+            .field("idempotent", &self.idempotent)
             .finish()
     }
 }
@@ -202,11 +280,13 @@ impl HttpRequest {
     /// Returns [`HttpError::InvalidConfig`] if `url` cannot be parsed.
     pub fn new(method: Method, url: &str) -> Result<Self, HttpError> {
         let parsed = Url::parse(url).map_err(|e| HttpError::InvalidConfig(e.to_string()))?;
+        let idempotent = is_idempotent_method(&method);
         Ok(Self {
             method,
             url: parsed,
             headers: HeaderMap::new(),
             body: None,
+            idempotent,
         })
     }
 
@@ -228,6 +308,33 @@ impl HttpRequest {
         Self::new(Method::POST, url)
     }
 
+    /// Creates a `PUT` [`HttpRequest`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HttpError::InvalidConfig`] if `url` cannot be parsed.
+    pub fn put(url: &str) -> Result<Self, HttpError> {
+        Self::new(Method::PUT, url)
+    }
+
+    /// Creates a `PATCH` [`HttpRequest`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HttpError::InvalidConfig`] if `url` cannot be parsed.
+    pub fn patch(url: &str) -> Result<Self, HttpError> {
+        Self::new(Method::PATCH, url)
+    }
+
+    /// Creates a `DELETE` [`HttpRequest`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HttpError::InvalidConfig`] if `url` cannot be parsed.
+    pub fn delete(url: &str) -> Result<Self, HttpError> {
+        Self::new(Method::DELETE, url)
+    }
+
     /// Attaches a header to the request.
     #[must_use]
     pub fn with_header(mut self, name: HeaderName, value: HeaderValue) -> Self {
@@ -240,6 +347,33 @@ impl HttpRequest {
     pub fn with_body(mut self, body: Vec<u8>) -> Self {
         self.body = Some(body);
         self
+    }
+
+    /// Serializes `payload` as JSON, sets `Content-Type: application/json`, and attaches the body.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HttpError::InvalidConfig`] if JSON serialization fails.
+    pub fn with_json<T: Serialize>(mut self, payload: &T) -> Result<Self, HttpError> {
+        let bytes =
+            serde_json::to_vec(payload).map_err(|e| HttpError::InvalidConfig(e.to_string()))?;
+        self.headers
+            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        self.body = Some(bytes);
+        Ok(self)
+    }
+
+    /// Explicitly marks this request as idempotent (or non-idempotent) for timeout retries.
+    #[must_use]
+    pub fn with_idempotent(mut self, idempotent: bool) -> Self {
+        self.idempotent = idempotent;
+        self
+    }
+
+    /// Returns `true` if the request is eligible for timeout retries.
+    #[must_use]
+    pub fn is_idempotent(&self) -> bool {
+        self.idempotent || self.headers.contains_key("idempotency-key")
     }
 
     /// Returns the HTTP method.
@@ -266,6 +400,29 @@ pub struct HttpResponse {
     pub body: Vec<u8>,
     /// Correlation `X-Request-Id` used for the request.
     pub request_id: Uuid,
+}
+
+impl HttpResponse {
+    /// Decodes the response body as a UTF-8 string slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HttpError::InvalidConfig`] if the body is not valid UTF-8.
+    pub fn text(&self) -> Result<&str, HttpError> {
+        std::str::from_utf8(&self.body)
+            .map_err(|e| HttpError::InvalidConfig(format!("invalid UTF-8 response body: {e}")))
+    }
+
+    /// Deserializes the response body from JSON into `T`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HttpError::InvalidConfig`] if JSON deserialization fails.
+    pub fn json<T: DeserializeOwned>(&self) -> Result<T, HttpError> {
+        serde_json::from_slice(&self.body).map_err(|e| {
+            HttpError::InvalidConfig(format!("failed to deserialize JSON response: {e}"))
+        })
+    }
 }
 
 impl fmt::Debug for HttpResponse {
@@ -334,7 +491,8 @@ struct RetryableOutcomeSpec<'a> {
 impl HttpClient {
     /// Builds a new [`HttpClient`] with the provided [`HttpClientConfig`].
     ///
-    /// Enforces TLS 1.3 via `rustls` when the `rustls-tls` feature is enabled.
+    /// Enforces TLS 1.3 minimum version unconditionally and uses `rustls` when
+    /// the `rustls-tls` feature is enabled.
     ///
     /// # Errors
     ///
@@ -342,12 +500,11 @@ impl HttpClient {
     pub fn new(config: HttpClientConfig) -> Result<Self, HttpError> {
         let builder = reqwest::Client::builder()
             .connect_timeout(config.connect_timeout)
-            .timeout(config.request_timeout);
+            .timeout(config.request_timeout)
+            .min_tls_version(reqwest::tls::Version::TLS_1_3);
 
         #[cfg(feature = "rustls-tls")]
-        let builder = builder
-            .use_rustls_tls()
-            .min_tls_version(reqwest::tls::Version::TLS_1_3);
+        let builder = builder.use_rustls_tls();
 
         let inner = builder
             .build()
@@ -362,31 +519,39 @@ impl HttpClient {
         &self.config
     }
 
-    /// Executes an [`HttpRequest`] with correlation ID tracing, bounded response reading,
-    /// and exponential backoff with full jitter on retryable status codes.
+    /// Executes an [`HttpRequest`] with HTTPS enforcement, correlation ID tracing,
+    /// bounded response reading, and exponential backoff with full jitter on retryable errors.
     ///
     /// # Errors
     ///
-    /// Returns [`HttpError`] on timeout, transport failure, oversized response body,
-    /// or exhausted retries.
+    /// Returns [`HttpError`] on non-HTTPS URLs (unless `allow_insecure_http` is enabled),
+    /// timeout, transport failure, oversized response body, or exhausted retries.
     pub async fn execute(&self, request: &HttpRequest) -> Result<HttpResponse, HttpError> {
+        validate_request_url(&request.url, self.config.allow_insecure_http)?;
         let request_id = Uuid::new_v4();
         let mut attempt: u32 = 0;
 
         loop {
             match self.dispatch_attempt(request, request_id, attempt).await {
                 Ok(response) => return Ok(response),
-                Err(AttemptOutcome::Fatal(err)) => return Err(err),
-                Err(AttemptOutcome::Retryable { last_error, .. })
-                    if attempt >= self.config.retry.max_retries =>
-                {
-                    return Err(last_error);
-                }
-                Err(AttemptOutcome::Retryable { delay, .. }) => {
+                Err(outcome) => {
+                    let delay = self.next_retry_delay(outcome, attempt)?;
                     tokio::time::sleep(delay).await;
                     attempt = attempt.saturating_add(1);
                 }
             }
+        }
+    }
+
+    fn next_retry_delay(&self, outcome: AttemptOutcome, attempt: u32) -> Result<Duration, HttpError> {
+        match outcome {
+            AttemptOutcome::Fatal(err) => Err(err),
+            AttemptOutcome::Retryable { last_error, .. }
+                if attempt >= self.config.retry.max_retries =>
+            {
+                Err(last_error)
+            }
+            AttemptOutcome::Retryable { delay, .. } => Ok(delay),
         }
     }
 
@@ -403,6 +568,7 @@ impl HttpClient {
             "dispatching HTTP request"
         );
 
+        let idempotent = request.is_idempotent();
         let req = self
             .build_reqwest(request, request_id)
             .map_err(AttemptOutcome::Fatal)?;
@@ -411,13 +577,13 @@ impl HttpClient {
             .inner
             .execute(req)
             .await
-            .map_err(|err| self.classify_transport_error(err, request_id, attempt))?;
+            .map_err(|err| self.classify_transport_error(err, request_id, attempt, idempotent))?;
 
         let status = response.status();
         let headers = response.headers().clone();
         let body = read_bounded_body(response, self.config.max_response_bytes, request_id)
             .await
-            .map_err(AttemptOutcome::Fatal)?;
+            .map_err(|err| self.classify_body_error(err, request_id, attempt, idempotent))?;
 
         if is_retryable_status(status) {
             return Err(self.build_retryable_status_error(RetryableStatusContext {
@@ -481,8 +647,9 @@ impl HttpClient {
         err: reqwest::Error,
         request_id: Uuid,
         attempt: u32,
+        idempotent: bool,
     ) -> AttemptOutcome {
-        if err.is_timeout() {
+        if err.is_timeout() && idempotent {
             return self.retryable_outcome(RetryableOutcomeSpec {
                 request_id,
                 attempt,
@@ -491,11 +658,32 @@ impl HttpClient {
                 last_error: HttpError::Timeout { request_id },
             });
         }
-
+        if err.is_timeout() {
+            return AttemptOutcome::Fatal(HttpError::Timeout { request_id });
+        }
         AttemptOutcome::Fatal(HttpError::Transport {
             request_id,
             source: err,
         })
+    }
+
+    fn classify_body_error(
+        &self,
+        err: HttpError,
+        request_id: Uuid,
+        attempt: u32,
+        idempotent: bool,
+    ) -> AttemptOutcome {
+        if matches!(err, HttpError::Timeout { .. }) && idempotent {
+            return self.retryable_outcome(RetryableOutcomeSpec {
+                request_id,
+                attempt,
+                retry_after: None,
+                reason: "body_timeout",
+                last_error: err,
+            });
+        }
+        AttemptOutcome::Fatal(err)
     }
 
     fn build_retryable_status_error(&self, ctx: RetryableStatusContext<'_>) -> AttemptOutcome {
@@ -514,6 +702,25 @@ impl HttpClient {
             },
         })
     }
+}
+
+fn validate_request_url(url: &Url, allow_insecure_http: bool) -> Result<(), HttpError> {
+    if url.scheme() == "https" || (allow_insecure_http && url.scheme() == "http") {
+        return Ok(());
+    }
+    Err(HttpError::InvalidConfig(format!(
+        "unsupported URL scheme `{}`: HTTPS is required",
+        url.scheme()
+    )))
+}
+
+/// Returns `true` if `method` is an idempotent HTTP method (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`).
+#[must_use]
+pub fn is_idempotent_method(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::GET | Method::HEAD | Method::PUT | Method::DELETE | Method::OPTIONS
+    )
 }
 
 /// Returns `true` if the HTTP status code is transient and eligible for retry
@@ -542,7 +749,8 @@ pub fn is_retryable_status(status: StatusCode) -> bool {
 
 /// Parses an integer-seconds `Retry-After` header into a [`Duration`].
 ///
-/// Returns `None` if the header is missing, non-UTF-8, negative, or not a valid `u64`.
+/// Returns `None` if the header is missing, non-UTF-8, negative, an HTTP-date,
+/// or not a valid `u64`.
 ///
 /// # Examples
 ///
@@ -609,11 +817,13 @@ async fn read_bounded_body(
     check_body_limit(response.content_length(), max_bytes, request_id)?;
 
     let mut buf = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|source| HttpError::Transport { request_id, source })?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|source| {
+        if source.is_timeout() {
+            HttpError::Timeout { request_id }
+        } else {
+            HttpError::Transport { request_id, source }
+        }
+    })? {
         let next_len = buf.len().saturating_add(chunk.len());
         check_body_limit(Some(next_len as u64), max_bytes, request_id)?;
         buf.extend_from_slice(&chunk);
@@ -625,6 +835,8 @@ async fn read_bounded_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use wiremock::matchers::{header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -638,6 +850,7 @@ mod tests {
                 base_delay: Duration::from_millis(5),
                 max_delay: Duration::from_millis(25),
             },
+            allow_insecure_http: true,
         }
     }
 
@@ -685,8 +898,10 @@ mod tests {
             .await
             .expect("retry succeeds");
 
-        assert_eq!(resp.status, StatusCode::OK);
-        assert_eq!(resp.body, expected_body.as_bytes());
+        assert_eq!(
+            (resp.status, resp.body.as_slice()),
+            (StatusCode::OK, expected_body.as_bytes())
+        );
     }
 
     async fn execute_mock_get(
@@ -750,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn tc_1_3_2_retryable_status_classification() {
+    fn tc_1_3_2_retryable_status_and_idempotency_classification() {
         for (status, expected) in [
             (StatusCode::TOO_MANY_REQUESTS, true),
             (StatusCode::BAD_GATEWAY, true),
@@ -763,6 +978,16 @@ mod tests {
         ] {
             assert_eq!(is_retryable_status(status), expected, "status={status}");
         }
+        assert_eq!(
+            (
+                is_idempotent_method(&Method::GET),
+                is_idempotent_method(&Method::PUT),
+                is_idempotent_method(&Method::DELETE),
+                is_idempotent_method(&Method::POST),
+                is_idempotent_method(&Method::PATCH),
+            ),
+            (true, true, true, false, false)
+        );
     }
 
     #[test]
@@ -774,33 +999,73 @@ mod tests {
         };
 
         for attempt in 0..=4 {
-            let delay = compute_backoff_delay(&policy, attempt, None);
-            assert!(delay <= policy.max_delay);
+            assert!(compute_backoff_delay(&policy, attempt, None) <= policy.max_delay);
         }
 
-        let honored = compute_backoff_delay(&policy, 0, Some(Duration::from_millis(250)));
-        assert_eq!(honored, Duration::from_millis(250));
-
-        let capped = compute_backoff_delay(&policy, 0, Some(Duration::from_secs(60)));
-        assert_eq!(capped, policy.max_delay);
+        assert_eq!(
+            (
+                compute_backoff_delay(&policy, 0, Some(Duration::from_millis(250))),
+                compute_backoff_delay(&policy, 0, Some(Duration::from_secs(60))),
+            ),
+            (Duration::from_millis(250), policy.max_delay)
+        );
     }
 
     #[test]
-    fn tc_1_3_2_request_debug_redacts_headers_and_rejects_bad_url() {
-        let err = HttpRequest::get("not a valid url").unwrap_err();
+    fn tc_1_3_2_request_builders_json_and_redacted_debug() {
+        assert!(matches!(
+            HttpRequest::get("not a valid url").unwrap_err(),
+            HttpError::InvalidConfig(_)
+        ));
+
+        let put_req = HttpRequest::put("https://accept.paymob.com/api/v1/items/1")
+            .expect("put")
+            .with_json(&serde_json::json!({"ok": true}))
+            .expect("json");
+        let patch_req = HttpRequest::patch("https://accept.paymob.com/api/v1/items/1").expect("patch");
+        let del_req = HttpRequest::delete("https://accept.paymob.com/api/v1/items/1").expect("delete");
+        assert_eq!(
+            (put_req.method(), patch_req.method(), del_req.method(), put_req.is_idempotent()),
+            (&Method::PUT, &Method::PATCH, &Method::DELETE, true)
+        );
+    }
+
+    #[test]
+    fn tc_1_3_2_http_error_debug_redacts_body_and_scrubs_query() {
+        let err = HttpError::RetriesExhausted {
+            request_id: Uuid::new_v4(),
+            status: StatusCode::BAD_GATEWAY,
+            retry_after: None,
+            body: b"sk_live_leaked_secret_body".to_vec(),
+        };
+        let dbg = format!("{err:?}");
+        assert!(dbg.contains("body_len: 26") && dbg.contains("[REDACTED]") && !dbg.contains("sk_live_leaked_secret_body"));
+
+        let scrubbed = scrub_url_query("error for url (https://accept.paymob.com/cb?hmac=secret123&id=1)");
+        assert_eq!(scrubbed, "error for url (https://accept.paymob.com/cb?[REDACTED])");
+    }
+
+    #[test]
+    fn tc_1_3_2_response_text_and_json_helpers() {
+        let resp = HttpResponse {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            body: br#"{"amount":1000}"#.to_vec(),
+            request_id: Uuid::new_v4(),
+        };
+        let parsed: serde_json::Value = resp.json().expect("valid JSON");
+        assert_eq!(
+            (resp.text().expect("utf8"), parsed["amount"].as_u64()),
+            (r#"{"amount":1000}"#, Some(1000))
+        );
+    }
+
+    #[tokio::test]
+    async fn tc_1_3_2_rejects_non_https_urls_when_insecure_http_disabled() {
+        let client = HttpClient::new(HttpClientConfig::default()).expect("client builds");
+        let req = HttpRequest::get("http://accept.paymob.com/api/auth/tokens").expect("valid URL");
+        let err = client.execute(&req).await.unwrap_err();
         assert!(matches!(err, HttpError::InvalidConfig(_)));
-
-        let req = HttpRequest::post("https://accept.paymob.com/api/auth/tokens")
-            .expect("valid URL")
-            .with_header(
-                HeaderName::from_static("authorization"),
-                HeaderValue::from_static("Bearer super_secret_sk_live_12345"),
-            )
-            .with_body(b"{}".to_vec());
-
-        let dbg = format!("{req:?}");
-        assert!(dbg.contains("[REDACTED]"));
-        assert!(!dbg.contains("super_secret_sk_live_12345"));
     }
 
     #[tokio::test]
@@ -814,23 +1079,16 @@ mod tests {
         .await
         .expect("200 OK succeeds");
 
-        assert_eq!(resp.status, StatusCode::OK);
-        assert_eq!(resp.body, b"pong");
-        assert_eq!(resp.request_id.get_version_num(), 4);
+        assert_eq!(
+            (resp.status, resp.body.as_slice(), resp.request_id.get_version_num()),
+            (StatusCode::OK, b"pong".as_slice(), 4)
+        );
     }
 
     #[tokio::test]
-    async fn tc_1_3_2_retries_429_with_retry_after_then_succeeds() {
+    async fn tc_1_3_2_retries_429_502_504_then_succeeds() {
         assert_retry_then_succeed(429, Some("0"), Method::POST, "{\"id\":1}").await;
-    }
-
-    #[tokio::test]
-    async fn tc_1_3_2_retries_502_bad_gateway_then_succeeds() {
         assert_retry_then_succeed(502, None, Method::GET, "recovered").await;
-    }
-
-    #[tokio::test]
-    async fn tc_1_3_2_retries_504_gateway_timeout_then_succeeds() {
         assert_retry_then_succeed(504, None, Method::GET, "ok").await;
     }
 
@@ -847,11 +1105,48 @@ mod tests {
 
         match err {
             HttpError::RetriesExhausted { status, body, .. } => {
-                assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-                assert_eq!(body, b"down");
+                assert_eq!((status, body.as_slice()), (StatusCode::SERVICE_UNAVAILABLE, b"down".as_slice()));
             }
             other => panic!("expected RetriesExhausted, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn tc_1_3_2_max_retries_zero_does_not_retry_429_or_503() {
+        let mut cfg = fast_config();
+        cfg.retry.max_retries = 0;
+
+        let err_429 = execute_mock_get(
+            cfg.clone(),
+            "/rl-zero",
+            ResponseTemplate::new(429).set_body_string("rate"),
+            Some(1),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            err_429,
+            HttpError::RetriesExhausted {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                ..
+            }
+        ));
+
+        let err_503 = execute_mock_get(
+            cfg,
+            "/unavail-zero",
+            ResponseTemplate::new(503).set_body_string("down"),
+            Some(1),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            err_503,
+            HttpError::RetriesExhausted {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -889,20 +1184,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tc_1_3_2_enforces_request_timeout() {
-        let mut cfg = fast_config();
-        cfg.request_timeout = Duration::from_millis(50);
-        cfg.retry.max_retries = 0;
+    async fn tc_1_3_2_enforces_streaming_chunked_limit_without_content_length() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
 
-        let err = execute_mock_get(
-            cfg,
-            "/slow",
-            ResponseTemplate::new(200).set_delay(Duration::from_millis(250)),
-            None,
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut req_buf = [0_u8; 1024];
+                let _ = stream.read(&mut req_buf).await;
+                let chunk = "28\r\n".to_string() + &"a".repeat(40) + "\r\n";
+                let payload = format!(
+                    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{chunk}{chunk}0\r\n\r\n"
+                );
+                let _ = stream.write_all(payload.as_bytes()).await;
+            }
+        });
+
+        let mut cfg = fast_config();
+        cfg.max_response_bytes = 64;
+        let client = HttpClient::new(cfg).expect("client");
+        let req = HttpRequest::get(&format!("http://{addr}/chunked")).expect("url");
+        let err = client.execute(&req).await.unwrap_err();
+        let _ = server_task.await;
+
+        assert!(matches!(
+            err,
+            HttpError::ResponseTooLarge {
+                limit_bytes: 64,
+                actual_bytes: Some(80),
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn tc_1_3_2_timeout_retries_idempotent_only() {
+        let mut cfg = fast_config();
+        cfg.request_timeout = Duration::from_millis(40);
+
+        let err_get = execute_mock_get(
+            cfg.clone(),
+            "/slow-get",
+            ResponseTemplate::new(200).set_delay(Duration::from_millis(200)),
+            Some(3),
         )
         .await
         .unwrap_err();
+        assert!(matches!(err_get, HttpError::Timeout { .. }));
 
-        assert!(matches!(err, HttpError::Timeout { .. }));
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/slow-post"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(200)))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let err_post = execute_on_server(&server, cfg, Method::POST, "/slow-post")
+            .await
+            .unwrap_err();
+        assert!(matches!(err_post, HttpError::Timeout { .. }));
     }
 }

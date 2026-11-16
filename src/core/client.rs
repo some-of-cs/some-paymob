@@ -9,21 +9,21 @@
 use std::fmt;
 use std::sync::Arc;
 
-use reqwest::Client;
 use url::Url;
 
 use crate::core::config::ClientConfig;
 use crate::core::error::PaymobError;
+use crate::core::http::{HttpClient, HttpClientConfig, RetryPolicy};
 use crate::core::region::RegionalEndpoints;
 
 /// Shared microkernel state backing [`PaymobClient`].
 ///
 /// Holds the validated [`ClientConfig`], resolved [`RegionalEndpoints`], and
-/// the underlying TLS 1.3 [`reqwest::Client`] transport pool.
+/// the underlying resilient TLS 1.3 [`HttpClient`] transport pipeline.
 pub struct PaymobCore {
     config: ClientConfig,
     endpoints: RegionalEndpoints,
-    http: Client,
+    http: HttpClient,
 }
 
 impl fmt::Debug for PaymobCore {
@@ -89,7 +89,9 @@ impl PaymobClient {
     /// Constructs a new [`PaymobClient`] from a validated [`ClientConfig`].
     ///
     /// Resolves [`RegionalEndpoints`] for the configured region and initializes
-    /// the underlying [`reqwest::Client`] with the configured request timeout.
+    /// the underlying [`HttpClient`] with `connect_timeout`, `request_timeout`,
+    /// TLS 1.3 (when `rustls-tls` is enabled), and `max_retries` mapped from
+    /// `config`.
     ///
     /// # Errors
     ///
@@ -117,9 +119,17 @@ impl PaymobClient {
     /// ```
     pub fn new(config: ClientConfig) -> Result<Self, PaymobError> {
         let endpoints = config.region().endpoints()?;
-        let http = Client::builder()
-            .timeout(config.timeout())
-            .build()
+        let default_http = HttpClientConfig::default();
+        let http_config = HttpClientConfig {
+            connect_timeout: config.timeout().min(default_http.connect_timeout),
+            request_timeout: config.timeout(),
+            max_response_bytes: default_http.max_response_bytes,
+            retry: RetryPolicy {
+                max_retries: config.max_retries(),
+                ..default_http.retry
+            },
+        };
+        let http = HttpClient::new(http_config)
             .map_err(|err| PaymobError::TransportError(err.to_string()))?;
         let core = PaymobCore {
             config,
@@ -181,9 +191,9 @@ impl PaymobClient {
         &self.inner.endpoints
     }
 
-    /// Returns a reference to the underlying [`reqwest::Client`] transport.
+    /// Returns a reference to the underlying resilient [`HttpClient`] transport.
     #[must_use]
-    pub fn http(&self) -> &Client {
+    pub fn http(&self) -> &HttpClient {
         &self.inner.http
     }
 
@@ -193,8 +203,9 @@ impl PaymobClient {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `path` is empty, contains an
-    /// explicit URL scheme/authority, or produces an invalid URL.
+    /// Returns [`PaymobError::ValidationError`] if `path` is empty, contains control
+    /// characters, backslashes, `.`/`..` traversal segments, an explicit URL
+    /// scheme/authority, or produces an invalid URL.
     ///
     /// # Examples
     ///
@@ -225,8 +236,9 @@ impl PaymobClient {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `path` is empty, contains an
-    /// explicit URL scheme/authority, or produces an invalid URL.
+    /// Returns [`PaymobError::ValidationError`] if `path` is empty, contains control
+    /// characters, backslashes, `.`/`..` traversal segments, an explicit URL
+    /// scheme/authority, or produces an invalid URL.
     ///
     /// # Examples
     ///
@@ -263,8 +275,8 @@ impl PaymobClient {
     ///
     /// Returns [`PaymobError::ValidationError`] if Payouts is unavailable for the
     /// configured region (such as [`crate::core::region::PaymobRegion::Pakistan`]),
-    /// or if `path` is empty, contains an explicit URL scheme/authority, or
-    /// produces an invalid URL.
+    /// or if `path` is empty, contains control characters, backslashes, `.`/`..`
+    /// traversal segments, an explicit URL scheme/authority, or produces an invalid URL.
     ///
     /// # Examples
     ///
@@ -304,12 +316,36 @@ impl PaymobClient {
     }
 }
 
+fn has_forbidden_chars_or_authority(path: &str, trimmed: &str) -> bool {
+    trimmed.is_empty()
+        || path.bytes().any(|b| b.is_ascii_control())
+        || trimmed.contains('\\')
+        || trimmed.contains("://")
+        || trimmed.starts_with("//")
+}
+
+fn has_scheme_prefix(trimmed: &str) -> bool {
+    let before_query = trimmed.split(['?', '#']).next().unwrap_or(trimmed);
+    let first_segment = before_query.split('/').next().unwrap_or(before_query);
+    first_segment.contains(':')
+}
+
+fn has_dot_segment(trimmed: &str) -> bool {
+    let before_query = trimmed.split(['?', '#']).next().unwrap_or(trimmed);
+    before_query
+        .split('/')
+        .any(|segment| segment == "." || segment == "..")
+}
+
 fn ensure_relative_path(path: &str) -> Result<&str, PaymobError> {
     let trimmed = path.trim();
-    if trimmed.contains("://") || trimmed.starts_with("//") {
+    if has_forbidden_chars_or_authority(path, trimmed)
+        || has_scheme_prefix(trimmed)
+        || has_dot_segment(trimmed)
+    {
         return Err(PaymobError::ValidationError {
             field: "path",
-            reason: "relative endpoint path must not contain a URL scheme or authority".to_owned(),
+            reason: "relative endpoint path must be non-empty, relative, and free of control chars or traversal segments".to_owned(),
         });
     }
     Ok(trimmed)
@@ -324,6 +360,8 @@ fn parse_regional_url(resolved: &str, field: &'static str) -> Result<Url, Paymob
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::core::credentials::{PublicKey, SecretKey};
     use crate::core::region::PaymobRegion;
@@ -357,57 +395,71 @@ mod tests {
     }
 
     #[test]
+    fn tc_1_1_4_http_client_wires_timeout_and_retries() {
+        let config = ClientConfig::builder()
+            .region(PaymobRegion::Egypt)
+            .timeout(Duration::from_secs(5))
+            .max_retries(7)
+            .build()
+            .expect("valid config");
+        let client = PaymobClient::new(config).expect("valid PaymobClient");
+        let http_cfg = client.http().config();
+        assert_eq!(
+            (http_cfg.connect_timeout, http_cfg.request_timeout, http_cfg.retry.max_retries),
+            (Duration::from_secs(5), Duration::from_secs(5), 7)
+        );
+    }
+
+    #[test]
     fn tc_1_1_4_regional_url_builders_preserve_trailing_slashes() {
         let client = sample_client(PaymobRegion::Egypt);
         let accept = client
             .accept_url("/v1/intention/")
             .expect("accept URL should parse");
-        assert_eq!(accept.as_str(), "https://accept.paymob.com/v1/intention/");
-
         let checkout = client
             .checkout_url("?publicKey=pk_1&clientSecret=cs_1")
             .expect("checkout URL should parse");
-        assert_eq!(
-            checkout.as_str(),
-            "https://accept.paymob.com/unifiedcheckout/?publicKey=pk_1&clientSecret=cs_1"
-        );
-
         let payouts = client
             .payouts_url("/api/secure/disburse/")
             .expect("payouts URL should parse");
         assert_eq!(
-            payouts.as_str(),
-            "https://payouts.paymobsolutions.com/api/secure/disburse/"
+            (accept.as_str(), checkout.as_str(), payouts.as_str()),
+            (
+                "https://accept.paymob.com/v1/intention/",
+                "https://accept.paymob.com/unifiedcheckout/?publicKey=pk_1&clientSecret=cs_1",
+                "https://payouts.paymobsolutions.com/api/secure/disburse/",
+            )
         );
     }
 
     #[test]
-    fn tc_1_1_4_regional_url_builders_reject_scheme_or_authority_injection() {
+    fn tc_1_1_4_regional_url_builders_reject_unsafe_paths() {
         let client = sample_client(PaymobRegion::Egypt);
-        let scheme_err = client
-            .accept_url("https://evil.example.com/steal")
-            .expect_err("scheme injection must be rejected");
-        assert!(matches!(
-            scheme_err,
-            PaymobError::ValidationError { field: "path", .. }
-        ));
-
-        let authority_err = client
-            .payouts_url("//evil.example.com/steal")
-            .expect_err("protocol-relative authority must be rejected");
-        assert!(matches!(
-            authority_err,
-            PaymobError::ValidationError { field: "path", .. }
-        ));
+        let unsafe_paths = [
+            "https://evil.example.com/steal",
+            "//evil.example.com/steal",
+            "http:evil.example.com",
+            "/v1/../admin",
+            "./v1/intention",
+            "/v1\\intention",
+            "/v1/intention\r\nX-Injected: 1",
+            "/v1/intention\0",
+            "/v1/\tintention",
+        ];
+        for bad in unsafe_paths {
+            assert!(matches!(
+                client.accept_url(bad),
+                Err(PaymobError::ValidationError { field: "path", .. })
+            ));
+        }
     }
 
     #[test]
     fn tc_1_1_4_config_and_endpoints_accessors_match_region() {
         let client = sample_client(PaymobRegion::SaudiArabia);
-        assert_eq!(client.config().region(), &PaymobRegion::SaudiArabia);
         assert_eq!(
-            client.endpoints().accept_base_url,
-            "https://ksa.paymob.com"
+            (client.config().region(), client.endpoints().accept_base_url.as_str()),
+            (&PaymobRegion::SaudiArabia, "https://ksa.paymob.com")
         );
     }
 
@@ -416,30 +468,19 @@ mod tests {
         let client = sample_client(PaymobRegion::Egypt);
         let debug_str = format!("{client:?}");
         assert!(debug_str.contains("[REDACTED]"));
-        assert!(!debug_str.contains("626supersecretvalue"));
-        assert!(!debug_str.contains("egy_sk_test_"));
+        assert!(!debug_str.contains("626supersecretvalue") && !debug_str.contains("egy_sk_test_"));
     }
 
     #[test]
     fn tc_1_1_4_empty_path_and_unsupported_payouts_are_rejected() {
         let client = sample_client(PaymobRegion::Pakistan);
-        let empty_err = client
-            .accept_url("")
-            .expect_err("empty path must be rejected");
         assert!(matches!(
-            empty_err,
-            PaymobError::ValidationError { field: "path", .. }
+            client.accept_url(""),
+            Err(PaymobError::ValidationError { field: "path", .. })
         ));
-
-        let payouts_err = client
-            .payouts_url("/api/secure/disburse/")
-            .expect_err("Pakistan payouts must be rejected");
         assert!(matches!(
-            payouts_err,
-            PaymobError::ValidationError {
-                field: "region",
-                ..
-            }
+            client.payouts_url("/api/secure/disburse/"),
+            Err(PaymobError::ValidationError { field: "region", .. })
         ));
     }
 

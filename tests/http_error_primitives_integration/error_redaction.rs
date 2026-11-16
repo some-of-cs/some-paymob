@@ -37,7 +37,11 @@ fn tc_1_3_1_paymob_error_redacts_secrets_and_pii_in_display_and_debug() {
             PaymobError::WebhookError(
                 "user@example.com card 4111 1111 1111 1111 mobile +20 101 234 5678".to_string(),
             ),
-            vec!["user@example.com", "4111 1111 1111 1111", "+20 101 234 5678"],
+            vec![
+                "user@example.com",
+                "4111 1111 1111 1111",
+                "+20 101 234 5678",
+            ],
         ),
     ];
 

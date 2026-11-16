@@ -359,7 +359,8 @@ impl PaymobRegion {
     /// assert_eq!(PaymobRegion::Pakistan.country_code(), "PAK");
     /// ```
     pub fn country_code(&self) -> &'static str {
-        self.builtin_spec().map_or("CUSTOM", |spec| spec.country_code)
+        self.builtin_spec()
+            .map_or("CUSTOM", |spec| spec.country_code)
     }
 }
 
@@ -547,9 +548,7 @@ impl RawEndpointPath<'_> {
     /// Returns `true` when `self.0` (no trailing slash) requires a trailing `/`
     /// under Paymob's API contract.
     fn requires_trailing_slash(&self) -> bool {
-        self.0 == "/v1/intention"
-            || self.0 == "/api/secure"
-            || self.0.starts_with("/api/secure/")
+        self.0 == "/v1/intention" || self.0 == "/api/secure" || self.0.starts_with("/api/secure/")
     }
 }
 
@@ -558,8 +557,7 @@ fn resolve_custom_endpoints(inputs: CustomUrlInputs<'_>) -> Result<RegionalEndpo
     let accept = CustomUrlCandidate(inputs.accept_base_url).validate(CustomUrlField::Accept)?;
     let checkout =
         CustomUrlCandidate(inputs.checkout_base_url).validate(CustomUrlField::Checkout)?;
-    let payouts =
-        CustomUrlCandidate(inputs.payouts_base_url).validate(CustomUrlField::Payouts)?;
+    let payouts = CustomUrlCandidate(inputs.payouts_base_url).validate(CustomUrlField::Payouts)?;
     let payouts_staging = CustomUrlCandidate(inputs.payouts_staging_base_url)
         .validate(CustomUrlField::PayoutsStaging)?;
 
@@ -826,7 +824,9 @@ mod tests {
     fn tc_1_1_1_url_resolution_succeeds_for_egypt() {
         assert_eq!(
             (
-                PaymobRegion::Egypt.resolve_accept_url("v1/intention").unwrap(),
+                PaymobRegion::Egypt
+                    .resolve_accept_url("v1/intention")
+                    .unwrap(),
                 PaymobRegion::Egypt
                     .resolve_checkout_url("?publicKey=pk_test&clientSecret=cs_test")
                     .unwrap(),
@@ -836,7 +836,8 @@ mod tests {
             ),
             (
                 "https://accept.paymob.com/v1/intention/".to_string(),
-                "https://accept.paymob.com/unifiedcheckout/?publicKey=pk_test&clientSecret=cs_test".to_string(),
+                "https://accept.paymob.com/unifiedcheckout/?publicKey=pk_test&clientSecret=cs_test"
+                    .to_string(),
                 "https://payouts.paymobsolutions.com/api/secure/disburse/".to_string(),
             )
         );
@@ -846,7 +847,10 @@ mod tests {
     fn tc_1_1_1_pakistan_payouts_and_empty_path_rejected() {
         assert!(matches!(
             PaymobRegion::Pakistan.resolve_payouts_url("/api/secure/disburse/", false),
-            Err(PaymobError::ValidationError { field: "region", .. })
+            Err(PaymobError::ValidationError {
+                field: "region",
+                ..
+            })
         ));
         assert!(matches!(
             PaymobRegion::Egypt.resolve_accept_url("   "),
@@ -858,7 +862,10 @@ mod tests {
     fn tc_1_1_1_pakistan_staging_payouts_rejected() {
         assert!(matches!(
             PaymobRegion::Pakistan.resolve_payouts_url("/api/secure/disburse/", true),
-            Err(PaymobError::ValidationError { field: "region", .. })
+            Err(PaymobError::ValidationError {
+                field: "region",
+                ..
+            })
         ));
     }
 

@@ -47,7 +47,10 @@ async fn mount_payouts_grant_mock(server: &MockServer, spec: PayoutsMockSpec<'_>
     Mock::given(method("POST"))
         .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
         .and(header("authorization", "Basic Y2lkOmNzZWM="))
-        .and(body_string_contains(format!("grant_type={}", spec.grant_type)))
+        .and(body_string_contains(format!(
+            "grant_type={}",
+            spec.grant_type
+        )))
         .and(body_string_contains(spec.extra_body_fragment))
         .respond_with(ResponseTemplate::new(spec.status).set_body_json(spec.response_body))
         .expect(spec.expected)
@@ -133,11 +136,19 @@ async fn tc_1_2_4_payouts_refresh_token_renewal() {
     let provider = provider_with_cache(&server, cache);
 
     assert_eq!(
-        provider.access_token().await.expect("initial").expose_secret(),
+        provider
+            .access_token()
+            .await
+            .expect("initial")
+            .expose_secret(),
         "po-acc-1"
     );
     assert_eq!(
-        provider.access_token().await.expect("refreshed").expose_secret(),
+        provider
+            .access_token()
+            .await
+            .expect("refreshed")
+            .expose_secret(),
         "po-acc-2"
     );
 }

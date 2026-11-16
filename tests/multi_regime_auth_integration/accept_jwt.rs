@@ -99,7 +99,9 @@ async fn tc_1_2_3_accept_jwt_401_eviction_and_single_retry() {
 
     Mock::given(method("POST"))
         .and(path(ACCEPT_INQUIRY_PATH))
-        .and(body_json(json!({ "order_id": 101, "auth_token": "stale-jwt" })))
+        .and(body_json(
+            json!({ "order_id": 101, "auth_token": "stale-jwt" }),
+        ))
         .respond_with(
             ResponseTemplate::new(401).set_body_json(json!({ "detail": "incorrect credentials" })),
         )
@@ -109,7 +111,9 @@ async fn tc_1_2_3_accept_jwt_401_eviction_and_single_retry() {
 
     Mock::given(method("POST"))
         .and(path(ACCEPT_INQUIRY_PATH))
-        .and(body_json(json!({ "order_id": 101, "auth_token": "fresh-jwt" })))
+        .and(body_json(
+            json!({ "order_id": 101, "auth_token": "fresh-jwt" }),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 101 })))
         .expect(1)
         .mount(&server)
@@ -125,7 +129,11 @@ async fn tc_1_2_3_accept_jwt_401_eviction_and_single_retry() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(auth_calls.load(Ordering::SeqCst), 2);
     assert_eq!(
-        provider.token().await.expect("cached fresh").expose_secret(),
+        provider
+            .token()
+            .await
+            .expect("cached fresh")
+            .expose_secret(),
         "fresh-jwt"
     );
 }
@@ -177,7 +185,9 @@ async fn tc_1_2_3_concurrent_401_eviction_race_refreshes_once_total_two_auth_cal
 
     Mock::given(method("POST"))
         .and(path(ACCEPT_INQUIRY_PATH))
-        .and(body_json(json!({ "order_id": 101, "auth_token": "stale-jwt" })))
+        .and(body_json(
+            json!({ "order_id": 101, "auth_token": "stale-jwt" }),
+        ))
         .respond_with(
             ResponseTemplate::new(401).set_body_json(json!({ "detail": "incorrect credentials" })),
         )
@@ -186,7 +196,9 @@ async fn tc_1_2_3_concurrent_401_eviction_race_refreshes_once_total_two_auth_cal
 
     Mock::given(method("POST"))
         .and(path(ACCEPT_INQUIRY_PATH))
-        .and(body_json(json!({ "order_id": 101, "auth_token": "fresh-jwt" })))
+        .and(body_json(
+            json!({ "order_id": 101, "auth_token": "fresh-jwt" }),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 101 })))
         .mount(&server)
         .await;
@@ -245,11 +257,7 @@ async fn tc_1_2_3_single_flight_50_concurrent_tasks() {
     for _ in 0..50 {
         let p = Arc::clone(&provider);
         handles.push(tokio::spawn(async move {
-            p.token()
-                .await
-                .expect("token")
-                .expose_secret()
-                .to_owned()
+            p.token().await.expect("token").expose_secret().to_owned()
         }));
     }
 
@@ -273,7 +281,10 @@ async fn tc_1_2_3_negative_malformed_json_and_500_status() {
 
     let provider = AcceptJwtProvider::new(&server.uri(), SecretString::from("accept-key-neg"))
         .expect("valid provider");
-    assert!(matches!(provider.token().await, Err(AcceptJwtError::Transport(_))));
+    assert!(matches!(
+        provider.token().await,
+        Err(AcceptJwtError::Transport(_))
+    ));
 
     let server_500 = MockServer::start().await;
     Mock::given(method("POST"))

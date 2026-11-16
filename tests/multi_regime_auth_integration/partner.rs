@@ -37,7 +37,8 @@ async fn tc_1_2_5_partner_bearer_wire_injection() {
     assert!(bearer_ctx.is_delegated());
 
     let mut headers = HeaderMap::new();
-    let mut url = Url::parse(&format!("{}/api/partner/merchants", server.uri())).expect("valid url");
+    let mut url =
+        Url::parse(&format!("{}/api/partner/merchants", server.uri())).expect("valid url");
     bearer_ctx
         .apply_request(&mut headers, &mut url)
         .expect("apply bearer request");
@@ -55,14 +56,16 @@ async fn tc_1_2_5_partner_api_key_query_wire_injection() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/partner/hmac"))
-        .and(query_param(DEFAULT_PARTNER_API_KEY_QUERY_PARAM, "partner_qk_1"))
+        .and(query_param(
+            DEFAULT_PARTNER_API_KEY_QUERY_PARAM,
+            "partner_qk_1",
+        ))
         .respond_with(ResponseTemplate::new(200))
         .expect(1)
         .mount(&server)
         .await;
 
-    let query_ctx =
-        PartnerAuthContext::api_key_query("partner_qk_1").expect("valid query api key");
+    let query_ctx = PartnerAuthContext::api_key_query("partner_qk_1").expect("valid query api key");
     assert_eq!(
         query_ctx.api_key_location(),
         Some(PartnerApiKeyLocation::Query)
@@ -146,7 +149,7 @@ fn tc_1_2_5_zero_secret_leakage_in_debug_regimes_1_to_2() {
 
     let accept =
         AcceptJwtProvider::new("https://accept.paymob.com", SecretString::from(raw_api_key))
-        .expect("accept provider");
+            .expect("accept provider");
     assert_redacted_debug(&accept, &[raw_api_key], true);
 }
 

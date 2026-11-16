@@ -284,7 +284,14 @@ mod tests {
         let mapped = resp.map(|id| format!("ord_{id}"));
         assert_eq!(
             (mapped.count, mapped.results),
-            (42, vec!["ord_101".to_owned(), "ord_102".to_owned(), "ord_103".to_owned()])
+            (
+                42,
+                vec![
+                    "ord_101".to_owned(),
+                    "ord_102".to_owned(),
+                    "ord_103".to_owned()
+                ]
+            )
         );
     }
 
@@ -311,7 +318,11 @@ mod tests {
             results: vec![21_u8, 22, 23, 24, 25],
         };
         assert_eq!(
-            (last_page.has_next(), last_page.next_page_number(), last_page.previous_page_number()),
+            (
+                last_page.has_next(),
+                last_page.next_page_number(),
+                last_page.previous_page_number()
+            ),
             (false, None, Some(2))
         );
     }
@@ -368,7 +379,12 @@ mod tests {
                 default_q.to_query_string(),
                 default_q.to_query_pairs(),
             ),
-            (1, None, "?page=1".to_string(), vec![("page", "1".to_string())])
+            (
+                1,
+                None,
+                "?page=1".to_string(),
+                vec![("page", "1".to_string())]
+            )
         );
 
         let custom_q = PageQuery::new(2).with_page(4).with_page_size(50);
@@ -389,7 +405,12 @@ mod tests {
         let clamped_q = PageQuery::default().with_page(0);
         let max_q = PageQuery::new(u32::MAX).next_page();
         assert_eq!(
-            (zero_q.page(), zero_q.page_size(), clamped_q.page(), max_q.page()),
+            (
+                zero_q.page(),
+                zero_q.page_size(),
+                clamped_q.page(),
+                max_q.page()
+            ),
             (1, Some(1), 1, u32::MAX)
         );
 

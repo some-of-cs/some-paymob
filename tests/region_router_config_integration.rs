@@ -40,7 +40,12 @@ fn sample_public_key(raw: &str) -> PublicKey {
     PublicKey::new(raw).expect("valid test public key")
 }
 
-fn sample_custom_region(accept: &str, checkout: &str, payouts: &str, staging: &str) -> PaymobRegion {
+fn sample_custom_region(
+    accept: &str,
+    checkout: &str,
+    payouts: &str,
+    staging: &str,
+) -> PaymobRegion {
     PaymobRegion::Custom {
         accept_base_url: accept.to_owned(),
         checkout_base_url: checkout.to_owned(),
@@ -168,13 +173,27 @@ fn tc_1_1_1_custom_remote_http_and_pakistan_payouts_rejected() {
         "https://payouts.example.com",
         "https://staging.example.com",
     );
-    assert!(matches!(invalid.endpoints(), Err(PaymobError::ValidationError { .. })));
+    assert!(matches!(
+        invalid.endpoints(),
+        Err(PaymobError::ValidationError { .. })
+    ));
 
     let pak_prod = PaymobRegion::Pakistan.resolve_payouts_url("/api/secure/disburse/", false);
     let pak_staging = PaymobRegion::Pakistan.resolve_payouts_url("/api/secure/disburse/", true);
     assert!(
-        matches!(pak_prod, Err(PaymobError::ValidationError { field: "region", .. }))
-            && matches!(pak_staging, Err(PaymobError::ValidationError { field: "region", .. }))
+        matches!(
+            pak_prod,
+            Err(PaymobError::ValidationError {
+                field: "region",
+                ..
+            })
+        ) && matches!(
+            pak_staging,
+            Err(PaymobError::ValidationError {
+                field: "region",
+                ..
+            })
+        )
     );
 }
 
@@ -307,12 +326,29 @@ fn tc_1_1_3_config_validation_and_environment_parity() {
         .build();
 
     assert!(
-        matches!(missing_region, Err(PaymobError::ValidationError { field: "region", .. }))
-            && matches!(zero_timeout, Err(PaymobError::ValidationError { field: "timeout", .. }))
+        matches!(
+            missing_region,
+            Err(PaymobError::ValidationError {
+                field: "region",
+                ..
+            })
+        ) && matches!(
+            zero_timeout,
+            Err(PaymobError::ValidationError {
+                field: "timeout",
+                ..
+            })
+        )
     );
     assert!(
         matches!(key_mismatch, Err(PaymobError::EnvironmentMismatch(_)))
-            && matches!(region_mismatch, Err(PaymobError::ValidationError { field: "region", .. }))
+            && matches!(
+                region_mismatch,
+                Err(PaymobError::ValidationError {
+                    field: "region",
+                    ..
+                })
+            )
     );
 }
 
@@ -321,11 +357,17 @@ fn tc_1_1_3_from_env_rejects_missing_region_when_unset() {
     if std::env::var_os("PAYMOB_REGION").is_none() {
         assert!(matches!(
             ClientConfig::from_env(),
-            Err(PaymobError::ValidationError { field: "region", .. })
+            Err(PaymobError::ValidationError {
+                field: "region",
+                ..
+            })
         ));
         assert!(matches!(
             ClientConfigBuilder::from_env(),
-            Err(PaymobError::ValidationError { field: "region", .. })
+            Err(PaymobError::ValidationError {
+                field: "region",
+                ..
+            })
         ));
     }
 }
@@ -339,8 +381,14 @@ fn tc_1_1_4_paymob_client_construction_arc_clone_and_urls() {
     assert!(client.ptr_eq(&cloned) && cloned.config().region() == &PaymobRegion::Egypt);
     assert_eq!(
         (
-            cloned.accept_url("/v1/intention/").expect("accept url").as_str(),
-            cloned.payouts_url("/api/secure/disburse/").expect("payouts url").as_str(),
+            cloned
+                .accept_url("/v1/intention/")
+                .expect("accept url")
+                .as_str(),
+            cloned
+                .payouts_url("/api/secure/disburse/")
+                .expect("payouts url")
+                .as_str(),
             cloned.http().config().retry.max_retries,
         ),
         (

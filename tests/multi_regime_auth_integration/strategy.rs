@@ -5,7 +5,9 @@ use serde_json::json;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use some_paymob::core::auth::strategy::{AuthRegime, AuthStrategy, EndpointAuthSpec, StrategyError};
+use some_paymob::core::auth::strategy::{
+    AuthRegime, AuthStrategy, EndpointAuthSpec, StrategyError,
+};
 
 struct StrategyExpectation {
     strategy: AuthStrategy,
@@ -92,8 +94,7 @@ fn tc_1_2_1_strategy_taxonomy_properties() {
 fn tc_1_2_1_strategy_serde_roundtrip() {
     for item in &STRATEGY_MATRIX {
         let encoded = serde_json::to_string(&item.strategy).expect("serialize strategy");
-        let decoded: AuthStrategy =
-            serde_json::from_str(&encoded).expect("deserialize strategy");
+        let decoded: AuthStrategy = serde_json::from_str(&encoded).expect("deserialize strategy");
         assert_eq!(decoded, item.strategy);
     }
 }

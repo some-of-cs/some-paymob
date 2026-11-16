@@ -34,7 +34,9 @@ use crate::core::error::PaymobError;
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct MinorUnitAmount(
     /// Raw minor-unit integer value.
@@ -327,9 +329,7 @@ impl FromStr for Currency {
 
 fn has_unsafe_id_chars(value: &str) -> bool {
     value.chars().any(|ch| {
-        ch.is_whitespace()
-            || ch.is_ascii_control()
-            || matches!(ch, '/' | '?' | '#' | '%' | '\\')
+        ch.is_whitespace() || ch.is_ascii_control() || matches!(ch, '/' | '?' | '#' | '%' | '\\')
     }) || value.contains("..")
 }
 
@@ -418,7 +418,10 @@ mod tests {
     #[test]
     fn tc_1_3_3_minor_unit_amount_zero_mul_div_and_saturating() {
         assert_eq!(
-            (MinorUnitAmount::ZERO.is_zero(), MinorUnitAmount::new(1).is_zero()),
+            (
+                MinorUnitAmount::ZERO.is_zero(),
+                MinorUnitAmount::new(1).is_zero()
+            ),
             (true, false)
         );
         assert_eq!(
@@ -442,8 +445,14 @@ mod tests {
         let err_cases = [
             (MinorUnitAmount::from_major_checked(1, 20), "decimals"),
             (MinorUnitAmount::from_major_checked(u64::MAX, 2), "amount"),
-            (MinorUnitAmount(u64::MAX).checked_add(MinorUnitAmount(1)), "amount"),
-            (MinorUnitAmount(10).checked_sub(MinorUnitAmount(11)), "amount"),
+            (
+                MinorUnitAmount(u64::MAX).checked_add(MinorUnitAmount(1)),
+                "amount",
+            ),
+            (
+                MinorUnitAmount(10).checked_sub(MinorUnitAmount(11)),
+                "amount",
+            ),
             (MinorUnitAmount(u64::MAX).checked_mul(2), "amount"),
             (MinorUnitAmount(100).checked_div(0), "divisor"),
         ];
@@ -461,7 +470,12 @@ mod tests {
         let json = serde_json::to_string(&amount).expect("serialize");
         let parsed: MinorUnitAmount = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(
-            (json.as_str(), parsed, u64::from(parsed), parsed.to_string().as_str()),
+            (
+                json.as_str(),
+                parsed,
+                u64::from(parsed),
+                parsed.to_string().as_str()
+            ),
             ("123456", amount, 123_456, "123456")
         );
     }
@@ -476,12 +490,48 @@ mod tests {
             ("pKr", Currency::PKR, "PKR", 2_u8, true),
             ("usd", Currency::USD, "USD", 2_u8, true),
             ("Eur", Currency::EUR, "EUR", 2_u8, true),
-            ("kwd", Currency::Unknown("KWD".to_owned()), "KWD", 3_u8, false),
-            ("bhd", Currency::Unknown("BHD".to_owned()), "BHD", 3_u8, false),
-            ("jod", Currency::Unknown("JOD".to_owned()), "JOD", 3_u8, false),
-            ("tnd", Currency::Unknown("TND".to_owned()), "TND", 3_u8, false),
-            ("lyd", Currency::Unknown("LYD".to_owned()), "LYD", 3_u8, false),
-            ("iqd", Currency::Unknown("IQD".to_owned()), "IQD", 3_u8, false),
+            (
+                "kwd",
+                Currency::Unknown("KWD".to_owned()),
+                "KWD",
+                3_u8,
+                false,
+            ),
+            (
+                "bhd",
+                Currency::Unknown("BHD".to_owned()),
+                "BHD",
+                3_u8,
+                false,
+            ),
+            (
+                "jod",
+                Currency::Unknown("JOD".to_owned()),
+                "JOD",
+                3_u8,
+                false,
+            ),
+            (
+                "tnd",
+                Currency::Unknown("TND".to_owned()),
+                "TND",
+                3_u8,
+                false,
+            ),
+            (
+                "lyd",
+                Currency::Unknown("LYD".to_owned()),
+                "LYD",
+                3_u8,
+                false,
+            ),
+            (
+                "iqd",
+                Currency::Unknown("IQD".to_owned()),
+                "IQD",
+                3_u8,
+                false,
+            ),
         ];
 
         for (raw, expected, canonical, decimals, known) in cases {
@@ -511,7 +561,11 @@ mod tests {
 
         let empty = Currency::from_code("   ");
         assert_eq!(
-            (empty.as_str(), empty.is_known(), empty.minor_unit_decimals()),
+            (
+                empty.as_str(),
+                empty.is_known(),
+                empty.minor_unit_decimals()
+            ),
             ("", false, 2)
         );
     }

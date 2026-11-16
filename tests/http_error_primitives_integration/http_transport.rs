@@ -95,7 +95,11 @@ async fn assert_retry_then_succeed(
         .expect("retry succeeds");
 
     assert_eq!(
-        (resp.status, resp.body.as_slice(), resp.request_id.get_version_num()),
+        (
+            resp.status,
+            resp.body.as_slice(),
+            resp.request_id.get_version_num()
+        ),
         (StatusCode::OK, expected_body.as_bytes(), 4)
     );
 }

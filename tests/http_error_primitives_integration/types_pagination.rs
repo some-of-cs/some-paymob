@@ -41,8 +41,14 @@ fn tc_1_3_3_money_zero_float_arithmetic_and_serde() {
     let failure_cases = [
         (MinorUnitAmount::from_major_checked(1, 20), "decimals"),
         (MinorUnitAmount::from_major_checked(u64::MAX, 2), "amount"),
-        (MinorUnitAmount(u64::MAX).checked_add(MinorUnitAmount(1)), "amount"),
-        (MinorUnitAmount(10).checked_sub(MinorUnitAmount(11)), "amount"),
+        (
+            MinorUnitAmount(u64::MAX).checked_add(MinorUnitAmount(1)),
+            "amount",
+        ),
+        (
+            MinorUnitAmount(10).checked_sub(MinorUnitAmount(11)),
+            "amount",
+        ),
     ];
     for (res, expected_field) in failure_cases {
         assert!(matches!(
@@ -111,11 +117,15 @@ fn tc_1_3_3_currency_iso_serde_and_kwd_three_decimal_arithmetic() {
     let kwd = Currency::from_code("kwd");
     let json = serde_json::to_string(&kwd).expect("serialize");
     let roundtrip: Currency = serde_json::from_str(&json).expect("deserialize");
-    let amount = MinorUnitAmount::from_major_checked(10, roundtrip.minor_unit_decimals())
-        .expect("10 KWD");
+    let amount =
+        MinorUnitAmount::from_major_checked(10, roundtrip.minor_unit_decimals()).expect("10 KWD");
     assert_eq!(
         (json.as_str(), roundtrip, amount),
-        (r#""KWD""#, Currency::Unknown("KWD".to_string()), MinorUnitAmount(10_000))
+        (
+            r#""KWD""#,
+            Currency::Unknown("KWD".to_string()),
+            MinorUnitAmount(10_000)
+        )
     );
 }
 

@@ -325,10 +325,7 @@ fn validate_token(value: &str, field: &'static str) -> Result<(), PaymobError> {
             reason: "token must not be empty".to_owned(),
         });
     }
-    if value
-        .chars()
-        .any(|c| c.is_whitespace() || c.is_control())
-    {
+    if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(PaymobError::ValidationError {
             field,
             reason: "token must not contain whitespace or control characters".to_owned(),
@@ -440,10 +437,7 @@ mod tests {
     #[test]
     fn tc_4_1_2_mit_charge_params_rejects_invalid_tokens() {
         assert!(matches!(
-            MitChargeParams::new(
-                SecretString::from(""),
-                SecretString::from("saved_tok_456"),
-            ),
+            MitChargeParams::new(SecretString::from(""), SecretString::from("saved_tok_456"),),
             Err(PaymobError::ValidationError {
                 field: "payment_token",
                 ..

@@ -467,6 +467,12 @@ mod tests {
             .by_transaction_id(888)
             .await
             .expect_err("malformed json must fail");
-        assert!(matches!(malformed, PaymobError::TransportError(_)));
+        assert!(matches!(
+            malformed,
+            PaymobError::ValidationError {
+                field: "http_config",
+                ..
+            }
+        ));
     }
 }

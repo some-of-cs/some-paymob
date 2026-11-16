@@ -236,7 +236,7 @@ pub struct SubscriptionListFilter {
 }
 
 impl SubscriptionListFilter {
-    /// Creates an empty [`SubscriptionListFilter`](self::SubscriptionListFilter) with all filter fields unset.
+    /// Creates an empty [`SubscriptionListFilter`] with all filter fields unset.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -272,7 +272,7 @@ impl SubscriptionListFilter {
 
 /// Saved card vault entry attached to a Paymob subscription.
 ///
-/// The card `token` is wrapped in [`secrecy::SecretString`] (`ZeroizeOnDrop`) and its
+/// The card `token` is wrapped in [`SecretString`] (`ZeroizeOnDrop`) and its
 /// [`fmt::Debug`] implementation always renders `token` as `"[REDACTED]"`.
 ///
 /// # Examples

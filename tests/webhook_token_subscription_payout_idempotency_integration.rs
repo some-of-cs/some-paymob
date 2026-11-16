@@ -27,7 +27,8 @@ const TOKEN_VECTOR_JSON: &str = r#"{
     }
 }"#;
 
-const TOKEN_VECTOR_HMAC: &str = "38ac96769330ae1b446ba94220b4a0fbf4a536ff407710d0637b32efc1c17cc1\
+const TOKEN_VECTOR_HMAC: &str =
+    "38ac96769330ae1b446ba94220b4a0fbf4a536ff407710d0637b32efc1c17cc1\
      7dde92a831467724a16e09ea7b7054806275d78ce726ba243cc2fea25f30be0d";
 
 const TX_VECTOR_JSON: &str = r#"{
@@ -55,7 +56,8 @@ const TX_VECTOR_JSON: &str = r#"{
     }
 }"#;
 
-const TX_VECTOR_HMAC: &str = "28f19ec85986d4534f77201b00bf750948334753847f437b538cc699f3de447c\
+const TX_VECTOR_HMAC: &str =
+    "28f19ec85986d4534f77201b00bf750948334753847f437b538cc699f3de447c\
      d0d62a5f521c7b20069bd255f48e8d891f0033167ad35b434d532b61e85a3da7";
 
 const REDIRECT_316004_HMAC: &str =
@@ -175,7 +177,7 @@ fn deduplicator_claim_or_reject_and_process_with_rollback() -> WebhookResult<()>
         store.process_with_rollback(&tok_evt, || Ok("committed"));
     assert_eq!(ok_res, Ok(Some("committed")));
 
-    let dup_err = store.claim_or_reject(&tok_evt).unwrap_err();
+    let dup_err: WebhookError = store.claim_or_reject(&tok_evt).unwrap_err();
     assert!(dup_err.is_replay_or_duplicate());
     assert_eq!(dup_err.suggested_http_status_code(), 409);
     Ok(())

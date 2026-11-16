@@ -18,9 +18,10 @@
 //! key #14 from `order_id` or `order`, while rejecting conflicting values
 //! (`SEC-1` HTTP parameter pollution defense).
 
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::hash::BuildHasher;
+use std::hash::{BuildHasher, Hash};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -34,65 +35,44 @@ pub trait QueryParams {
     fn get_param(&self, key: &str) -> Option<&str>;
 }
 
-impl QueryParams for BTreeMap<String, String> {
+impl<K, V> QueryParams for BTreeMap<K, V>
+where
+    K: Borrow<str> + Ord,
+    V: AsRef<str>,
+{
     fn get_param(&self, key: &str) -> Option<&str> {
-        self.get(key).map(String::as_str)
+        self.get(key).map(AsRef::as_ref)
     }
 }
 
-impl<S: BuildHasher> QueryParams for HashMap<String, String, S> {
+impl<K, V, S> QueryParams for HashMap<K, V, S>
+where
+    K: Borrow<str> + Eq + Hash,
+    V: AsRef<str>,
+    S: BuildHasher,
+{
     fn get_param(&self, key: &str) -> Option<&str> {
-        self.get(key).map(String::as_str)
+        self.get(key).map(AsRef::as_ref)
     }
 }
 
-impl QueryParams for BTreeMap<&str, &str> {
-    fn get_param(&self, key: &str) -> Option<&str> {
-        self.get(key).copied()
-    }
-}
-
-impl<S: BuildHasher> QueryParams for HashMap<&str, &str, S> {
-    fn get_param(&self, key: &str) -> Option<&str> {
-        self.get(key).copied()
-    }
-}
-
-impl QueryParams for [(&str, &str)] {
-    fn get_param(&self, key: &str) -> Option<&str> {
-        self.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
-    }
-}
-
-impl QueryParams for &[(&str, &str)] {
-    fn get_param(&self, key: &str) -> Option<&str> {
-        (*self).get_param(key)
-    }
-}
-
-impl QueryParams for [(String, String)] {
+impl<K: AsRef<str>, V: AsRef<str>> QueryParams for [(K, V)] {
     fn get_param(&self, key: &str) -> Option<&str> {
         self.iter()
-            .find(|(k, _)| k.as_str() == key)
-            .map(|(_, v)| v.as_str())
+            .find(|(k, _)| k.as_ref() == key)
+            .map(|(_, v)| v.as_ref())
     }
 }
 
-impl QueryParams for &[(String, String)] {
-    fn get_param(&self, key: &str) -> Option<&str> {
-        (*self).get_param(key)
-    }
-}
-
-impl QueryParams for Vec<(&str, &str)> {
+impl<K: AsRef<str>, V: AsRef<str>> QueryParams for Vec<(K, V)> {
     fn get_param(&self, key: &str) -> Option<&str> {
         self.as_slice().get_param(key)
     }
 }
 
-impl QueryParams for Vec<(String, String)> {
+impl<T: QueryParams + ?Sized> QueryParams for &T {
     fn get_param(&self, key: &str) -> Option<&str> {
-        self.as_slice().get_param(key)
+        (**self).get_param(key)
     }
 }
 
@@ -194,9 +174,7 @@ impl TransactionRedirectParams {
     ///
     /// Returns [`WebhookError::InvalidJsonPayload`] if `id` is not a valid `u64`.
     pub fn transaction_id_u64(&self) -> WebhookResult<u64> {
-        self.id.parse::<u64>().map_err(|_| {
-            WebhookError::InvalidJsonPayload("redirect `id` is not a valid u64".into())
-        })
+        parse_redirect_u64(&self.id, "redirect `id` is not a valid u64")
     }
 
     /// Parses [`Self::order_id`] as an unsigned 64-bit integer.
@@ -205,9 +183,7 @@ impl TransactionRedirectParams {
     ///
     /// Returns [`WebhookError::InvalidJsonPayload`] if `order_id` is not a valid `u64`.
     pub fn order_id_u64(&self) -> WebhookResult<u64> {
-        self.order_id.parse::<u64>().map_err(|_| {
-            WebhookError::InvalidJsonPayload("redirect `order_id` is not a valid u64".into())
-        })
+        parse_redirect_u64(&self.order_id, "redirect `order_id` is not a valid u64")
     }
 
     /// Parses [`Self::amount_cents`] as an unsigned 64-bit integer.
@@ -216,16 +192,24 @@ impl TransactionRedirectParams {
     ///
     /// Returns [`WebhookError::InvalidJsonPayload`] if `amount_cents` is not a valid `u64`.
     pub fn amount_cents_u64(&self) -> WebhookResult<u64> {
-        self.amount_cents.parse::<u64>().map_err(|_| {
-            WebhookError::InvalidJsonPayload("redirect `amount_cents` is not a valid u64".into())
-        })
+        parse_redirect_u64(
+            &self.amount_cents,
+            "redirect `amount_cents` is not a valid u64",
+        )
     }
 
     /// Builds the 20-key canonical HMAC concatenation string for these redirect parameters.
     #[must_use]
     pub fn canonical_hmac_string(&self) -> String {
         let mut concat = CanonicalTransactionConcatenator::new();
-        for part in [
+        for part in self.canonical_field_values() {
+            concat.push_str(part);
+        }
+        concat.finish()
+    }
+
+    fn canonical_field_values(&self) -> [&str; 20] {
+        [
             &self.amount_cents,
             &self.created_at,
             &self.currency,
@@ -246,37 +230,27 @@ impl TransactionRedirectParams {
             &self.source_data_sub_type,
             &self.source_data_type,
             &self.success,
-        ] {
-            concat.push_str(part);
-        }
-        concat.finish()
+        ]
     }
+}
+
+fn parse_redirect_u64(raw: &str, error_msg: &'static str) -> WebhookResult<u64> {
+    raw.parse::<u64>()
+        .map_err(|_| WebhookError::InvalidJsonPayload(error_msg.into()))
 }
 
 impl fmt::Debug for TransactionRedirectParams {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TransactionRedirectParams")
-            .field("amount_cents", &self.amount_cents)
-            .field("created_at", &self.created_at)
-            .field("currency", &self.currency)
-            .field("error_occured", &self.error_occured)
-            .field("has_parent_transaction", &self.has_parent_transaction)
-            .field("id", &self.id)
-            .field("integration_id", &self.integration_id)
-            .field("is_3d_secure", &self.is_3d_secure)
-            .field("is_auth", &self.is_auth)
-            .field("is_capture", &self.is_capture)
-            .field("is_refunded", &self.is_refunded)
-            .field("is_standalone_payment", &self.is_standalone_payment)
-            .field("is_voided", &self.is_voided)
-            .field("order_id", &self.order_id)
-            .field("owner", &self.owner)
-            .field("pending", &self.pending)
-            .field("source_data_pan", &"[REDACTED]")
-            .field("source_data_sub_type", &self.source_data_sub_type)
-            .field("source_data_type", &self.source_data_type)
-            .field("success", &self.success)
-            .finish()
+        let mut debug = f.debug_struct("TransactionRedirectParams");
+        for (&key, val) in TX_HMAC_KEYS.iter().zip(self.canonical_field_values()) {
+            let shown = if key == "source_data.pan" {
+                "[REDACTED]"
+            } else {
+                val
+            };
+            debug.field(key, &shown);
+        }
+        debug.finish()
     }
 }
 
@@ -487,27 +461,50 @@ fn percent_decode_str(input: &str) -> WebhookResult<String> {
 }
 
 fn build_redirect_params(values: [&str; 20]) -> TransactionRedirectParams {
+    let [
+        amount_cents,
+        created_at,
+        currency,
+        error_occured,
+        has_parent_transaction,
+        id,
+        integration_id,
+        is_3d_secure,
+        is_auth,
+        is_capture,
+        is_refunded,
+        is_standalone_payment,
+        is_voided,
+        order_id,
+        owner,
+        pending,
+        source_data_pan,
+        source_data_sub_type,
+        source_data_type,
+        success,
+    ] = values.map(str::to_owned);
+
     TransactionRedirectParams {
-        amount_cents: values[0].to_owned(),
-        created_at: values[1].to_owned(),
-        currency: values[2].to_owned(),
-        error_occured: values[3].to_owned(),
-        has_parent_transaction: values[4].to_owned(),
-        id: values[5].to_owned(),
-        integration_id: values[6].to_owned(),
-        is_3d_secure: values[7].to_owned(),
-        is_auth: values[8].to_owned(),
-        is_capture: values[9].to_owned(),
-        is_refunded: values[10].to_owned(),
-        is_standalone_payment: values[11].to_owned(),
-        is_voided: values[12].to_owned(),
-        order_id: values[13].to_owned(),
-        owner: values[14].to_owned(),
-        pending: values[15].to_owned(),
-        source_data_pan: values[16].to_owned(),
-        source_data_sub_type: values[17].to_owned(),
-        source_data_type: values[18].to_owned(),
-        success: values[19].to_owned(),
+        amount_cents,
+        created_at,
+        currency,
+        error_occured,
+        has_parent_transaction,
+        id,
+        integration_id,
+        is_3d_secure,
+        is_auth,
+        is_capture,
+        is_refunded,
+        is_standalone_payment,
+        is_voided,
+        order_id,
+        owner,
+        pending,
+        source_data_pan,
+        source_data_sub_type,
+        source_data_type,
+        success,
     }
 }
 
@@ -519,6 +516,10 @@ mod tests {
     const VECTOR_316004_HMAC: &str =
         "5839e3844172a1ce57a5e05dc8a47d57235d080bd7f497ed2ae7cc54bc6249d5\
          826ef93f1d502f8d354d775ecb5bd519a02ee730028137b07e66fed2bb6c1812";
+
+    fn test_engine() -> PaymobWebhookEngine {
+        PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret")
+    }
 
     fn vector_316004_btreemap(use_order_id_key: bool) -> BTreeMap<String, String> {
         let order_key = if use_order_id_key {
@@ -556,9 +557,8 @@ mod tests {
 
     #[test]
     fn vector_316004_order_fallback_btreemap_succeeds() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
         let params = vector_316004_btreemap(false);
-        let verified = engine
+        let verified = test_engine()
             .verify_transaction_get(&params)
             .expect("Official Redirect Test Vector 316004 with order= fallback should verify");
 
@@ -579,7 +579,7 @@ mod tests {
 
     #[test]
     fn vector_316004_order_id_hashmap_and_slice_containers_succeed() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
+        let engine = test_engine();
         let params: HashMap<String, String> = vector_316004_btreemap(true).into_iter().collect();
         let verified = engine
             .verify_transaction_get(&params)
@@ -595,7 +595,7 @@ mod tests {
 
     #[test]
     fn str_map_and_str_slice_query_params_succeed() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
+        let engine = test_engine();
         let owned = vector_316004_btreemap(true);
         let str_vec: Vec<(&str, &str)> = owned
             .iter()
@@ -612,7 +612,7 @@ mod tests {
 
     #[test]
     fn order_id_and_order_conflict_rejected_while_matching_accepted() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
+        let engine = test_engine();
         let mut matching = vector_316004_btreemap(true);
         matching.insert("order".to_string(), "378804".to_string());
         assert!(engine.verify_transaction_get(&matching).is_ok());
@@ -625,31 +625,32 @@ mod tests {
 
     #[test]
     fn missing_any_of_20_keys_returns_missing_required_field() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
         let base = vector_316004_btreemap(true);
-        for key in TX_HMAC_KEYS {
-            let mut map = base.clone();
-            map.remove(key);
-            let err = engine.verify_transaction_get(&map).unwrap_err();
-            assert_eq!(err, WebhookError::MissingRequiredField(key.to_string()));
-        }
+        let all_missing_detected = TX_HMAC_KEYS.iter().all(|&key| {
+            let mut candidate = base.clone();
+            candidate.remove(key);
+            build_protocol_b_canonical_string(&candidate)
+                == Err(WebhookError::MissingRequiredField(key.to_string()))
+        });
+        assert!(all_missing_detected);
     }
 
     #[test]
     fn tampering_any_of_20_keys_returns_signature_mismatch() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
-        let base = vector_316004_btreemap(true);
+        let engine = test_engine();
         for key in TX_HMAC_KEYS {
-            let mut map = base.clone();
-            map.insert(key.to_string(), "tampered_value".to_string());
-            let err = engine.verify_transaction_get(&map).unwrap_err();
-            assert_eq!(err, WebhookError::SignatureMismatch);
+            let mut map = vector_316004_btreemap(true);
+            *map.get_mut(key).unwrap() = "tampered_value".to_string();
+            assert_eq!(
+                engine.verify_transaction_get(&map),
+                Err(WebhookError::SignatureMismatch)
+            );
         }
     }
 
     #[test]
     fn empty_id_or_order_id_or_missing_hmac_rejected() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
+        let engine = test_engine();
         let mut blank_id = vector_316004_btreemap(true);
         blank_id.insert("id".to_string(), "   ".to_string());
         assert_eq!(
@@ -667,7 +668,7 @@ mod tests {
 
     #[test]
     fn verify_transaction_get_query_str_decodes_url_and_rejects_duplicates() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
+        let engine = test_engine();
         let map = vector_316004_btreemap(false);
         let raw_query = format!(
             "?{}",
@@ -692,9 +693,8 @@ mod tests {
 
     #[test]
     fn debug_redacts_source_data_pan_and_status_helpers_work() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
         let params = vector_316004_btreemap(false);
-        let verified = engine.verify_transaction_get(&params).unwrap();
+        let verified = test_engine().verify_transaction_get(&params).unwrap();
         let debug_output = format!("{verified:?}");
 
         assert!(debug_output.contains("[REDACTED]"));

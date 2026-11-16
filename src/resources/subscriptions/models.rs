@@ -2,10 +2,10 @@
 //! Subscription record, lifecycle state, list filter, and card vault models.
 //!
 //! Implements `US-4.3.0` Unit 1 (`TC-4.3.1`):
-//! - [`Subscription`] record with integer minor-unit [`MinorUnitAmount`] pricing and lifecycle timestamps.
-//! - [`SubscriptionState`] backed by [`KNOWN_SUBSCRIPTION_STATES`] static lookup table (`CC <= 3`).
-//! - [`SubscriptionListFilter`](self::SubscriptionListFilter) query builder for listing subscriptions.
-//! - [`SubscriptionCard`](self::SubscriptionCard) vault model with [`secrecy::SecretString`] token and `[REDACTED]` `Debug` formatting.
+//! - `Subscription` record with integer minor-unit `MinorUnitAmount` pricing and lifecycle timestamps.
+//! - `SubscriptionState` backed by `KNOWN_SUBSCRIPTION_STATES` static lookup table (`CC <= 3`).
+//! - `SubscriptionListFilter` query builder for listing subscriptions.
+//! - `SubscriptionCard` vault model with `secrecy::SecretString` token and `[REDACTED]` `Debug` formatting.
 
 use std::convert::Infallible;
 use std::fmt;

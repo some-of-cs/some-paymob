@@ -225,6 +225,11 @@ fn tc_1_3_1_paymob_error_server_fallback_mapping() {
     ]);
 }
 
+fn assert_non_api_error_meta(err: &PaymobError, expected_retryable: bool) {
+    assert_eq!(err.is_retryable(), expected_retryable);
+    assert_eq!(err.status_code(), None);
+}
+
 #[test]
 fn tc_1_3_1_paymob_error_redacts_secrets_and_pii_in_display_and_debug() {
     let cases = [
@@ -256,13 +261,47 @@ fn tc_1_3_1_paymob_error_redacts_secrets_and_pii_in_display_and_debug() {
         assert_redacted(&format!("{err:?}"), &secrets);
     }
 
-    let env_err = PaymobError::EnvironmentMismatch("Test key with Live ID".to_string());
-    assert!(!env_err.is_retryable());
-    assert_eq!(env_err.status_code(), None);
+    assert_non_api_error_meta(
+        &PaymobError::EnvironmentMismatch("Test key with Live ID".to_string()),
+        false,
+    );
+    assert_non_api_error_meta(
+        &PaymobError::TransportError("connection reset".to_string()),
+        true,
+    );
+}
 
-    let transport_err = PaymobError::TransportError("connection reset".to_string());
-    assert!(transport_err.is_retryable());
-    assert_eq!(transport_err.status_code(), None);
+fn assert_retry_after_header(raw: &'static str, expected: Option<Duration>) {
+    let mut headers = HeaderMap::new();
+    headers.insert(RETRY_AFTER, HeaderValue::from_static(raw));
+    assert_eq!(parse_retry_after(&headers), expected);
+}
+
+fn assert_backoff_bounds(policy: &RetryPolicy) {
+    for attempt in 0..=4 {
+        assert!(compute_backoff_delay(policy, attempt, None) <= policy.max_delay);
+    }
+    assert_eq!(
+        compute_backoff_delay(policy, 0, Some(Duration::from_secs(60))),
+        policy.max_delay
+    );
+}
+
+fn assert_request_builder_and_redaction() {
+    assert!(matches!(
+        HttpRequest::get("not a url"),
+        Err(HttpError::InvalidConfig(_))
+    ));
+    let req = HttpRequest::post("https://accept.paymob.com/api/auth/tokens")
+        .expect("valid URL")
+        .with_header(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer secret_token_123"),
+        )
+        .with_body(b"{}".to_vec());
+    assert_eq!(req.method(), &Method::POST);
+    assert_eq!(req.url().as_str(), "https://accept.paymob.com/api/auth/tokens");
+    assert_redacted(&format!("{req:?}"), &["secret_token_123"]);
 }
 
 #[test]
@@ -281,39 +320,16 @@ fn tc_1_3_2_retry_classification_backoff_and_request_redaction() {
         assert_eq!(is_retryable_status(status), expected);
     }
 
-    let mut headers = HeaderMap::new();
-    headers.insert(RETRY_AFTER, HeaderValue::from_static(" 15 "));
-    assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(15)));
-    headers.insert(RETRY_AFTER, HeaderValue::from_static("invalid"));
-    assert_eq!(parse_retry_after(&headers), None);
+    assert_retry_after_header(" 15 ", Some(Duration::from_secs(15)));
+    assert_retry_after_header("invalid", None);
 
     let policy = RetryPolicy {
         max_retries: 3,
         base_delay: Duration::from_millis(50),
         max_delay: Duration::from_millis(300),
     };
-    for attempt in 0..=4 {
-        assert!(compute_backoff_delay(&policy, attempt, None) <= policy.max_delay);
-    }
-    assert_eq!(
-        compute_backoff_delay(&policy, 0, Some(Duration::from_secs(60))),
-        policy.max_delay
-    );
-
-    assert!(matches!(
-        HttpRequest::get("not a url"),
-        Err(HttpError::InvalidConfig(_))
-    ));
-    let req = HttpRequest::post("https://accept.paymob.com/api/auth/tokens")
-        .expect("valid URL")
-        .with_header(
-            HeaderName::from_static("authorization"),
-            HeaderValue::from_static("Bearer secret_token_123"),
-        )
-        .with_body(b"{}".to_vec());
-    assert_eq!(req.method(), &Method::POST);
-    assert_eq!(req.url().as_str(), "https://accept.paymob.com/api/auth/tokens");
-    assert_redacted(&format!("{req:?}"), &["secret_token_123"]);
+    assert_backoff_bounds(&policy);
+    assert_request_builder_and_redaction();
 }
 
 #[tokio::test]
@@ -390,9 +406,7 @@ async fn tc_1_3_2_http_client_enforces_bounded_body_and_timeout() {
     assert!(matches!(timeout_err, HttpError::Timeout { .. }));
 }
 
-#[test]
-fn tc_1_3_3_money_zero_float_arithmetic_and_serde() {
-    let egp = MinorUnitAmount::from_major_checked(1000, 2).expect("1000 EGP");
+fn assert_minor_unit_arithmetic(egp: MinorUnitAmount) {
     assert_eq!(egp.as_u64(), 100_000);
     assert_eq!(
         MinorUnitAmount::from_major_checked(25, 3).expect("25 OMR"),
@@ -406,13 +420,22 @@ fn tc_1_3_3_money_zero_float_arithmetic_and_serde() {
         egp.checked_sub(MinorUnitAmount::new(500)).expect("sub"),
         MinorUnitAmount(99_500)
     );
+}
 
+fn assert_minor_unit_serde(egp: MinorUnitAmount) {
     let json = serde_json::to_string(&egp).expect("serialize integer");
     assert_eq!(json, "100000");
     let roundtrip: MinorUnitAmount = serde_json::from_str(&json).expect("deserialize integer");
     assert_eq!(roundtrip, egp);
     assert_eq!(u64::from(roundtrip), 100_000);
     assert_eq!(roundtrip.to_string(), "100000");
+}
+
+#[test]
+fn tc_1_3_3_money_zero_float_arithmetic_and_serde() {
+    let egp = MinorUnitAmount::from_major_checked(1000, 2).expect("1000 EGP");
+    assert_minor_unit_arithmetic(egp);
+    assert_minor_unit_serde(egp);
 
     let failure_cases = [
         (MinorUnitAmount::from_major_checked(1, 20), "decimals"),
@@ -424,6 +447,33 @@ fn tc_1_3_3_money_zero_float_arithmetic_and_serde() {
         assert!(matches!(
             res,
             Err(PaymobError::ValidationError { field, .. }) if field == expected_field
+        ));
+    }
+}
+
+fn assert_currency_case(raw: &str, expected: Currency, canonical: &str, decimals: u8) {
+    let parsed = Currency::from_code(raw);
+    assert_eq!(parsed, expected);
+    assert_eq!(parsed.as_str(), canonical);
+    assert_eq!(parsed.minor_unit_decimals(), decimals);
+    assert_eq!(raw.parse::<Currency>().expect("infallible"), expected);
+
+    let serialized = serde_json::to_string(&parsed).expect("serialize currency");
+    let deserialized: Currency = serde_json::from_str(&serialized).expect("deserialize");
+    assert_eq!(deserialized, parsed);
+}
+
+fn assert_prefixed_id_validation() {
+    assert!(validate_prefixed_id("pi_abc123", "pi_", "intention_id").is_ok());
+    assert!(validate_prefixed_id("pk_test_xyz", "pk_", "public_key").is_ok());
+
+    for invalid in ["", "   ", " pi_123", "pi_12 3", "pk_123", "pi_"] {
+        assert!(matches!(
+            validate_prefixed_id(invalid, "pi_", "intention_id"),
+            Err(PaymobError::ValidationError {
+                field: "intention_id",
+                ..
+            })
         ));
     }
 }
@@ -443,51 +493,25 @@ fn tc_1_3_3_currency_lookup_decimals_and_prefixed_id_validation() {
     ];
 
     for (raw, expected, canonical, decimals) in currency_cases {
-        let parsed = Currency::from_code(raw);
-        assert_eq!(parsed, expected);
-        assert_eq!(parsed.as_str(), canonical);
-        assert_eq!(parsed.minor_unit_decimals(), decimals);
-        assert_eq!(raw.parse::<Currency>().expect("infallible"), expected);
-
-        let serialized = serde_json::to_string(&parsed).expect("serialize currency");
-        let deserialized: Currency = serde_json::from_str(&serialized).expect("deserialize");
-        assert_eq!(deserialized, parsed);
+        assert_currency_case(raw, expected, canonical, decimals);
     }
-
-    assert!(validate_prefixed_id("pi_abc123", "pi_", "intention_id").is_ok());
-    assert!(validate_prefixed_id("pk_test_xyz", "pk_", "public_key").is_ok());
-
-    for invalid in ["", "   ", " pi_123", "pi_12 3", "pk_123", "pi_"] {
-        assert!(matches!(
-            validate_prefixed_id(invalid, "pi_", "intention_id"),
-            Err(PaymobError::ValidationError {
-                field: "intention_id",
-                ..
-            })
-        ));
-    }
+    assert_prefixed_id_validation();
 }
 
-#[test]
-fn tc_1_3_4_pagination_and_prelude_reexports() {
-    let raw = r#"{
-        "count": 42,
-        "next": "https://accept.paymob.com/api/ecommerce/orders?page=3&page_size=20",
-        "previous": "https://accept.paymob.com/api/ecommerce/orders?page=1&page_size=20",
-        "results": [101, 102, 103]
-    }"#;
-    let page: PaginatedResponse<u64> = serde_json::from_str(raw).expect("valid page JSON");
+fn assert_paginated_response_bounds(page: &PaginatedResponse<u64>) {
     assert_eq!(page.count, 42);
-    assert!(page.has_next());
-    assert!(page.has_previous());
     assert!(!page.is_empty());
     assert_eq!(page.len(), 3);
+}
+
+fn assert_paginated_response_nav(page: &PaginatedResponse<u64>) {
+    assert!(page.has_next());
+    assert!(page.has_previous());
     assert_eq!(page.next_page_number(), Some(3));
     assert_eq!(page.previous_page_number(), Some(1));
+}
 
-    let mapped = page.map(|id| format!("ord_{id}"));
-    assert_eq!(mapped.results, vec!["ord_101", "ord_102", "ord_103"]);
-
+fn assert_page_query_behavior() {
     let query = PageQuery::new(0).with_page_size(0);
     assert_eq!(query.page(), 1);
     assert_eq!(query.page_size(), Some(1));
@@ -501,25 +525,50 @@ fn tc_1_3_4_pagination_and_prelude_reexports() {
         serde_json::from_str(&serde_json::to_string(&PageQuery::new(3)).expect("serialize"))
             .expect("deserialize");
     assert_eq!(roundtrip, PageQuery::new(3));
+}
 
+fn assert_prelude_reexports() {
     use sdk_prelude::*;
-    assert!(!type_name::<CachedToken>().is_empty());
-    assert!(!type_name::<AuthStrategy>().is_empty());
-    assert!(!type_name::<PaymobClient>().is_empty());
-    assert!(!type_name::<ClientConfig>().is_empty());
-    assert!(!type_name::<ClientConfigBuilder>().is_empty());
-    assert!(!type_name::<ApiKey>().is_empty());
-    assert!(!type_name::<EnvironmentMode>().is_empty());
-    assert!(!type_name::<HmacSecret>().is_empty());
-    assert!(!type_name::<PartnerCredentials>().is_empty());
-    assert!(!type_name::<PayoutsCredentials>().is_empty());
-    assert!(!type_name::<PublicKey>().is_empty());
-    assert!(!type_name::<SecretKey>().is_empty());
-    assert!(!type_name::<PaymobError>().is_empty());
-    assert!(!type_name::<PageQuery>().is_empty());
-    assert!(!type_name::<PaginatedResponse<u8>>().is_empty());
-    assert!(!type_name::<PaymobRegion>().is_empty());
-    assert!(!type_name::<RegionalEndpoints>().is_empty());
-    assert!(!type_name::<Currency>().is_empty());
-    assert!(!type_name::<MinorUnitAmount>().is_empty());
+    let exported = [
+        type_name::<CachedToken>(),
+        type_name::<AuthStrategy>(),
+        type_name::<PaymobClient>(),
+        type_name::<ClientConfig>(),
+        type_name::<ClientConfigBuilder>(),
+        type_name::<ApiKey>(),
+        type_name::<EnvironmentMode>(),
+        type_name::<HmacSecret>(),
+        type_name::<PartnerCredentials>(),
+        type_name::<PayoutsCredentials>(),
+        type_name::<PublicKey>(),
+        type_name::<SecretKey>(),
+        type_name::<PaymobError>(),
+        type_name::<PageQuery>(),
+        type_name::<PaginatedResponse<u8>>(),
+        type_name::<PaymobRegion>(),
+        type_name::<RegionalEndpoints>(),
+        type_name::<Currency>(),
+        type_name::<MinorUnitAmount>(),
+    ];
+    for name in exported {
+        assert!(!name.is_empty());
+    }
+}
+
+#[test]
+fn tc_1_3_4_pagination_and_prelude_reexports() {
+    let raw = r#"{
+        "count": 42,
+        "next": "https://accept.paymob.com/api/ecommerce/orders?page=3&page_size=20",
+        "previous": "https://accept.paymob.com/api/ecommerce/orders?page=1&page_size=20",
+        "results": [101, 102, 103]
+    }"#;
+    let page: PaginatedResponse<u64> = serde_json::from_str(raw).expect("valid page JSON");
+    assert_paginated_response_bounds(&page);
+    assert_paginated_response_nav(&page);
+    let mapped = page.map(|id| format!("ord_{id}"));
+    assert_eq!(mapped.results, vec!["ord_101", "ord_102", "ord_103"]);
+
+    assert_page_query_behavior();
+    assert_prelude_reexports();
 }

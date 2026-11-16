@@ -842,7 +842,10 @@ mod tests {
         assert_eq!(page2.results.len(), 1);
         assert_eq!(page2.results[0].id, 2);
 
-        let page1 = service.list(None).await.expect("list default page should succeed");
+        let page1 = service
+            .list(None)
+            .await
+            .expect("list default page should succeed");
         assert_eq!(page1.results.len(), 1);
         assert_eq!(page1.results[0].id, 1);
     }

@@ -10,7 +10,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust: Edition 2024](https://img.shields.io/badge/rust-2024%20edition-orange.svg)](https://github.com/some-of-cs/some-paymob)
 [![Ecosystem: some-payment](https://img.shields.io/badge/ecosystem-some--payment-8a2be2.svg)](https://github.com/some-of-cs/some-payment)
-[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%99%A5-ff69b4.svg)](https://github.com/sponsors/some-of-cs)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%99%A5-ff69b4.svg)](https://github.com/sponsors/maheraladdin)
 
 [Why some-paymob?](#why-some-paymob) •
 [Key Features](#key-features) •
@@ -238,7 +238,7 @@ fn handle_paymob_webhook(raw_body: &[u8], query_hmac: Option<&str>, hmac_secret:
 
 <div align="center">
 
-[![Become a Sponsor](https://img.shields.io/badge/Become%20a%20Sponsor-%E2%99%A5-ea4aaa?style=for-the-badge)](https://github.com/sponsors/some-of-cs)
+[![Become a Sponsor](https://img.shields.io/badge/Become%20a%20Sponsor-%E2%99%A5-ea4aaa?style=for-the-badge)](https://github.com/sponsors/maheraladdin)
 
 </div>
 
@@ -257,7 +257,7 @@ fn handle_paymob_webhook(raw_body: &[u8], query_hmac: Option<&str>, hmac_secret:
 
 | 🏆 Visionary Sponsors | 🥇 Gold Partners | 🥈 Silver Backers | ☕ Individual Backers |
 | :---: | :---: | :---: | :---: |
-| *Your company logo here*<br>[Become a Visionary Sponsor](https://github.com/sponsors/some-of-cs) | *Your company logo here*<br>[Become a Gold Partner](https://github.com/sponsors/some-of-cs) | *Your company logo here*<br>[Become a Silver Backer](https://github.com/sponsors/some-of-cs) | [Join our Individual Backers](https://github.com/sponsors/some-of-cs) |
+| *Your company logo here*<br>[Become a Visionary Sponsor](https://github.com/sponsors/maheraladdin) | *Your company logo here*<br>[Become a Gold Partner](https://github.com/sponsors/maheraladdin) | *Your company logo here*<br>[Become a Silver Backer](https://github.com/sponsors/maheraladdin) | [Join our Individual Backers](https://github.com/sponsors/maheraladdin) |
 
 </div>
 

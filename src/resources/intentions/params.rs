@@ -349,7 +349,10 @@ impl CreateIntentionParamsBuilder {
         let amount = validate_required_amount(self.amount)?;
         let currency = validate_required_currency(self.currency)?;
         let payment_methods = validate_required_methods(self.payment_methods)?;
-        validate_optional_urls(self.notification_url.as_deref(), self.redirection_url.as_deref())?;
+        validate_optional_urls(
+            self.notification_url.as_deref(),
+            self.redirection_url.as_deref(),
+        )?;
         validate_card_tokens(self.card_tokens.as_deref())?;
 
         Ok(CreateIntentionParams {
@@ -853,7 +856,10 @@ mod tests {
             .build();
         assert!(matches!(
             missing_amount,
-            Err(PaymobError::ValidationError { field: "amount", .. })
+            Err(PaymobError::ValidationError {
+                field: "amount",
+                ..
+            })
         ));
 
         let empty_methods = CreateIntentionParams::builder()

@@ -11,7 +11,11 @@
 pub mod core;
 pub mod prelude;
 
-/// Constant-time cryptographic webhook verification engine (Protocols A-E & Idempotency Guard).
+/// Paymob API resource modules and checkout builders.
+#[cfg(any(feature = "intentions", feature = "legacy-v2"))]
+pub mod resources;
+
+/// Constant-time cryptographic webhook verification engine (Protocols A–E & Idempotency Guard).
 #[cfg(feature = "webhooks")]
 pub mod webhooks;
 

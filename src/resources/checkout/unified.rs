@@ -113,14 +113,18 @@ impl<'a> CheckoutService<'a> {
     /// # }
     /// ```
     pub fn unified_url(&self, client_secret: &SecretString) -> Result<Url, PaymobError> {
-        let public_key = self.client.config().public_key().ok_or_else(|| {
-            PaymobError::ValidationError {
+        let public_key =
+            self.client
+                .config()
+                .public_key()
+                .ok_or_else(|| {
+                    PaymobError::ValidationError {
                 field: "public_key",
                 reason:
                     "public_key must be configured on ClientConfig to build a Unified Checkout URL"
                         .to_owned(),
             }
-        })?;
+                })?;
         let pk_value = validate_public_key(public_key)?;
         let secret_value = validate_client_secret(client_secret)?;
 

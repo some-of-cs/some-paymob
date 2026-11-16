@@ -1,0 +1,10 @@
+# Git worktrees (Divide-and-Conquer sandbox)
+.worktrees/
+
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# OS & Editor metadata
+.DS_Store
+Thumbs.db

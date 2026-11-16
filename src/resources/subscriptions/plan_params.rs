@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! Subscription plan creation and update parameter builders (`US-4.2.0/unit-2`).
 //!
-//! Provides [`CreateSubscriptionPlanParams`] and [`UpdateSubscriptionPlanParams`]
+//! Provides `CreateSubscriptionPlanParams` and `UpdateSubscriptionPlanParams`
 //! along with their fluent builders and client-side validation for Paymob's
 //! `/api/acceptance/subscription-plans` endpoints.
 //!

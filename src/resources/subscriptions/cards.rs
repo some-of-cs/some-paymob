@@ -710,7 +710,9 @@ mod tests {
         let server = MockServer::start().await;
         mount_auth_mock(&server, TEST_JWT).await;
         Mock::given(method("POST"))
-            .and(path("/api/acceptance/subscriptions/1264/add-secondary-card"))
+            .and(path(
+                "/api/acceptance/subscriptions/1264/add-secondary-card",
+            ))
             .and(header("authorization", &format!("Bearer {TEST_JWT}")))
             .and(body_json(json!({
                 "token": "tok_new_secondary_999",
@@ -750,7 +752,9 @@ mod tests {
         let server = MockServer::start().await;
         mount_auth_mock(&server, TEST_JWT).await;
         Mock::given(method("POST"))
-            .and(path("/api/acceptance/subscriptions/1264/change-primary-card"))
+            .and(path(
+                "/api/acceptance/subscriptions/1264/change-primary-card",
+            ))
             .and(header("authorization", &format!("Bearer {TEST_JWT}")))
             .and(body_json(json!({ "card": 374 })))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({

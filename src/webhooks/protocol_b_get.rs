@@ -490,8 +490,7 @@ mod tests {
     use super::*;
 
     const TEST_HMAC_SECRET: &str = "3qUAg2xx6JW89Qav5GzzmXoalgjf5XxE";
-    const VECTOR_316004_HMAC: &str =
-        "5839e3844172a1ce57a5e05dc8a47d57235d080bd7f497ed2ae7cc54bc6249d5\
+    const VECTOR_316004_HMAC: &str = "5839e3844172a1ce57a5e05dc8a47d57235d080bd7f497ed2ae7cc54bc6249d5\
          826ef93f1d502f8d354d775ecb5bd519a02ee730028137b07e66fed2bb6c1812";
 
     fn test_engine() -> PaymobWebhookEngine {

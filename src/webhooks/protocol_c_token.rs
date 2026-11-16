@@ -302,17 +302,14 @@ mod tests {
     }"#;
 
     /// Expected 8-key canonical concatenated string for Official Test Vector `15978654`.
-    const OFFICIAL_TEST_VECTOR_15978654_CONCAT: &str =
-        "MasterCard2024-06-13T11:33:44.592345customer@example.com15978654xxxx-xxxx-xxxx-2346302852593881581tok_test_15978654_abcdef";
+    const OFFICIAL_TEST_VECTOR_15978654_CONCAT: &str = "MasterCard2024-06-13T11:33:44.592345customer@example.com15978654xxxx-xxxx-xxxx-2346302852593881581tok_test_15978654_abcdef";
 
     /// Official Paymob documented HMAC-SHA512 digest prefix/vector for `15978654`.
-    const OFFICIAL_TEST_VECTOR_15978654_HMAC: &str =
-        "4c0480c8c5afdba5294dee8ec01e5aa0203c5df0a8b3a45eadf11f2b01c974725d205587dabba70709f3ac2d0c7d7ec93fe69ec462b5a3018190bfd681ebf1d3";
+    const OFFICIAL_TEST_VECTOR_15978654_HMAC: &str = "4c0480c8c5afdba5294dee8ec01e5aa0203c5df0a8b3a45eadf11f2b01c974725d205587dabba70709f3ac2d0c7d7ec93fe69ec462b5a3018190bfd681ebf1d3";
 
     /// Deterministic SDK test secret and its computed HMAC-SHA512 over Test Vector `15978654`.
     const SAMPLE_HMAC_SECRET: &str = "3qUAg2xx6JW89Qav5GzzmXoalgjf5XxE";
-    const SAMPLE_TEST_VECTOR_15978654_HMAC: &str =
-        "38ac96769330ae1b446ba94220b4a0fbf4a536ff407710d0637b32efc1c17cc17dde92a831467724a16e09ea7b7054806275d78ce726ba243cc2fea25f30be0d";
+    const SAMPLE_TEST_VECTOR_15978654_HMAC: &str = "38ac96769330ae1b446ba94220b4a0fbf4a536ff407710d0637b32efc1c17cc17dde92a831467724a16e09ea7b7054806275d78ce726ba243cc2fea25f30be0d";
 
     #[test]
     fn token_hmac_keys_are_sorted_lexicographically() {
@@ -349,9 +346,11 @@ mod tests {
         assert_eq!(event.obj.token, "tok_test_15978654_abcdef");
 
         let upper_hmac = SAMPLE_TEST_VECTOR_15978654_HMAC.to_ascii_uppercase();
-        assert!(engine
-            .verify_card_token(OFFICIAL_TEST_VECTOR_15978654_JSON, &upper_hmac)
-            .is_ok());
+        assert!(
+            engine
+                .verify_card_token(OFFICIAL_TEST_VECTOR_15978654_JSON, &upper_hmac)
+                .is_ok()
+        );
     }
 
     #[test]

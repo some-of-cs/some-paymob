@@ -58,8 +58,7 @@ const TX_VECTOR_JSON: &str = r#"{
 const TX_VECTOR_HMAC: &str = "28f19ec85986d4534f77201b00bf750948334753847f437b538cc699f3de447c\
      d0d62a5f521c7b20069bd255f48e8d891f0033167ad35b434d532b61e85a3da7";
 
-const REDIRECT_316004_HMAC: &str =
-    "5839e3844172a1ce57a5e05dc8a47d57235d080bd7f497ed2ae7cc54bc6249d5\
+const REDIRECT_316004_HMAC: &str = "5839e3844172a1ce57a5e05dc8a47d57235d080bd7f497ed2ae7cc54bc6249d5\
      826ef93f1d502f8d354d775ecb5bd519a02ee730028137b07e66fed2bb6c1812";
 
 fn sign_hex(secret: &str, message: &str) -> String {

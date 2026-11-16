@@ -351,8 +351,7 @@ mod tests {
             "order_id": "593881581"
         }
     }"#;
-    const TOKEN_VEC_HMAC: &str =
-        "38ac96769330ae1b446ba94220b4a0fbf4a536ff407710d0637b32efc1c17cc17dde92a831467724a16e09ea7b7054806275d78ce726ba243cc2fea25f30be0d";
+    const TOKEN_VEC_HMAC: &str = "38ac96769330ae1b446ba94220b4a0fbf4a536ff407710d0637b32efc1c17cc17dde92a831467724a16e09ea7b7054806275d78ce726ba243cc2fea25f30be0d";
 
     #[test]
     fn detects_subscription_and_card_token() {

@@ -493,8 +493,7 @@ mod tests {
     use hmac::{Hmac, Mac};
     use sha2::Sha512;
 
-    const OFFICIAL_SAMPLE_HMAC: &str =
-        "dd5b3018888d9f98574cd180793db10d969b522e08c62baf2ea33357d1546b567b7fd79760e90046e90eaacf30024ede5539cbd0748bd9e6c005faf5117e0e7b";
+    const OFFICIAL_SAMPLE_HMAC: &str = "dd5b3018888d9f98574cd180793db10d969b522e08c62baf2ea33357d1546b567b7fd79760e90046e90eaacf30024ede5539cbd0748bd9e6c005faf5117e0e7b";
 
     const OFFICIAL_SAMPLE_JSON: &str = r#"{
         "paymob_request_id": "df9e4ecf-12e0-4925-b258-65423f32bc98",

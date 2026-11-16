@@ -554,7 +554,7 @@ mod tests {
     #[test]
     fn test_verify_subscription_all_12_triggers_and_vector_shape() {
         let secret = "paymob_test_hmac_secret";
-        let engine = PaymobWebhookEngine::new(secret);
+        let engine = PaymobWebhookEngine::new(secret).expect("valid test secret");
 
         for (wire, expected_variant) in KNOWN_SUBSCRIPTION_TRIGGERS {
             let canonical = format!("{wire}for1264");
@@ -578,7 +578,8 @@ mod tests {
 
     #[test]
     fn test_verify_subscription_negative_cases() {
-        let engine = PaymobWebhookEngine::new("paymob_test_hmac_secret");
+        let engine =
+            PaymobWebhookEngine::new("paymob_test_hmac_secret").expect("valid test secret");
 
         assert_eq!(
             engine.verify_subscription(OFFICIAL_SAMPLE_JSON),
@@ -617,9 +618,9 @@ mod tests {
             Err(WebhookError::MalformedSignatureHex)
         );
 
-        assert_eq!(
+        assert!(matches!(
             engine.verify_subscription("{not_json"),
-            Err(WebhookError::InvalidJsonPayload)
-        );
+            Err(WebhookError::InvalidJsonPayload(_))
+        ));
     }
 }

@@ -550,7 +550,11 @@ impl SubscriptionPlansService {
         let response = self.execute_once(&method, &url, body, &token).await?;
 
         if is_incorrect_credentials_401(response.status, &response.body) {
-            self.client.auth().accept_cache().evict_if_matches(&token).await;
+            self.client
+                .auth()
+                .accept_cache()
+                .evict_if_matches(&token)
+                .await;
             let refreshed = self.acquire_bearer_token().await?;
             let retry_resp = self.execute_once(&method, &url, body, &refreshed).await?;
             return parse_json_response(&retry_resp);
@@ -742,19 +746,25 @@ mod tests {
                 "is_active": true,
                 "plan_type": "rent"
             })))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(sample_plan_json(101, "Pro Monthly", true)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(sample_plan_json(
+                101,
+                "Pro Monthly",
+                true,
+            )))
             .mount(&server)
             .await;
 
         let service = mock_service(&server.uri(), true);
-        let params = CreateSubscriptionPlanParams::new("Pro Monthly", PlanFrequency::Days30, 4_111_111)
-            .with_amount_cents(15_000)
-            .with_is_active(true)
-            .with_plan_type(PlanType::Rent);
+        let params =
+            CreateSubscriptionPlanParams::new("Pro Monthly", PlanFrequency::Days30, 4_111_111)
+                .with_amount_cents(15_000)
+                .with_is_active(true)
+                .with_plan_type(PlanType::Rent);
 
-        let plan = service.create(&params).await.expect("create should succeed");
+        let plan = service
+            .create(&params)
+            .await
+            .expect("create should succeed");
         assert_eq!(plan.id, 101);
         assert_eq!(plan.name, "Pro Monthly");
         assert_eq!(plan.frequency, PlanFrequency::Days30);
@@ -820,7 +830,10 @@ mod tests {
             .await;
 
         let service = mock_service(&server.uri(), true);
-        let page2 = service.list(Some(2)).await.expect("list page 2 should succeed");
+        let page2 = service
+            .list(Some(2))
+            .await
+            .expect("list page 2 should succeed");
         assert_eq!(page2.count, 2);
         assert_eq!(page2.results.len(), 1);
         assert_eq!(page2.results[0].id, 2);
@@ -874,7 +887,12 @@ mod tests {
         let zero_integration = CreateSubscriptionPlanParams::new("Valid", PlanFrequency::Days7, 0);
         assert!(service.create(&zero_integration).await.is_err());
 
-        assert!(service.update(0, &UpdateSubscriptionPlanParams::new()).await.is_err());
+        assert!(
+            service
+                .update(0, &UpdateSubscriptionPlanParams::new())
+                .await
+                .is_err()
+        );
         assert!(service.list(Some(0)).await.is_err());
         assert!(service.suspend(0).await.is_err());
         assert!(service.resume(0).await.is_err());
@@ -882,9 +900,18 @@ mod tests {
         let valid_params =
             CreateSubscriptionPlanParams::new("Valid", PlanFrequency::Days30, 4_111_111);
         let missing_auth = service.create(&valid_params).await;
-        assert!(matches!(missing_auth, Err(PaymobError::AuthenticationError(_))));
+        assert!(matches!(
+            missing_auth,
+            Err(PaymobError::AuthenticationError(_))
+        ));
 
-        assert!(server.received_requests().await.unwrap_or_default().is_empty());
+        assert!(
+            server
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

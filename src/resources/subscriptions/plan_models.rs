@@ -2,10 +2,10 @@
 //! Subscription plan frequency, plan type, and plan record models (`US-4.2.0` Unit 1).
 //!
 //! Implements `TC-4.2.1`:
-//! - [`PlanFrequency`] restricting plan intervals to Paymob's exact 7 allowed values
-//!   (`7 | 15 | 30 | 60 | 90 | 180 | 360` days) mapped via [`KNOWN_PLAN_FREQUENCIES`].
-//! - [`PlanType`] (`Rent`) for Paymob subscription plan classifications.
-//! - [`SubscriptionPlan`] response record using [`MinorUnitAmount`] (zero floats).
+//! - `PlanFrequency` restricting plan intervals to Paymob's exact 7 allowed values
+//!   (`7 | 15 | 30 | 60 | 90 | 180 | 360` days) mapped via `KNOWN_PLAN_FREQUENCIES`.
+//! - `PlanType` (`Rent`) for Paymob subscription plan classifications.
+//! - `SubscriptionPlan` response record using `MinorUnitAmount` (zero floats).
 
 use std::fmt;
 use std::str::FromStr;

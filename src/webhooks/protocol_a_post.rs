@@ -114,7 +114,7 @@ impl PaymobWebhookEngine {
     /// enforces `event_type == "TRANSACTION"`, concatenates the 20 lexicographical
     /// fields from `body.obj` via [`CanonicalTransactionConcatenator`], and verifies the
     /// resulting string against `query_hmac` using `HMAC-SHA512` and
-    /// [`subtle::ConstantTimeEq`](subtle::ConstantTimeEq).
+    /// [`subtle::ConstantTimeEq`].
     ///
     /// # Errors
     ///

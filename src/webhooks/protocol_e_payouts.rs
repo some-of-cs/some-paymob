@@ -2,7 +2,7 @@
 //!
 //! This module models Paymob Payouts webhook payloads for outbound
 //! disbursements ([`DisbursementCallback`]) and account top-up approvals
-//! ([`TopupCallback`]), and extends [`super::verifier::PaymobWebhookEngine`]
+//! ([`TopupCallback`]), and extends [`crate::webhooks::verifier::PaymobWebhookEngine`]
 //! with fail-closed constant-time `HMAC-SHA512` verification using the
 //! configured payouts secret.
 //!

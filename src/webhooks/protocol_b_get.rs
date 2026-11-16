@@ -220,9 +220,9 @@ fn resolve_redirect_param<'a, P: QueryParams>(
     value.ok_or_else(|| WebhookError::MissingRequiredField(key.to_string()))
 }
 
-fn collect_canonical_redirect_values<'a, P: QueryParams>(
-    params: &'a P,
-) -> Result<(String, [&'a str; 20]), WebhookError> {
+fn collect_canonical_redirect_values<P: QueryParams>(
+    params: &P,
+) -> Result<(String, [&str; 20]), WebhookError> {
     let mut values = [""; 20];
     let mut concatenated = String::with_capacity(256);
     for (idx, &key) in TX_HMAC_KEYS.iter().enumerate() {

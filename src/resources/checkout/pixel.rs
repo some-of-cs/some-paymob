@@ -450,8 +450,7 @@ mod tests {
                     .with_certificate_id("cert_sha256_abc"),
             )
             .google_pay(
-                GooglePaySettings::new("gpay_merchant_1")
-                    .with_gateway_merchant_id("paymob_gw_1"),
+                GooglePaySettings::new("gpay_merchant_1").with_gateway_merchant_id("paymob_gw_1"),
             )
             .locale("en")
             .build()

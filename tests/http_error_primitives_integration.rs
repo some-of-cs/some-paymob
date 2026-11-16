@@ -146,112 +146,83 @@ fn assert_redacted(rendered: &str, forbidden_secrets: &[&str]) {
     }
 }
 
+fn assert_error_mapping_cases(
+    cases: &[(u16, &str, Option<u64>, PaymobError, bool, Option<u16>)],
+) {
+    for (status, body, retry_after, expected, retryable, expected_status) in cases {
+        let actual = PaymobError::from_response(*status, body, *retry_after);
+        assert_eq!(&actual, expected);
+        assert_eq!(actual.is_retryable(), *retryable);
+        assert_eq!(actual.status_code(), *expected_status);
+    }
+}
+
 #[test]
-fn tc_1_3_1_paymob_error_multi_shape_status_mapping() {
-    let cases = [
+fn tc_1_3_1_paymob_error_auth_and_not_found_mapping() {
+    assert_error_mapping_cases(&[
+        (401, r#"{"detail": "incorrect credentials"}"#, None, PaymobError::AuthenticationError("incorrect credentials".to_string()), false, None),
+        (403, r#"{"detail": "forbidden"}"#, None, PaymobError::AuthenticationError("forbidden".to_string()), false, None),
         (
-            401_u16,
-            r#"{"detail": "incorrect credentials"}"#,
-            None,
-            PaymobError::AuthenticationError("incorrect credentials".to_string()),
-            false,
-            None,
-        ),
-        (
-            403_u16,
-            r#"{"detail": "forbidden"}"#,
-            None,
-            PaymobError::AuthenticationError("forbidden".to_string()),
-            false,
-            None,
-        ),
-        (
-            404_u16,
+            404,
             r#"{"detail": "Not found.", "code": "NOT_FOUND"}"#,
             None,
-            PaymobError::ApiError {
-                status: 404,
-                message: "Not found.".to_string(),
-                code: Some("NOT_FOUND".to_string()),
-            },
+            PaymobError::ApiError { status: 404, message: "Not found.".to_string(), code: Some("NOT_FOUND".to_string()) },
             false,
             Some(404),
         ),
+    ]);
+}
+
+#[test]
+fn tc_1_3_1_paymob_error_refund_and_rate_limit_mapping() {
+    assert_error_mapping_cases(&[
         (
-            400_u16,
+            400,
             r#"{"message": "Requested Refund Amount exceeds permissible limit"}"#,
             None,
-            PaymobError::RefundExceedsPermissibleAmount {
-                message: "Requested Refund Amount exceeds permissible limit".to_string(),
-            },
+            PaymobError::RefundExceedsPermissibleAmount { message: "Requested Refund Amount exceeds permissible limit".to_string() },
             false,
             None,
         ),
         (
-            429_u16,
+            429,
             r#"{"status_description": "Rate limit exceeded", "status_code": 429}"#,
             Some(12),
-            PaymobError::RateLimited {
-                message: "Rate limit exceeded".to_string(),
-                retry_after_secs: Some(12),
-            },
+            PaymobError::RateLimited { message: "Rate limit exceeded".to_string(), retry_after_secs: Some(12) },
             true,
             Some(429),
         ),
+    ]);
+}
+
+#[test]
+fn tc_1_3_1_paymob_error_validation_shapes_mapping() {
+    assert_error_mapping_cases(&[
         (
-            400_u16,
+            400,
             r#"{"billing_data": {"phone_number": ["This field is required."]}}"#,
             None,
-            PaymobError::ValidationError {
-                field: "phone_number",
-                reason: "This field is required.".to_string(),
-            },
+            PaymobError::ValidationError { field: "phone_number", reason: "This field is required.".to_string() },
             false,
             None,
         ),
         (
-            422_u16,
+            422,
             r#"{"custom_block": {"unknown_attr": ["Invalid value"]}}"#,
             None,
-            PaymobError::ValidationError {
-                field: "payload",
-                reason: "unknown_attr: Invalid value".to_string(),
-            },
+            PaymobError::ValidationError { field: "payload", reason: "unknown_attr: Invalid value".to_string() },
             false,
             None,
         ),
-        (
-            503_u16,
-            "Service Unavailable",
-            None,
-            PaymobError::ApiError {
-                status: 503,
-                message: "Service Unavailable".to_string(),
-                code: None,
-            },
-            true,
-            Some(503),
-        ),
-        (
-            500_u16,
-            "   ",
-            None,
-            PaymobError::ApiError {
-                status: 500,
-                message: "HTTP 500 error with empty response body".to_string(),
-                code: None,
-            },
-            false,
-            Some(500),
-        ),
-    ];
+    ]);
+}
 
-    for (status, body, retry_after, expected, retryable, expected_status) in cases {
-        let actual = PaymobError::from_response(status, body, retry_after);
-        assert_eq!(actual, expected);
-        assert_eq!(actual.is_retryable(), retryable);
-        assert_eq!(actual.status_code(), expected_status);
-    }
+#[test]
+fn tc_1_3_1_paymob_error_server_fallback_mapping() {
+    assert_error_mapping_cases(&[
+        (503, "Service Unavailable", None, PaymobError::ApiError { status: 503, message: "Service Unavailable".to_string(), code: None }, true, Some(503)),
+        (500, "   ", None, PaymobError::ApiError { status: 500, message: "HTTP 500 error with empty response body".to_string(), code: None }, false, Some(500)),
+    ]);
 }
 
 #[test]

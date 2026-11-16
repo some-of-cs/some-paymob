@@ -226,14 +226,40 @@ impl PaymobError {
     }
 }
 
-impl fmt::Display for PaymobError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl PaymobError {
+    fn is_transport_variant(&self) -> bool {
+        matches!(
+            self,
+            Self::ApiError { .. }
+                | Self::RateLimited { .. }
+                | Self::WebhookError(_)
+                | Self::TransportError(_)
+        )
+    }
+
+    fn fmt_display_transport(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ApiError {
                 status,
                 message,
                 code,
             } => fmt_api_error_display(f, *status, message, code.as_deref()),
+            Self::RateLimited {
+                message,
+                retry_after_secs,
+            } => fmt_rate_limited_display(f, message, *retry_after_secs),
+            Self::WebhookError(msg) => {
+                write!(f, "Webhook verification error: {}", redact_sensitive(msg))
+            }
+            Self::TransportError(msg) => {
+                write!(f, "HTTP transport error: {}", redact_sensitive(msg))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn fmt_display_domain(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
             Self::AuthenticationError(msg) => {
                 write!(f, "Authentication failed: {}", redact_sensitive(msg))
             }
@@ -247,27 +273,16 @@ impl fmt::Display for PaymobError {
                 "Refund amount exceeds maximum permissible balance: {}",
                 redact_sensitive(message)
             ),
-            Self::RateLimited {
-                message,
-                retry_after_secs,
-            } => fmt_rate_limited_display(f, message, *retry_after_secs),
-            Self::WebhookError(msg) => {
-                write!(f, "Webhook verification error: {}", redact_sensitive(msg))
-            }
             Self::ValidationError { field, reason } => write!(
                 f,
                 "Validation error on field `{field}`: {}",
                 redact_sensitive(reason)
             ),
-            Self::TransportError(msg) => {
-                write!(f, "HTTP transport error: {}", redact_sensitive(msg))
-            }
+            _ => Ok(()),
         }
     }
-}
 
-impl fmt::Debug for PaymobError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt_debug_transport(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ApiError {
                 status,
@@ -278,18 +293,6 @@ impl fmt::Debug for PaymobError {
                 .field("status", status)
                 .field("message", &redact_sensitive(message))
                 .field("code", &code.as_deref().map(redact_sensitive))
-                .finish(),
-            Self::AuthenticationError(msg) => f
-                .debug_tuple("AuthenticationError")
-                .field(&redact_sensitive(msg))
-                .finish(),
-            Self::EnvironmentMismatch(msg) => f
-                .debug_tuple("EnvironmentMismatch")
-                .field(&redact_sensitive(msg))
-                .finish(),
-            Self::RefundExceedsPermissibleAmount { message } => f
-                .debug_struct("RefundExceedsPermissibleAmount")
-                .field("message", &redact_sensitive(message))
                 .finish(),
             Self::RateLimited {
                 message,
@@ -303,15 +306,54 @@ impl fmt::Debug for PaymobError {
                 .debug_tuple("WebhookError")
                 .field(&redact_sensitive(msg))
                 .finish(),
+            Self::TransportError(msg) => f
+                .debug_tuple("TransportError")
+                .field(&redact_sensitive(msg))
+                .finish(),
+            _ => Ok(()),
+        }
+    }
+
+    fn fmt_debug_domain(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AuthenticationError(msg) => f
+                .debug_tuple("AuthenticationError")
+                .field(&redact_sensitive(msg))
+                .finish(),
+            Self::EnvironmentMismatch(msg) => f
+                .debug_tuple("EnvironmentMismatch")
+                .field(&redact_sensitive(msg))
+                .finish(),
+            Self::RefundExceedsPermissibleAmount { message } => f
+                .debug_struct("RefundExceedsPermissibleAmount")
+                .field("message", &redact_sensitive(message))
+                .finish(),
             Self::ValidationError { field, reason } => f
                 .debug_struct("ValidationError")
                 .field("field", field)
                 .field("reason", &redact_sensitive(reason))
                 .finish(),
-            Self::TransportError(msg) => f
-                .debug_tuple("TransportError")
-                .field(&redact_sensitive(msg))
-                .finish(),
+            _ => Ok(()),
+        }
+    }
+}
+
+impl fmt::Display for PaymobError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_transport_variant() {
+            self.fmt_display_transport(f)
+        } else {
+            self.fmt_display_domain(f)
+        }
+    }
+}
+
+impl fmt::Debug for PaymobError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_transport_variant() {
+            self.fmt_debug_transport(f)
+        } else {
+            self.fmt_debug_domain(f)
         }
     }
 }

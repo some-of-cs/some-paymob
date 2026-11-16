@@ -490,107 +490,105 @@ fn requires_trailing_slash(clean_path: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn tc_1_1_1_builtin_regions_resolve_egypt_ksa_uae() {
-        let egy = PaymobRegion::Egypt.endpoints().expect("egypt endpoints");
-        assert_eq!(egy.accept_base_url, "https://accept.paymob.com");
-        assert_eq!(
-            egy.checkout_base_url,
-            "https://accept.paymob.com/unifiedcheckout/"
-        );
-        assert_eq!(
-            egy.payouts_base_url.as_deref(),
-            Some("https://payouts.paymobsolutions.com")
-        );
-        assert_eq!(
-            egy.payouts_staging_base_url.as_deref(),
-            Some("https://stagingpayouts.paymobsolutions.com")
-        );
+    struct BuiltinCase {
+        region: PaymobRegion,
+        accept: &'static str,
+        checkout: &'static str,
+        payouts: Option<&'static str>,
+        staging: Option<&'static str>,
+    }
 
-        let ksa = PaymobRegion::SaudiArabia.endpoints().expect("ksa endpoints");
-        assert_eq!(ksa.accept_base_url, "https://ksa.paymob.com");
-        assert_eq!(
-            ksa.checkout_base_url,
-            "https://ksa.paymob.com/unifiedcheckout/"
-        );
-        assert_eq!(
-            ksa.payouts_base_url.as_deref(),
-            Some("https://payouts.paymob.sa")
-        );
-        assert_eq!(
-            ksa.payouts_staging_base_url.as_deref(),
-            Some("https://stagingpayouts.paymob.sa")
-        );
+    struct CustomRejectCase {
+        accept: &'static str,
+        checkout: &'static str,
+        payouts: &'static str,
+        staging: &'static str,
+        expected_field: &'static str,
+    }
 
-        let uae = PaymobRegion::Uae.endpoints().expect("uae endpoints");
-        assert_eq!(uae.accept_base_url, "https://uae.paymob.com");
-        assert_eq!(
-            uae.checkout_base_url,
-            "https://uae.paymob.com/unifiedcheckout/"
-        );
-        assert_eq!(
-            uae.payouts_base_url.as_deref(),
-            Some("https://payouts-uae.paymobsolutions.com")
-        );
-        assert_eq!(
-            uae.payouts_staging_base_url.as_deref(),
-            Some("https://stagingpayouts-uae.paymobsolutions.com")
+    fn assert_endpoints(case: &BuiltinCase) {
+        let eps = case.region.endpoints().expect("builtin region endpoints");
+        assert_eq!(eps.accept_base_url, case.accept);
+        assert_eq!(eps.checkout_base_url, case.checkout);
+        assert_eq!(eps.payouts_base_url.as_deref(), case.payouts);
+        assert_eq!(eps.payouts_staging_base_url.as_deref(), case.staging);
+    }
+
+    fn assert_custom_rejected(case: &CustomRejectCase) {
+        let region = PaymobRegion::Custom {
+            accept_base_url: case.accept.to_string(),
+            checkout_base_url: case.checkout.to_string(),
+            payouts_base_url: case.payouts.to_string(),
+            payouts_staging_base_url: case.staging.to_string(),
+        };
+        let err = region.endpoints().expect_err("expected validation error");
+        assert!(
+            matches!(err, PaymobError::ValidationError { field, .. } if field == case.expected_field),
+            "unexpected error for {}: {err:?}",
+            case.expected_field
         );
     }
 
     #[test]
-    fn tc_1_1_1_builtin_regions_resolve_oman_and_pakistan() {
-        let omn = PaymobRegion::Oman.endpoints().expect("oman endpoints");
-        assert_eq!(omn.accept_base_url, "https://oman.paymob.com");
-        assert_eq!(
-            omn.checkout_base_url,
-            "https://oman.paymob.com/unifiedcheckout/"
-        );
-        assert_eq!(
-            omn.payouts_base_url.as_deref(),
-            Some("https://oman.paymob.com")
-        );
-        assert_eq!(
-            omn.payouts_staging_base_url.as_deref(),
-            Some("https://oman.paymob.com")
-        );
-
-        let pak = PaymobRegion::Pakistan.endpoints().expect("pak endpoints");
-        assert_eq!(pak.accept_base_url, "https://pakistan.paymob.com");
-        assert_eq!(
-            pak.checkout_base_url,
-            "https://pakistan.paymob.com/unifiedcheckout/"
-        );
-        assert_eq!(pak.payouts_base_url, None);
-        assert_eq!(pak.payouts_staging_base_url, None);
+    fn tc_1_1_1_builtin_regions_resolve_expected_hosts() {
+        let cases = [
+            BuiltinCase {
+                region: PaymobRegion::Egypt,
+                accept: "https://accept.paymob.com",
+                checkout: "https://accept.paymob.com/unifiedcheckout/",
+                payouts: Some("https://payouts.paymobsolutions.com"),
+                staging: Some("https://stagingpayouts.paymobsolutions.com"),
+            },
+            BuiltinCase {
+                region: PaymobRegion::SaudiArabia,
+                accept: "https://ksa.paymob.com",
+                checkout: "https://ksa.paymob.com/unifiedcheckout/",
+                payouts: Some("https://payouts.paymob.sa"),
+                staging: Some("https://stagingpayouts.paymob.sa"),
+            },
+            BuiltinCase {
+                region: PaymobRegion::Uae,
+                accept: "https://uae.paymob.com",
+                checkout: "https://uae.paymob.com/unifiedcheckout/",
+                payouts: Some("https://payouts-uae.paymobsolutions.com"),
+                staging: Some("https://stagingpayouts-uae.paymobsolutions.com"),
+            },
+            BuiltinCase {
+                region: PaymobRegion::Oman,
+                accept: "https://oman.paymob.com",
+                checkout: "https://oman.paymob.com/unifiedcheckout/",
+                payouts: Some("https://oman.paymob.com"),
+                staging: Some("https://oman.paymob.com"),
+            },
+            BuiltinCase {
+                region: PaymobRegion::Pakistan,
+                accept: "https://pakistan.paymob.com",
+                checkout: "https://pakistan.paymob.com/unifiedcheckout/",
+                payouts: None,
+                staging: None,
+            },
+        ];
+        for case in &cases {
+            assert_endpoints(case);
+        }
     }
 
     #[test]
     fn tc_1_1_1_trailing_slash_policy_normalizer() {
-        assert_eq!(normalize_endpoint_path("/v1/intention/"), "/v1/intention/");
-        assert_eq!(normalize_endpoint_path("v1/intention"), "/v1/intention/");
-        assert_eq!(normalize_endpoint_path("//v1//intention//"), "/v1/intention/");
-        assert_eq!(
-            normalize_endpoint_path("/v1/intention?foo=bar"),
-            "/v1/intention/?foo=bar"
-        );
-        assert_eq!(
-            normalize_endpoint_path("/api/secure/disburse/"),
-            "/api/secure/disburse/"
-        );
-        assert_eq!(
-            normalize_endpoint_path("api/secure/disburse"),
-            "/api/secure/disburse/"
-        );
-        assert_eq!(
-            normalize_endpoint_path("/api/secure/budget/inquire"),
-            "/api/secure/budget/inquire/"
-        );
-        assert_eq!(
-            normalize_endpoint_path("/api/auth/tokens/"),
-            "/api/auth/tokens"
-        );
-        assert_eq!(normalize_endpoint_path("/"), "/");
+        let cases = [
+            ("/v1/intention/", "/v1/intention/"),
+            ("v1/intention", "/v1/intention/"),
+            ("//v1//intention//", "/v1/intention/"),
+            ("/v1/intention?foo=bar", "/v1/intention/?foo=bar"),
+            ("/api/secure/disburse/", "/api/secure/disburse/"),
+            ("api/secure/disburse", "/api/secure/disburse/"),
+            ("/api/secure/budget/inquire", "/api/secure/budget/inquire/"),
+            ("/api/auth/tokens/", "/api/auth/tokens"),
+            ("/", "/"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(normalize_endpoint_path(input), expected);
+        }
     }
 
     #[test]
@@ -603,14 +601,8 @@ mod tests {
         };
         let eps = valid.endpoints().expect("valid local custom endpoints");
         assert_eq!(eps.accept_base_url, "http://localhost:8080");
-        assert_eq!(
-            eps.checkout_base_url,
-            "http://[::1]:8080/unifiedcheckout/"
-        );
-        assert_eq!(
-            eps.payouts_base_url.as_deref(),
-            Some("http://127.0.0.1:8080")
-        );
+        assert_eq!(eps.checkout_base_url, "http://[::1]:8080/unifiedcheckout/");
+        assert_eq!(eps.payouts_base_url.as_deref(), Some("http://127.0.0.1:8080"));
         assert_eq!(
             eps.payouts_staging_base_url.as_deref(),
             Some("http://mock-payouts.local")
@@ -618,189 +610,111 @@ mod tests {
     }
 
     #[test]
-    fn tc_1_1_1_custom_region_rejects_empty_and_malformed_urls() {
-        let empty_accept = PaymobRegion::Custom {
-            accept_base_url: "   ".to_string(),
-            checkout_base_url: "https://example.com/checkout".to_string(),
-            payouts_base_url: "https://example.com/payouts".to_string(),
-            payouts_staging_base_url: "https://example.com/staging".to_string(),
-        };
-        assert!(matches!(
-            empty_accept.endpoints(),
-            Err(PaymobError::ValidationError {
-                field: "accept_base_url",
-                ..
-            })
-        ));
-
-        let malformed = PaymobRegion::Custom {
-            accept_base_url: "https://example.com".to_string(),
-            checkout_base_url: "https://example.com/checkout".to_string(),
-            payouts_base_url: "not-a-url".to_string(),
-            payouts_staging_base_url: "https://example.com/staging".to_string(),
-        };
-        assert!(matches!(
-            malformed.endpoints(),
-            Err(PaymobError::ValidationError {
-                field: "payouts_base_url",
-                ..
-            })
-        ));
-
-        let empty_staging = PaymobRegion::Custom {
-            accept_base_url: "https://example.com".to_string(),
-            checkout_base_url: "https://example.com/checkout".to_string(),
-            payouts_base_url: "https://example.com/payouts".to_string(),
-            payouts_staging_base_url: "".to_string(),
-        };
-        assert!(matches!(
-            empty_staging.endpoints(),
-            Err(PaymobError::ValidationError {
-                field: "payouts_staging_base_url",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn tc_1_1_1_custom_region_rejects_bad_schemes_and_remote_http() {
-        let bad_scheme = PaymobRegion::Custom {
-            accept_base_url: "https://example.com".to_string(),
-            checkout_base_url: "ftp://example.com/checkout".to_string(),
-            payouts_base_url: "https://example.com/payouts".to_string(),
-            payouts_staging_base_url: "https://example.com/staging".to_string(),
-        };
-        assert!(matches!(
-            bad_scheme.endpoints(),
-            Err(PaymobError::ValidationError {
-                field: "checkout_base_url",
-                ..
-            })
-        ));
-
-        let remote_http = PaymobRegion::Custom {
-            accept_base_url: "http://api.example.com".to_string(),
-            checkout_base_url: "https://example.com/checkout".to_string(),
-            payouts_base_url: "https://example.com/payouts".to_string(),
-            payouts_staging_base_url: "https://example.com/staging".to_string(),
-        };
-        assert!(matches!(
-            remote_http.endpoints(),
-            Err(PaymobError::ValidationError {
-                field: "accept_base_url",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn tc_1_1_1_custom_region_rejects_credentials_queries_and_fragments() {
-        let embedded_creds = PaymobRegion::Custom {
-            accept_base_url: "https://user:secret@example.com".to_string(),
-            checkout_base_url: "https://example.com/checkout".to_string(),
-            payouts_base_url: "https://example.com/payouts".to_string(),
-            payouts_staging_base_url: "https://example.com/staging".to_string(),
-        };
-        assert!(matches!(
-            embedded_creds.endpoints(),
-            Err(PaymobError::ValidationError {
-                field: "accept_base_url",
-                ..
-            })
-        ));
-
-        let query_in_base = PaymobRegion::Custom {
-            accept_base_url: "https://example.com".to_string(),
-            checkout_base_url: "https://example.com/checkout?token=1".to_string(),
-            payouts_base_url: "https://example.com/payouts".to_string(),
-            payouts_staging_base_url: "https://example.com/staging".to_string(),
-        };
-        assert!(matches!(
-            query_in_base.endpoints(),
-            Err(PaymobError::ValidationError {
-                field: "checkout_base_url",
-                ..
-            })
-        ));
-
-        let fragment_in_base = PaymobRegion::Custom {
-            accept_base_url: "https://example.com".to_string(),
-            checkout_base_url: "https://example.com/checkout".to_string(),
-            payouts_base_url: "https://example.com/payouts#section".to_string(),
-            payouts_staging_base_url: "https://example.com/staging".to_string(),
-        };
-        assert!(matches!(
-            fragment_in_base.endpoints(),
-            Err(PaymobError::ValidationError {
-                field: "payouts_base_url",
-                ..
-            })
-        ));
+    fn tc_1_1_1_custom_region_rejects_invalid_urls() {
+        let cases = [
+            CustomRejectCase {
+                accept: "   ",
+                checkout: "https://example.com/checkout",
+                payouts: "https://example.com/payouts",
+                staging: "https://example.com/staging",
+                expected_field: "accept_base_url",
+            },
+            CustomRejectCase {
+                accept: "https://example.com",
+                checkout: "https://example.com/checkout",
+                payouts: "not-a-url",
+                staging: "https://example.com/staging",
+                expected_field: "payouts_base_url",
+            },
+            CustomRejectCase {
+                accept: "https://example.com",
+                checkout: "https://example.com/checkout",
+                payouts: "https://example.com/payouts",
+                staging: "",
+                expected_field: "payouts_staging_base_url",
+            },
+            CustomRejectCase {
+                accept: "https://example.com",
+                checkout: "ftp://example.com/checkout",
+                payouts: "https://example.com/payouts",
+                staging: "https://example.com/staging",
+                expected_field: "checkout_base_url",
+            },
+            CustomRejectCase {
+                accept: "http://api.example.com",
+                checkout: "https://example.com/checkout",
+                payouts: "https://example.com/payouts",
+                staging: "https://example.com/staging",
+                expected_field: "accept_base_url",
+            },
+            CustomRejectCase {
+                accept: "https://user:secret@example.com",
+                checkout: "https://example.com/checkout",
+                payouts: "https://example.com/payouts",
+                staging: "https://example.com/staging",
+                expected_field: "accept_base_url",
+            },
+            CustomRejectCase {
+                accept: "https://example.com",
+                checkout: "https://example.com/checkout?token=1",
+                payouts: "https://example.com/payouts",
+                staging: "https://example.com/staging",
+                expected_field: "checkout_base_url",
+            },
+            CustomRejectCase {
+                accept: "https://example.com",
+                checkout: "https://example.com/checkout",
+                payouts: "https://example.com/payouts#section",
+                staging: "https://example.com/staging",
+                expected_field: "payouts_base_url",
+            },
+        ];
+        for case in &cases {
+            assert_custom_rejected(case);
+        }
     }
 
     #[test]
     fn tc_1_1_1_url_resolution_and_pakistan_payouts_rejection() {
-        let accept = PaymobRegion::Egypt
-            .resolve_accept_url("v1/intention")
-            .expect("accept url");
-        assert_eq!(accept, "https://accept.paymob.com/v1/intention/");
-
-        let checkout = PaymobRegion::Egypt
-            .resolve_checkout_url("?publicKey=pk_test&clientSecret=cs_test")
-            .expect("checkout url");
         assert_eq!(
-            checkout,
+            PaymobRegion::Egypt.resolve_accept_url("v1/intention").unwrap(),
+            "https://accept.paymob.com/v1/intention/"
+        );
+        assert_eq!(
+            PaymobRegion::Egypt
+                .resolve_checkout_url("?publicKey=pk_test&clientSecret=cs_test")
+                .unwrap(),
             "https://accept.paymob.com/unifiedcheckout/?publicKey=pk_test&clientSecret=cs_test"
         );
-
-        let payouts_prod = PaymobRegion::Egypt
-            .resolve_payouts_url("/api/secure/disburse", false)
-            .expect("payouts prod url");
         assert_eq!(
-            payouts_prod,
+            PaymobRegion::Egypt
+                .resolve_payouts_url("/api/secure/disburse", false)
+                .unwrap(),
             "https://payouts.paymobsolutions.com/api/secure/disburse/"
         );
-
-        let pak_payouts = PaymobRegion::Pakistan.resolve_payouts_url("/api/secure/disburse/", false);
         assert!(matches!(
-            pak_payouts,
-            Err(PaymobError::ValidationError {
-                field: "region",
-                ..
-            })
+            PaymobRegion::Pakistan.resolve_payouts_url("/api/secure/disburse/", false),
+            Err(PaymobError::ValidationError { field: "region", .. })
         ));
-
-        let empty_path = PaymobRegion::Egypt.resolve_accept_url("   ");
         assert!(matches!(
-            empty_path,
+            PaymobRegion::Egypt.resolve_accept_url("   "),
             Err(PaymobError::ValidationError { field: "path", .. })
         ));
     }
 
     #[test]
     fn tc_1_1_1_prefix_lookup_and_country_codes() {
-        assert_eq!(
-            PaymobRegion::from_key_prefix("egy"),
-            Some(PaymobRegion::Egypt)
-        );
-        assert_eq!(
-            PaymobRegion::from_key_prefix(" KSA "),
-            Some(PaymobRegion::SaudiArabia)
-        );
-        assert_eq!(
-            PaymobRegion::from_key_prefix("are"),
-            Some(PaymobRegion::Uae)
-        );
-        assert_eq!(
-            PaymobRegion::from_key_prefix("omn"),
-            Some(PaymobRegion::Oman)
-        );
-        assert_eq!(
-            PaymobRegion::from_key_prefix("pak"),
-            Some(PaymobRegion::Pakistan)
-        );
-        assert_eq!(PaymobRegion::from_key_prefix("us"), None);
-
+        let prefixes = [
+            ("egy", Some(PaymobRegion::Egypt)),
+            (" KSA ", Some(PaymobRegion::SaudiArabia)),
+            ("are", Some(PaymobRegion::Uae)),
+            ("omn", Some(PaymobRegion::Oman)),
+            ("pak", Some(PaymobRegion::Pakistan)),
+            ("us", None),
+        ];
+        for (prefix, expected) in prefixes {
+            assert_eq!(PaymobRegion::from_key_prefix(prefix), expected);
+        }
         assert_eq!(PaymobRegion::Egypt.country_code(), "EGY");
         assert_eq!(PaymobRegion::SaudiArabia.country_code(), "KSA");
         assert_eq!(PaymobRegion::Uae.country_code(), "UAE");

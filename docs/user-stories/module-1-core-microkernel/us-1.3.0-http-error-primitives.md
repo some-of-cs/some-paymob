@@ -71,6 +71,7 @@ Feature: US-1.3.0 — HTTP Transport Pipeline, PaymobError Hierarchy, MinorUnitA
   - **Zero Floating-Point Monetary Representation**: All monetary fields across `some-paymob` use `MinorUnitAmount(u64)` or `u64` cents/piasters (`G-Law`).
   - **Static Lookup Table for Currency Mapping**: `Currency` string parsing uses `const KNOWN_CURRENCIES: &[(&str, Currency)]` (`CC <= 3`).
   - **Bounded Payload & Timeout Enforcement**: Every HTTP request enforces connect/read timeouts and maximum response body byte limits.
+  - **Retry-After Header Parsing**: Integer-seconds `Retry-After` values are supported; HTTP-date `Retry-After` values are unsupported and ignored (returning `None`, falling back to exponential backoff with full jitter).
 - **Rust Type Definitions & Wire Protocol Schema**:
 
 ```rust

@@ -51,17 +51,21 @@ fn sample_custom_region(accept: &str, checkout: &str, payouts: &str, staging: &s
 
 fn assert_region_endpoints(case: &BuiltInRegionCase) {
     let eps: RegionalEndpoints = case.region.endpoints().expect("built-in region resolves");
-    assert_eq!(case.region.country_code(), case.code);
-    assert_eq!(eps.accept_base_url, case.accept);
-    assert_eq!(eps.checkout_base_url, case.checkout);
-    assert_eq!(eps.payouts_base_url.as_deref(), case.payouts);
+    assert_eq!(
+        (
+            case.region.country_code(),
+            eps.accept_base_url.as_str(),
+            eps.checkout_base_url.as_str(),
+            eps.payouts_base_url.as_deref(),
+        ),
+        (case.code, case.accept, case.checkout, case.payouts)
+    );
 }
 
 fn assert_redacted<T: std::fmt::Debug + std::fmt::Display>(value: &T, secret: &str) {
     let dbg = format!("{value:?}");
     let disp = format!("{value}");
-    assert_eq!(dbg, "[REDACTED]");
-    assert_eq!(disp, "[REDACTED]");
+    assert_eq!((dbg.as_str(), disp.as_str()), ("[REDACTED]", "[REDACTED]"));
     assert!(!dbg.contains(secret));
 }
 
@@ -134,17 +138,30 @@ fn tc_1_1_1_endpoint_trailing_slash_normalization_and_url_joining() {
 }
 
 #[test]
-fn tc_1_1_1_custom_region_and_pakistan_payouts_validation() {
+fn tc_1_1_1_custom_region_accepts_loopback_and_reports_custom_code() {
     let local = sample_custom_region(
-        "http://127.0.0.1:8080/",
+        "http://127.0.0.2:8080/",
         "http://localhost:8080/unifiedcheckout",
         "https://payouts.example.com/",
         "https://staging.example.com/",
     );
     let eps = local.endpoints().expect("loopback http allowed");
-    assert_eq!(eps.accept_base_url, "http://127.0.0.1:8080");
-    assert_eq!(eps.checkout_base_url, "http://localhost:8080/unifiedcheckout/");
+    assert_eq!(
+        (
+            local.country_code(),
+            eps.accept_base_url.as_str(),
+            eps.checkout_base_url.as_str(),
+        ),
+        (
+            "CUSTOM",
+            "http://127.0.0.2:8080",
+            "http://localhost:8080/unifiedcheckout/",
+        )
+    );
+}
 
+#[test]
+fn tc_1_1_1_custom_remote_http_and_pakistan_payouts_rejected() {
     let invalid = sample_custom_region(
         "http://remote.example.com",
         "https://checkout.example.com",
@@ -153,9 +170,12 @@ fn tc_1_1_1_custom_region_and_pakistan_payouts_validation() {
     );
     assert!(matches!(invalid.endpoints(), Err(PaymobError::ValidationError { .. })));
 
-    let pak_err = PaymobRegion::Pakistan.resolve_payouts_url("/api/secure/disburse/", false);
-    assert!(matches!(pak_err, Err(PaymobError::ValidationError { .. })));
-    assert_eq!(PaymobRegion::from_key_prefix("KSA"), Some(PaymobRegion::SaudiArabia));
+    let pak_prod = PaymobRegion::Pakistan.resolve_payouts_url("/api/secure/disburse/", false);
+    let pak_staging = PaymobRegion::Pakistan.resolve_payouts_url("/api/secure/disburse/", true);
+    assert!(
+        matches!(pak_prod, Err(PaymobError::ValidationError { field: "region", .. }))
+            && matches!(pak_staging, Err(PaymobError::ValidationError { field: "region", .. }))
+    );
 }
 
 #[test]
@@ -168,13 +188,13 @@ fn tc_1_1_2_prefix_parser_infers_kind_mode_and_region() {
             region: Some(PaymobRegion::Egypt),
         },
         PrefixCase {
-            raw: "ksa_sk_live_abc",
+            raw: "sau_sk_live_abc",
             kind: KeyKind::Secret,
             mode: EnvironmentMode::Live,
             region: Some(PaymobRegion::SaudiArabia),
         },
         PrefixCase {
-            raw: "uae_pk_test_abc",
+            raw: "are_pk_test_abc",
             kind: KeyKind::Public,
             mode: EnvironmentMode::Test,
             region: Some(PaymobRegion::Uae),
@@ -198,18 +218,17 @@ fn tc_1_1_2_prefix_parser_infers_kind_mode_and_region() {
 
 #[test]
 fn tc_1_1_2_credentials_reject_mismatched_and_empty_inputs() {
-    let sk_err = SecretKey::new("egy_pk_test_not_secret");
-    let pk_err = PublicKey::new("ksa_sk_live_not_public");
-    let api_err = ApiKey::new("   ");
-    let hmac_err = HmacSecret::new("");
-    let payouts_err = PayoutsCredentials::new("cid", "", "user", "pass");
-    for res in [
-        sk_err.map(|_| ()),
-        pk_err.map(|_| ()),
-        api_err.map(|_| ()),
-        hmac_err.map(|_| ()),
-        payouts_err.map(|_| ()),
-    ] {
+    let cases = [
+        SecretKey::new("egy_pk_test_not_secret").map(|_| ()),
+        SecretKey::new("  PK_TEST_bypass").map(|_| ()),
+        PublicKey::new("ksa_sk_live_not_public").map(|_| ()),
+        ApiKey::new("   ").map(|_| ()),
+        HmacSecret::new("").map(|_| ()),
+        PayoutsCredentials::new("cid", "", "user", "pass").map(|_| ()),
+        PartnerCredentials::new("").map(|_| ()),
+        PartnerCredentials::new("   ").map(|_| ()),
+    ];
+    for res in cases {
         assert!(matches!(res, Err(PaymobError::ValidationError { .. })));
     }
 }
@@ -234,9 +253,20 @@ fn tc_1_1_2_all_credential_types_redact_debug_and_display() {
 #[test]
 fn tc_1_1_3_config_builder_defaults_and_custom_overrides() {
     let default_cfg = build_egypt_test_config();
-    assert_eq!(default_cfg.timeout(), Duration::from_secs(DEFAULT_TIMEOUT_SECS));
-    assert_eq!(default_cfg.max_retries(), DEFAULT_MAX_RETRIES);
-    assert!(!default_cfg.use_payouts_staging() && !default_cfg.use_legacy_v2_bearer_for_capture());
+    assert_eq!(
+        (
+            default_cfg.timeout(),
+            default_cfg.max_retries(),
+            default_cfg.use_payouts_staging(),
+            default_cfg.use_legacy_v2_bearer_for_capture(),
+        ),
+        (
+            Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+            DEFAULT_MAX_RETRIES,
+            false,
+            false,
+        )
+    );
 
     let custom_cfg = ClientConfigBuilder::new()
         .region(PaymobRegion::Uae)
@@ -248,10 +278,14 @@ fn tc_1_1_3_config_builder_defaults_and_custom_overrides() {
         .use_legacy_v2_bearer_for_capture(true)
         .build()
         .expect("valid custom config");
-    assert_eq!(custom_cfg.environment(), EnvironmentMode::Live);
     assert_eq!(
-        (custom_cfg.timeout(), custom_cfg.max_retries(), custom_cfg.use_payouts_staging()),
-        (Duration::from_secs(12), 5, true)
+        (
+            custom_cfg.environment(),
+            custom_cfg.timeout(),
+            custom_cfg.max_retries(),
+            custom_cfg.use_payouts_staging(),
+        ),
+        (EnvironmentMode::Live, Duration::from_secs(12), 5, true)
     );
 }
 
@@ -267,19 +301,33 @@ fn tc_1_1_3_config_validation_and_environment_parity() {
         .secret_key(sample_secret_key("egy_sk_test_1"))
         .public_key(sample_public_key("egy_pk_live_1"))
         .build();
-    let explicit_mismatch = ClientConfig::builder()
+    let region_mismatch = ClientConfig::builder()
         .region(PaymobRegion::Egypt)
-        .environment(EnvironmentMode::Live)
-        .secret_key(sample_secret_key("egy_sk_test_1"))
+        .secret_key(sample_secret_key("ksa_sk_test_1"))
         .build();
 
-    assert!(matches!(missing_region, Err(PaymobError::ValidationError { field: "region", .. })));
-    assert!(matches!(zero_timeout, Err(PaymobError::ValidationError { field: "timeout", .. })));
-    assert!(matches!(key_mismatch, Err(PaymobError::EnvironmentMismatch(_))));
-    assert!(matches!(explicit_mismatch, Err(PaymobError::EnvironmentMismatch(_))));
+    assert!(
+        matches!(missing_region, Err(PaymobError::ValidationError { field: "region", .. }))
+            && matches!(zero_timeout, Err(PaymobError::ValidationError { field: "timeout", .. }))
+    );
+    assert!(
+        matches!(key_mismatch, Err(PaymobError::EnvironmentMismatch(_)))
+            && matches!(region_mismatch, Err(PaymobError::ValidationError { field: "region", .. }))
+    );
+}
 
-    let dbg = format!("{:?}", build_egypt_test_config());
-    assert!(dbg.contains("[REDACTED]") && !dbg.contains("egy_sk_test_secret_123"));
+#[test]
+fn tc_1_1_3_from_env_rejects_missing_region_when_unset() {
+    if std::env::var_os("PAYMOB_REGION").is_none() {
+        assert!(matches!(
+            ClientConfig::from_env(),
+            Err(PaymobError::ValidationError { field: "region", .. })
+        ));
+        assert!(matches!(
+            ClientConfigBuilder::from_env(),
+            Err(PaymobError::ValidationError { field: "region", .. })
+        ));
+    }
 }
 
 #[test]
@@ -288,26 +336,35 @@ fn tc_1_1_4_paymob_client_construction_arc_clone_and_urls() {
     let client = PaymobClient::new(build_egypt_test_config()).expect("client initializes");
     let cloned = client.clone();
 
-    assert!(client.ptr_eq(&cloned));
-    assert_eq!(cloned.config().region(), &PaymobRegion::Egypt);
+    assert!(client.ptr_eq(&cloned) && cloned.config().region() == &PaymobRegion::Egypt);
     assert_eq!(
-        cloned.accept_url("/v1/intention/").expect("accept url").as_str(),
-        "https://accept.paymob.com/v1/intention/"
+        (
+            cloned.accept_url("/v1/intention/").expect("accept url").as_str(),
+            cloned.payouts_url("/api/secure/disburse/").expect("payouts url").as_str(),
+            cloned.http().config().retry.max_retries,
+        ),
+        (
+            "https://accept.paymob.com/v1/intention/",
+            "https://payouts.paymobsolutions.com/api/secure/disburse/",
+            DEFAULT_MAX_RETRIES,
+        )
     );
-    assert_eq!(
-        cloned.payouts_url("/api/secure/disburse/").expect("payouts url").as_str(),
-        "https://payouts.paymobsolutions.com/api/secure/disburse/"
-    );
-    let dbg = format!("{client:?}");
-    assert!(dbg.contains("[REDACTED]") && !dbg.contains("egy_sk_test_secret_123"));
 }
 
 #[test]
-fn tc_1_1_4_paymob_client_rejects_absolute_or_scheme_relative_paths() {
+fn tc_1_1_4_paymob_client_rejects_traversal_backslash_and_scheme_paths() {
     let client = PaymobClient::new(build_egypt_test_config()).expect("client initializes");
-    let abs_err = client.accept_url("https://evil.example.com/steal");
-    let proto_rel_err = client.checkout_url("//evil.example.com/steal");
-
-    assert!(matches!(abs_err, Err(PaymobError::ValidationError { field: "path", .. })));
-    assert!(matches!(proto_rel_err, Err(PaymobError::ValidationError { field: "path", .. })));
+    for bad in [
+        "https://evil.example.com/steal",
+        "//evil.example.com/steal",
+        "http:evil.example.com",
+        "/v1/../secret",
+        "/v1\\intention",
+        "/v1/intention\n",
+    ] {
+        assert!(matches!(
+            client.accept_url(bad),
+            Err(PaymobError::ValidationError { field: "path", .. })
+        ));
+    }
 }

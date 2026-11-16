@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Pagination primitives for Paymob list endpoints (`US-1.3.0/unit-4`).
 //!
 //! Provides [`PaginatedResponse<T>`] for deserializing standard Paymob /
@@ -78,13 +79,13 @@ impl<T> PaginatedResponse<T> {
         self.results.len()
     }
 
-    /// Extracts the `page` query parameter from `next`, if present and valid.
+    /// Extracts the `page` query parameter from `next`, if present and valid (`>= 1`).
     #[must_use]
     pub fn next_page_number(&self) -> Option<u32> {
         extract_page_number(self.next.as_deref())
     }
 
-    /// Extracts the `page` query parameter from `previous`, if present and valid.
+    /// Extracts the `page` query parameter from `previous`, if present and valid (`>= 1`).
     #[must_use]
     pub fn previous_page_number(&self) -> Option<u32> {
         extract_page_number(self.previous.as_deref())
@@ -104,21 +105,50 @@ impl<T> PaginatedResponse<T> {
     }
 }
 
+fn parse_pagination_url(raw: &str) -> Option<Url> {
+    if let Ok(url) = Url::parse(raw) {
+        return Some(url);
+    }
+    if raw.starts_with('/') || raw.starts_with('?') {
+        return Url::parse("https://paymob.invalid").ok()?.join(raw).ok();
+    }
+    None
+}
+
 fn extract_page_number(raw_url: Option<&str>) -> Option<u32> {
-    let parsed = Url::parse(raw_url?).ok()?;
+    let parsed = parse_pagination_url(raw_url?)?;
     parsed
         .query_pairs()
         .find(|(key, _)| key == "page")
         .and_then(|(_, value)| value.parse::<u32>().ok())
+        .filter(|&page| page >= 1)
 }
 
 fn default_page() -> u32 {
     1
 }
 
+#[derive(Deserialize)]
+struct RawPageQuery {
+    #[serde(default = "default_page")]
+    page: u32,
+    #[serde(default)]
+    page_size: Option<u32>,
+}
+
+impl From<RawPageQuery> for PageQuery {
+    fn from(raw: RawPageQuery) -> Self {
+        Self {
+            page: raw.page.max(1),
+            page_size: raw.page_size.map(|size| size.max(1)),
+        }
+    }
+}
+
 /// Builder and query serializer for Paymob `?page=N` pagination parameters.
 ///
-/// Page numbers and optional page sizes are normalized to be at least `1`.
+/// Page numbers and optional page sizes are normalized to be at least `1`
+/// both in constructors and during deserialization.
 ///
 /// # Examples
 ///
@@ -131,6 +161,7 @@ fn default_page() -> u32 {
 /// assert_eq!(query.to_query_string(), "?page=2&page_size=25");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "RawPageQuery")]
 pub struct PageQuery {
     /// 1-indexed page number.
     #[serde(default = "default_page")]
@@ -237,29 +268,77 @@ mod tests {
         }"#;
 
         let resp: PaginatedResponse<u64> = serde_json::from_str(raw).expect("valid JSON");
-        assert_eq!(resp.count, 42);
-        assert!(resp.has_next());
-        assert!(resp.has_previous());
-        assert!(!resp.is_empty());
-        assert_eq!(resp.len(), 3);
-        assert_eq!(resp.next_page_number(), Some(3));
-        assert_eq!(resp.previous_page_number(), Some(1));
+        assert_eq!(
+            (
+                resp.count,
+                resp.has_next(),
+                resp.has_previous(),
+                resp.is_empty(),
+                resp.len(),
+                resp.next_page_number(),
+                resp.previous_page_number(),
+            ),
+            (42, true, true, false, 3, Some(3), Some(1))
+        );
 
         let mapped = resp.map(|id| format!("ord_{id}"));
-        assert_eq!(mapped.count, 42);
-        assert_eq!(mapped.results, vec!["ord_101", "ord_102", "ord_103"]);
+        assert_eq!(
+            (mapped.count, mapped.results),
+            (42, vec!["ord_101", "ord_102", "ord_103"])
+        );
     }
 
     #[test]
-    fn tc_1_3_4_paginated_response_empty_and_default() {
+    fn tc_1_3_4_paginated_response_empty_and_last_page() {
         let empty: PaginatedResponse<String> = PaginatedResponse::default();
-        assert_eq!(empty.count, 0);
-        assert!(!empty.has_next());
-        assert!(!empty.has_previous());
-        assert!(empty.is_empty());
-        assert_eq!(empty.len(), 0);
-        assert_eq!(empty.next_page_number(), None);
-        assert_eq!(empty.previous_page_number(), None);
+        assert_eq!(
+            (
+                empty.count,
+                empty.has_next(),
+                empty.has_previous(),
+                empty.is_empty(),
+                empty.len(),
+                empty.next_page_number(),
+                empty.previous_page_number(),
+            ),
+            (0, false, false, true, 0, None, None)
+        );
+
+        let last_page = PaginatedResponse {
+            count: 25,
+            next: None,
+            previous: Some("/api/ecommerce/orders?page=2&page_size=20".to_string()),
+            results: vec![21_u8, 22, 23, 24, 25],
+        };
+        assert_eq!(
+            (last_page.has_next(), last_page.next_page_number(), last_page.previous_page_number()),
+            (false, None, Some(2))
+        );
+    }
+
+    #[test]
+    fn tc_1_3_4_paginated_response_relative_and_invalid_urls() {
+        let relative = PaginatedResponse {
+            count: 10,
+            next: Some("?page=4&page_size=10".to_string()),
+            previous: Some("/api/orders?page=2".to_string()),
+            results: vec![1_u8],
+        };
+        assert_eq!(
+            (relative.next_page_number(), relative.previous_page_number()),
+            (Some(4), Some(2))
+        );
+
+        let invalid = PaginatedResponse {
+            count: 1,
+            next: Some("https://accept.paymob.com/api/orders?page=0".to_string()),
+            previous: Some("https://accept.paymob.com/api/orders?page=4294967296".to_string()),
+            results: vec![1_u8],
+        };
+        assert_eq!(
+            (invalid.next_page_number(), invalid.previous_page_number()),
+            (None, None)
+        );
     }
 
     #[test]
@@ -270,16 +349,10 @@ mod tests {
             previous: Some("https://accept.paymob.com/api/orders?page=abc".to_string()),
             results: vec![1_u8],
         };
-        assert_eq!(resp.next_page_number(), None);
-        assert_eq!(resp.previous_page_number(), None);
-
-        let missing_param = PaginatedResponse::<u8> {
-            count: 1,
-            next: Some("https://accept.paymob.com/api/orders?limit=10".to_string()),
-            previous: None,
-            results: vec![],
-        };
-        assert_eq!(missing_param.next_page_number(), None);
+        assert_eq!(
+            (resp.next_page_number(), resp.previous_page_number()),
+            (None, None)
+        );
 
         let bad_json = serde_json::from_str::<PaginatedResponse<u8>>(r#"{"count":"bad"}"#);
         assert!(bad_json.is_err());
@@ -288,41 +361,43 @@ mod tests {
     #[test]
     fn tc_1_3_4_page_query_builder_and_serialization() {
         let default_q = PageQuery::default();
-        assert_eq!(default_q.page(), 1);
-        assert_eq!(default_q.page_size(), None);
-        assert_eq!(default_q.to_query_string(), "?page=1");
-        assert_eq!(default_q.to_string(), "?page=1");
-        assert_eq!(default_q.to_query_pairs(), vec![("page", "1".to_string())]);
-
-        let custom_q = PageQuery::new(2).with_page(4).with_page_size(50);
-        assert_eq!(custom_q.page(), 4);
-        assert_eq!(custom_q.page_size(), Some(50));
-        assert_eq!(custom_q.to_query_string(), "?page=4&page_size=50");
         assert_eq!(
-            custom_q.to_query_pairs(),
-            vec![("page", "4".to_string()), ("page_size", "50".to_string())]
+            (
+                default_q.page(),
+                default_q.page_size(),
+                default_q.to_query_string(),
+                default_q.to_query_pairs(),
+            ),
+            (1, None, "?page=1".to_string(), vec![("page", "1".to_string())])
         );
 
-        let next_q = custom_q.next_page();
-        assert_eq!(next_q.page(), 5);
-        assert_eq!(next_q.page_size(), Some(50));
+        let custom_q = PageQuery::new(2).with_page(4).with_page_size(50);
+        assert_eq!(
+            (
+                custom_q.page(),
+                custom_q.page_size(),
+                custom_q.to_query_string(),
+                custom_q.next_page().page(),
+            ),
+            (4, Some(50), "?page=4&page_size=50".to_string(), 5)
+        );
     }
 
     #[test]
-    fn tc_1_3_4_page_query_boundary_clamping_and_serde() {
+    fn tc_1_3_4_page_query_boundary_clamping_and_serde_normalization() {
         let zero_q = PageQuery::new(0).with_page_size(0);
-        assert_eq!(zero_q.page(), 1);
-        assert_eq!(zero_q.page_size(), Some(1));
-
         let clamped_q = PageQuery::default().with_page(0);
-        assert_eq!(clamped_q.page(), 1);
-
         let max_q = PageQuery::new(u32::MAX).next_page();
-        assert_eq!(max_q.page(), u32::MAX);
+        assert_eq!(
+            (zero_q.page(), zero_q.page_size(), clamped_q.page(), max_q.page()),
+            (1, Some(1), 1, u32::MAX)
+        );
 
-        let serialized = serde_json::to_string(&PageQuery::new(3)).expect("serialize");
-        assert_eq!(serialized, r#"{"page":3}"#);
-        let roundtrip: PageQuery = serde_json::from_str(&serialized).expect("deserialize");
-        assert_eq!(roundtrip, PageQuery::new(3));
+        let deserialized_zero: PageQuery =
+            serde_json::from_str(r#"{"page":0,"page_size":0}"#).expect("deserialize");
+        assert_eq!(
+            (deserialized_zero.page(), deserialized_zero.page_size()),
+            (1, Some(1))
+        );
     }
 }

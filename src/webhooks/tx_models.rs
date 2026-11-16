@@ -237,6 +237,48 @@ mod tests {
         }
     }
 
+    fn assert_pan_redacted(rendered: &str, raw_pan: &str) {
+        assert!(rendered.contains("pan: \"[REDACTED]\""));
+        assert!(!rendered.contains(raw_pan));
+    }
+
+    fn assert_source_metadata(rendered: &str, sub_type: &str, source_type: &str) {
+        assert!(rendered.contains(sub_type));
+        assert!(rendered.contains(source_type));
+    }
+
+    fn assert_claims_redacted(rendered: &str) {
+        assert!(rendered.contains("payment_key_claims: Some(\"[REDACTED]\")"));
+        assert!(!rendered.contains("secret-customer@example.com"));
+        assert!(!rendered.contains("+201000000000"));
+    }
+
+    fn assert_serialized_envelope_fields(value: &serde_json::Value) {
+        assert_eq!(value["type"], "TRANSACTION");
+        assert_eq!(value["obj"]["source_data"]["type"], "card");
+    }
+
+    fn assert_serialized_order_amount(value: &serde_json::Value) {
+        assert_eq!(value["obj"]["amount_cents"], 15000);
+        assert_eq!(value["obj"]["order"]["id"], 900_800_700);
+    }
+
+    fn assert_wallet_event_identity(event: &TransactionProcessedEvent) {
+        assert_eq!(event.event_type, "TRANSACTION");
+        assert_eq!(event.obj.id, 101);
+        assert_eq!(event.obj.order, TransactionOrderRef { id: 303 });
+    }
+
+    fn assert_wallet_event_source(event: &TransactionProcessedEvent) {
+        assert_eq!(event.obj.payment_key_claims, None);
+        assert_eq!(event.obj.source_data.source_type, "wallet");
+    }
+
+    fn assert_optional_amounts_absent(event: &TransactionProcessedEvent) {
+        assert_eq!(event.obj.refunded_amount_cents, None);
+        assert_eq!(event.obj.captured_amount, None);
+    }
+
     #[test]
     fn source_data_debug_redacts_pan() {
         let source = TransactionSourceData {
@@ -246,10 +288,8 @@ mod tests {
         };
 
         let rendered = format!("{source:?}");
-        assert!(rendered.contains("pan: \"[REDACTED]\""));
-        assert!(!rendered.contains("4111-xxxx-1111"));
-        assert!(rendered.contains("sub_type: \"Visa\""));
-        assert!(rendered.contains("source_type: \"card\""));
+        assert_pan_redacted(&rendered, "4111-xxxx-1111");
+        assert_source_metadata(&rendered, "sub_type: \"Visa\"", "source_type: \"card\"");
     }
 
     #[test]
@@ -257,11 +297,8 @@ mod tests {
         let obj = sample_transaction_obj();
         let rendered = format!("{obj:?}");
 
-        assert!(rendered.contains("payment_key_claims: Some(\"[REDACTED]\")"));
-        assert!(!rendered.contains("secret-customer@example.com"));
-        assert!(!rendered.contains("+201000000000"));
-        assert!(rendered.contains("pan: \"[REDACTED]\""));
-        assert!(!rendered.contains("4111-xxxx-1111"));
+        assert_claims_redacted(&rendered);
+        assert_pan_redacted(&rendered, "4111-xxxx-1111");
     }
 
     #[test]
@@ -271,7 +308,7 @@ mod tests {
 
         let rendered = format!("{obj:?}");
         assert!(rendered.contains("payment_key_claims: None"));
-        assert!(rendered.contains("pan: \"[REDACTED]\""));
+        assert_pan_redacted(&rendered, "4111-xxxx-1111");
     }
 
     #[test]
@@ -283,10 +320,8 @@ mod tests {
 
         let serialized = serde_json::to_string(&event).expect("serialize event");
         let value: serde_json::Value = serde_json::from_str(&serialized).expect("parse json");
-        assert_eq!(value["type"], "TRANSACTION");
-        assert_eq!(value["obj"]["source_data"]["type"], "card");
-        assert_eq!(value["obj"]["amount_cents"], 15000);
-        assert_eq!(value["obj"]["order"]["id"], 900_800_700);
+        assert_serialized_envelope_fields(&value);
+        assert_serialized_order_amount(&value);
 
         let roundtripped: TransactionProcessedEvent =
             serde_json::from_str(&serialized).expect("deserialize event");
@@ -328,11 +363,8 @@ mod tests {
 
         let event: TransactionProcessedEvent =
             serde_json::from_str(payload).expect("deserialize without payment_key_claims");
-        assert_eq!(event.event_type, "TRANSACTION");
-        assert_eq!(event.obj.id, 101);
-        assert_eq!(event.obj.order, TransactionOrderRef { id: 303 });
-        assert_eq!(event.obj.payment_key_claims, None);
-        assert_eq!(event.obj.source_data.source_type, "wallet");
+        assert_wallet_event_identity(&event);
+        assert_wallet_event_source(&event);
     }
 
     #[test]
@@ -370,8 +402,7 @@ mod tests {
 
         let null_event: TransactionProcessedEvent =
             serde_json::from_str(null_payload).expect("deserialize with null amounts");
-        assert_eq!(null_event.obj.refunded_amount_cents, None);
-        assert_eq!(null_event.obj.captured_amount, None);
+        assert_optional_amounts_absent(&null_event);
 
         let omitted_payload = r#"{
             "type": "TRANSACTION",
@@ -404,7 +435,6 @@ mod tests {
 
         let omitted_event: TransactionProcessedEvent =
             serde_json::from_str(omitted_payload).expect("deserialize with omitted amounts");
-        assert_eq!(omitted_event.obj.refunded_amount_cents, None);
-        assert_eq!(omitted_event.obj.captured_amount, None);
+        assert_optional_amounts_absent(&omitted_event);
     }
 }

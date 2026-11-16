@@ -178,7 +178,10 @@ impl AddSecondaryCardParams {
     /// # Errors
     ///
     /// Returns [`PaymobError::ValidationError`] if `redirect_url` is empty or whitespace.
-    pub fn with_redirect_url(mut self, redirect_url: impl Into<String>) -> Result<Self, PaymobError> {
+    pub fn with_redirect_url(
+        mut self,
+        redirect_url: impl Into<String>,
+    ) -> Result<Self, PaymobError> {
         let trimmed = redirect_url.into().trim().to_owned();
         if trimmed.is_empty() {
             return Err(PaymobError::ValidationError {
@@ -492,7 +495,9 @@ impl SubscriptionCardsService {
         let token = self.acquire_accept_token().await?;
         let response = self.send_once(&method, path, body, &token).await?;
         if is_incorrect_credentials_401(response.status, &response.body) {
-            return self.retry_with_fresh_token(&method, path, body, &token).await;
+            return self
+                .retry_with_fresh_token(&method, path, body, &token)
+                .await;
         }
         decode_response(response)
     }
@@ -539,14 +544,14 @@ impl SubscriptionCardsService {
     }
 
     async fn acquire_accept_token(&self) -> Result<SecretString, PaymobError> {
-        let api_key = self
-            .client
-            .config()
-            .api_key()
-            .ok_or_else(|| PaymobError::ValidationError {
-                field: "api_key",
-                reason: "Paymob API key is required for Regime 2 authentication".to_owned(),
-            })?;
+        let api_key =
+            self.client
+                .config()
+                .api_key()
+                .ok_or_else(|| PaymobError::ValidationError {
+                    field: "api_key",
+                    reason: "Paymob API key is required for Regime 2 authentication".to_owned(),
+                })?;
         let base_url = self.client.endpoints().accept_base_url.clone();
         let raw_key = SecretString::from(api_key.expose_secret().to_owned());
 
@@ -599,9 +604,9 @@ mod tests {
     use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
     use super::*;
+    use crate::core::config::ClientConfig;
     use crate::core::credentials::{ApiKey, SecretKey};
     use crate::core::region::PaymobRegion;
-    use crate::core::config::ClientConfig;
 
     const TEST_API_KEY: &str = "test-paymob-api-key-value";
     const TEST_JWT: &str = "eyJ.test.jwt.token";
@@ -780,7 +785,9 @@ mod tests {
         let server = MockServer::start().await;
         mount_auth_mock(&server, TEST_JWT).await;
         Mock::given(method("POST"))
-            .and(path("/api/acceptance/subscriptions/1264/change-primary-card"))
+            .and(path(
+                "/api/acceptance/subscriptions/1264/change-primary-card",
+            ))
             .and(body_json(json!({ "card": 999 })))
             .respond_with(
                 ResponseTemplate::new(404).set_body_json(json!({ "message": "Card not found." })),
@@ -878,23 +885,38 @@ mod tests {
 
         assert!(matches!(
             service.list(0).await,
-            Err(PaymobError::ValidationError { field: "sub_id", .. })
+            Err(PaymobError::ValidationError {
+                field: "sub_id",
+                ..
+            })
         ));
         assert!(matches!(
             service.change_primary(1264, 0).await,
-            Err(PaymobError::ValidationError { field: "card_id", .. })
+            Err(PaymobError::ValidationError {
+                field: "card_id",
+                ..
+            })
         ));
         assert!(matches!(
             service.delete_secondary(0, 375).await,
-            Err(PaymobError::ValidationError { field: "sub_id", .. })
+            Err(PaymobError::ValidationError {
+                field: "sub_id",
+                ..
+            })
         ));
         assert!(matches!(
             AddSecondaryCardParams::new("   "),
-            Err(PaymobError::ValidationError { field: "card_token", .. })
+            Err(PaymobError::ValidationError {
+                field: "card_token",
+                ..
+            })
         ));
         assert!(matches!(
             service.list(1264).await,
-            Err(PaymobError::ValidationError { field: "api_key", .. })
+            Err(PaymobError::ValidationError {
+                field: "api_key",
+                ..
+            })
         ));
     }
 }

@@ -36,7 +36,7 @@
 //!         "created_at": "2026-11-16T12:00:00.000000",
 //!         "currency": "EGP",
 //!         "source_data": {
-//!             "pan": "2345",
+//!             "pan": "9876",
 //!             "sub_type": "MasterCard",
 //!             "type": "card"
 //!         },
@@ -53,7 +53,7 @@
 //!
 //! let debug_output = format!("{event:?}");
 //! assert!(debug_output.contains("[REDACTED]"));
-//! assert!(!debug_output.contains("2345"));
+//! assert!(!debug_output.contains("9876"));
 //! assert!(!debug_output.contains("buyer@example.com"));
 //! ```
 
@@ -154,10 +154,12 @@ pub struct TransactionWebhookObj {
     pub payment_key_claims: Option<serde_json::Value>,
     /// Whether the transaction is currently pending settlement.
     pub pending: bool,
-    /// Total refunded amount in integer minor units.
-    pub refunded_amount_cents: u64,
-    /// Total captured amount in integer minor units.
-    pub captured_amount: u64,
+    /// Total refunded amount in integer minor units, if provided by Paymob.
+    #[serde(default)]
+    pub refunded_amount_cents: Option<u64>,
+    /// Total captured amount in integer minor units, if provided by Paymob.
+    #[serde(default)]
+    pub captured_amount: Option<u64>,
     /// Payment source metadata (card/wallet type, sub-type, and redacted PAN).
     pub source_data: TransactionSourceData,
     /// Whether the transaction succeeded.
@@ -224,8 +226,8 @@ mod tests {
                 }
             })),
             pending: false,
-            refunded_amount_cents: 0,
-            captured_amount: 0,
+            refunded_amount_cents: Some(0),
+            captured_amount: Some(0),
             source_data: TransactionSourceData {
                 pan: "4111-xxxx-1111".to_owned(),
                 sub_type: "Visa".to_owned(),
@@ -331,5 +333,78 @@ mod tests {
         assert_eq!(event.obj.order, TransactionOrderRef { id: 303 });
         assert_eq!(event.obj.payment_key_claims, None);
         assert_eq!(event.obj.source_data.source_type, "wallet");
+    }
+
+    #[test]
+    fn transaction_processed_event_handles_null_and_omitted_optional_amounts() {
+        let null_payload = r#"{
+            "type": "TRANSACTION",
+            "obj": {
+                "amount_cents": 5000,
+                "created_at": "2026-11-16T10:00:00.000000",
+                "currency": "EGP",
+                "error_occured": false,
+                "has_parent_transaction": false,
+                "id": 101,
+                "integration_id": 202,
+                "is_3d_secure": false,
+                "is_auth": false,
+                "is_capture": false,
+                "is_captured": false,
+                "is_refunded": false,
+                "is_standalone_payment": true,
+                "is_voided": false,
+                "order": { "id": 303 },
+                "owner": 404,
+                "pending": false,
+                "refunded_amount_cents": null,
+                "captured_amount": null,
+                "source_data": {
+                    "pan": "9999",
+                    "sub_type": "Wallet",
+                    "type": "wallet"
+                },
+                "success": true
+            }
+        }"#;
+
+        let null_event: TransactionProcessedEvent =
+            serde_json::from_str(null_payload).expect("deserialize with null amounts");
+        assert_eq!(null_event.obj.refunded_amount_cents, None);
+        assert_eq!(null_event.obj.captured_amount, None);
+
+        let omitted_payload = r#"{
+            "type": "TRANSACTION",
+            "obj": {
+                "amount_cents": 5000,
+                "created_at": "2026-11-16T10:00:00.000000",
+                "currency": "EGP",
+                "error_occured": false,
+                "has_parent_transaction": false,
+                "id": 101,
+                "integration_id": 202,
+                "is_3d_secure": false,
+                "is_auth": false,
+                "is_capture": false,
+                "is_captured": false,
+                "is_refunded": false,
+                "is_standalone_payment": true,
+                "is_voided": false,
+                "order": { "id": 303 },
+                "owner": 404,
+                "pending": false,
+                "source_data": {
+                    "pan": "9999",
+                    "sub_type": "Wallet",
+                    "type": "wallet"
+                },
+                "success": true
+            }
+        }"#;
+
+        let omitted_event: TransactionProcessedEvent =
+            serde_json::from_str(omitted_payload).expect("deserialize with omitted amounts");
+        assert_eq!(omitted_event.obj.refunded_amount_cents, None);
+        assert_eq!(omitted_event.obj.captured_amount, None);
     }
 }

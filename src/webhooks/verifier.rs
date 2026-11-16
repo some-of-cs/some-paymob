@@ -287,7 +287,10 @@ mod tests {
     #[test]
     fn verify_concatenated_str_boundary_empty_payload() {
         let engine = PaymobWebhookEngine::new(VEC_1_SECRET).expect("valid secret");
-        assert_eq!(engine.verify_concatenated_str("", EMPTY_PAYLOAD_SIG), Ok(()));
+        assert_eq!(
+            engine.verify_concatenated_str("", EMPTY_PAYLOAD_SIG),
+            Ok(())
+        );
     }
 
     #[test]

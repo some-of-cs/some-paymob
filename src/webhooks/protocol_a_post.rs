@@ -61,6 +61,7 @@ use super::verifier::{PaymobWebhookEngine, WebhookError};
 ///     "is_voided": false,
 ///     "is_refunded": false,
 ///     "is_3d_secure": true,
+///     "is_captured": false,
 ///     "integration_id": 4097558,
 ///     "has_parent_transaction": false,
 ///     "order": { "id": 217503754 },
@@ -127,9 +128,9 @@ impl PaymobWebhookEngine {
     /// # Examples
     ///
     /// ```rust
-    /// use some_paymob::webhooks::verifier::PaymobWebhookEngine;
+    /// use some_paymob::webhooks::verifier::{PaymobWebhookEngine, WebhookError};
     ///
-    /// let engine = PaymobWebhookEngine::new("3qUAg2xx6JW89Qav5GzzmXoalgjf5XxE");
+    /// let engine = PaymobWebhookEngine::new("3qUAg2xx6JW89Qav5GzzmXoalgjf5XxE")?;
     /// let raw_body = r#"{
     ///   "type": "TRANSACTION",
     ///   "obj": {
@@ -143,6 +144,7 @@ impl PaymobWebhookEngine {
     ///     "is_voided": false,
     ///     "is_refunded": false,
     ///     "is_3d_secure": true,
+    ///     "is_captured": false,
     ///     "integration_id": 4097558,
     ///     "has_parent_transaction": false,
     ///     "order": { "id": 217503754 },
@@ -159,6 +161,7 @@ impl PaymobWebhookEngine {
     /// assert_eq!(event.obj.id, 192036465);
     /// assert_eq!(event.obj.order.id, 217503754);
     /// assert!(event.obj.success);
+    /// # Ok::<(), WebhookError>(())
     /// ```
     pub fn verify_transaction_post(
         &self,
@@ -168,8 +171,8 @@ impl PaymobWebhookEngine {
         if query_hmac.trim().is_empty() {
             return Err(WebhookError::MissingQueryHmac);
         }
-        let event: TransactionProcessedEvent =
-            serde_json::from_str(raw_body).map_err(|_| WebhookError::InvalidJsonPayload)?;
+        let event: TransactionProcessedEvent = serde_json::from_str(raw_body)
+            .map_err(|err| WebhookError::InvalidJsonPayload(err.to_string()))?;
         let canonical = build_protocol_a_canonical_string(&event.obj);
         self.verify_concatenated_str(&canonical, query_hmac)?;
         Ok(event)
@@ -248,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_verify_transaction_post_official_vector_192036465_valid() {
-        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
         let event = engine
             .verify_transaction_post(
                 OFFICIAL_TEST_VECTOR_192036465_JSON,
@@ -265,7 +268,7 @@ mod tests {
 
     #[test]
     fn test_verify_transaction_post_rejects_mismatched_official_hmac_fail_closed() {
-        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
         let err = engine
             .verify_transaction_post(
                 OFFICIAL_TEST_VECTOR_192036465_JSON,
@@ -277,9 +280,12 @@ mod tests {
 
     #[test]
     fn test_verify_transaction_post_rejects_tampered_amount_cents() {
-        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET);
-        let tampered_json = OFFICIAL_TEST_VECTOR_192036465_JSON
-            .replacen(""amount_cents": 100000", ""amount_cents": 100", 1);
+        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
+        let tampered_json = OFFICIAL_TEST_VECTOR_192036465_JSON.replacen(
+            "\"amount_cents\": 100000",
+            "\"amount_cents\": 100",
+            1,
+        );
         let err = engine
             .verify_transaction_post(&tampered_json, SAMPLE_TEST_VECTOR_192036465_HMAC)
             .expect_err("tampered amount_cents must be rejected in constant time");
@@ -288,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_verify_transaction_post_rejects_malformed_hex() {
-        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
         let err_non_hex = engine
             .verify_transaction_post(OFFICIAL_TEST_VECTOR_192036465_JSON, "zzzz-not-hex!")
             .expect_err("non-hex signature must return MalformedSignatureHex");
@@ -302,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_verify_transaction_post_rejects_missing_query_hmac() {
-        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
         let err = engine
             .verify_transaction_post(OFFICIAL_TEST_VECTOR_192036465_JSON, "   ")
             .expect_err("whitespace-only query_hmac must return MissingQueryHmac");
@@ -311,15 +317,21 @@ mod tests {
 
     #[test]
     fn test_verify_transaction_post_rejects_invalid_json() {
-        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
         let err_syntax = engine
             .verify_transaction_post("{not valid json", SAMPLE_TEST_VECTOR_192036465_HMAC)
             .expect_err("malformed JSON must return InvalidJsonPayload");
-        assert_eq!(err_syntax, WebhookError::InvalidJsonPayload);
+        assert!(matches!(err_syntax, WebhookError::InvalidJsonPayload(_)));
 
         let err_missing_fields = engine
-            .verify_transaction_post("{"type":"TRANSACTION"}", SAMPLE_TEST_VECTOR_192036465_HMAC)
+            .verify_transaction_post(
+                r#"{"type":"TRANSACTION"}"#,
+                SAMPLE_TEST_VECTOR_192036465_HMAC,
+            )
             .expect_err("incomplete JSON missing obj must return InvalidJsonPayload");
-        assert_eq!(err_missing_fields, WebhookError::InvalidJsonPayload);
+        assert!(matches!(
+            err_missing_fields,
+            WebhookError::InvalidJsonPayload(_)
+        ));
     }
 }

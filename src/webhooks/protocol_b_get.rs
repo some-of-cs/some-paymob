@@ -155,9 +155,9 @@ impl PaymobWebhookEngine {
     ///
     /// ```
     /// use std::collections::BTreeMap;
-    /// use some_paymob::webhooks::verifier::PaymobWebhookEngine;
+    /// use some_paymob::webhooks::verifier::{PaymobWebhookEngine, WebhookError};
     ///
-    /// let engine = PaymobWebhookEngine::new("3qUAg2xx6JW89Qav5GzzmXoalgjf5XxE");
+    /// let engine = PaymobWebhookEngine::new("3qUAg2xx6JW89Qav5GzzmXoalgjf5XxE")?;
     /// let mut params = BTreeMap::new();
     /// params.insert("amount_cents".to_string(), "50000".to_string());
     /// params.insert("created_at".to_string(), "2024-06-25T15:16:25.910710+04:00".to_string());
@@ -189,6 +189,7 @@ impl PaymobWebhookEngine {
     /// let verified = engine.verify_transaction_get(&params).expect("valid redirect");
     /// assert_eq!(verified.id, "316004");
     /// assert_eq!(verified.order_id, "378804");
+    /// # Ok::<(), WebhookError>(())
     /// ```
     pub fn verify_transaction_get<P: QueryParams>(
         &self,
@@ -210,16 +211,18 @@ fn resolve_redirect_param<'a, P: QueryParams>(
     key: &str,
 ) -> Result<&'a str, WebhookError> {
     let value = if key == "order_id" {
-        params.get_param("order_id").or_else(|| params.get_param("order"))
+        params
+            .get_param("order_id")
+            .or_else(|| params.get_param("order"))
     } else {
         params.get_param(key)
     };
-    value.ok_or(WebhookError::MissingRequiredField)
+    value.ok_or_else(|| WebhookError::MissingRequiredField(key.to_string()))
 }
 
-fn collect_canonical_redirect_values<'a, P: QueryParams>(
-    params: &'a P,
-) -> Result<(String, [&'a str; 20]), WebhookError> {
+fn collect_canonical_redirect_values<P: QueryParams>(
+    params: &P,
+) -> Result<(String, [&str; 20]), WebhookError> {
     let mut values = [""; 20];
     let mut concatenated = String::with_capacity(256);
     for (idx, &key) in TX_HMAC_KEYS.iter().enumerate() {
@@ -300,7 +303,7 @@ mod tests {
 
     #[test]
     fn vector_316004_order_fallback_btreemap_succeeds() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
         let params = vector_316004_btree(false);
         let verified = engine
             .verify_transaction_get(&params)
@@ -319,7 +322,7 @@ mod tests {
 
     #[test]
     fn vector_316004_order_id_hashmap_succeeds() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
         let params: HashMap<String, String> = vector_316004_btree(true).into_iter().collect();
         let verified = engine
             .verify_transaction_get(&params)
@@ -331,7 +334,7 @@ mod tests {
 
     #[test]
     fn missing_hmac_returns_missing_query_hmac() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
         let mut params = vector_316004_btree(false);
         params.remove("hmac");
 
@@ -345,26 +348,26 @@ mod tests {
 
     #[test]
     fn missing_required_field_returns_error() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
 
         let mut missing_amount = vector_316004_btree(false);
         missing_amount.remove("amount_cents");
         assert!(matches!(
             engine.verify_transaction_get(&missing_amount),
-            Err(WebhookError::MissingRequiredField)
+            Err(WebhookError::MissingRequiredField(ref field)) if field == "amount_cents"
         ));
 
         let mut missing_order = vector_316004_btree(false);
         missing_order.remove("order");
         assert!(matches!(
             engine.verify_transaction_get(&missing_order),
-            Err(WebhookError::MissingRequiredField)
+            Err(WebhookError::MissingRequiredField(ref field)) if field == "order_id"
         ));
     }
 
     #[test]
     fn tampered_field_returns_signature_mismatch() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
         let mut params = vector_316004_btree(false);
         params.insert("amount_cents".to_string(), "100".to_string());
 
@@ -374,7 +377,7 @@ mod tests {
 
     #[test]
     fn malformed_hmac_hex_returns_error() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
         let mut params = vector_316004_btree(false);
         params.insert("hmac".to_string(), "not-valid-hex!".to_string());
 
@@ -384,7 +387,7 @@ mod tests {
 
     #[test]
     fn debug_redacts_source_data_pan() {
-        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET);
+        let engine = PaymobWebhookEngine::new(TEST_HMAC_SECRET).expect("valid test secret");
         let params = vector_316004_btree(false);
         let verified = engine.verify_transaction_get(&params).unwrap();
         let debug_output = format!("{verified:?}");

@@ -133,6 +133,12 @@ struct JoinPathRequest<'a> {
     path: &'a str,
 }
 
+/// Internal newtype wrapping a candidate custom base URL for validation.
+struct CustomUrlCandidate<'a>(&'a str);
+
+/// Internal newtype wrapping a raw endpoint path for slash normalization.
+struct RawEndpointPath<'a>(&'a str);
+
 impl PaymobRegion {
     /// Resolves and validates the [`RegionalEndpoints`] for this region.
     ///
@@ -352,31 +358,127 @@ impl RegionalEndpoints {
 /// assert_eq!(normalize_endpoint_path("/api/auth/tokens/"), "/api/auth/tokens");
 /// ```
 pub fn normalize_endpoint_path(path: &str) -> String {
-    let trimmed = path.trim();
-    let (raw_path, query) = match trimmed.split_once('?') {
-        Some((p, q)) => (p, Some(q)),
-        None => (trimmed, None),
-    };
-    let mut clean = collapse_slashes(raw_path);
-    if requires_trailing_slash(&clean) {
-        clean.push('/');
+    RawEndpointPath(path).normalize()
+}
+
+impl<'a> CustomUrlCandidate<'a> {
+    /// Validates a single custom URL field for non-emptiness, valid syntax, host
+    /// presence, scheme policy, and absence of credentials, queries, or fragments.
+    fn validate(&self, field: CustomUrlField) -> Result<String, PaymobError> {
+        let field_name = field.as_str();
+        let trimmed = self.0.trim();
+        if trimmed.is_empty() {
+            return Err(PaymobError::ValidationError {
+                field: field_name,
+                reason: format!("{field_name} must not be empty"),
+            });
+        }
+        let parsed = Url::parse(trimmed).map_err(|err| PaymobError::ValidationError {
+            field: field_name,
+            reason: format!("invalid URL for {field_name}: {err}"),
+        })?;
+        Self::validate_scheme(field, &parsed)?;
+        Self::validate_parts(field, &parsed)?;
+        Ok(trimmed.trim_end_matches('/').to_string())
     }
-    if let Some(q) = query {
-        clean.push('?');
-        clean.push_str(q);
+
+    /// Enforces host presence, `https` for remote hosts, and `http` only on loopback/local test hosts.
+    fn validate_scheme(field: CustomUrlField, parsed: &Url) -> Result<(), PaymobError> {
+        let field_name = field.as_str();
+        let Some(host) = parsed.host_str() else {
+            return Err(PaymobError::ValidationError {
+                field: field_name,
+                reason: format!("{field_name} must include a host"),
+            });
+        };
+        if parsed.scheme() == "https" {
+            return Ok(());
+        }
+        if parsed.scheme() == "http" && Self(host).is_loopback_or_local() {
+            return Ok(());
+        }
+        Err(PaymobError::ValidationError {
+            field: field_name,
+            reason: format!("{field_name} must use https unless targeting a local/loopback host"),
+        })
     }
-    clean
+
+    /// Rejects embedded credentials (`username`/`password`) and `query`/`fragment` parts.
+    fn validate_parts(field: CustomUrlField, parsed: &Url) -> Result<(), PaymobError> {
+        let field_name = field.as_str();
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err(PaymobError::ValidationError {
+                field: field_name,
+                reason: format!("{field_name} must not contain embedded credentials"),
+            });
+        }
+        if parsed.query().is_some() || parsed.fragment().is_some() {
+            return Err(PaymobError::ValidationError {
+                field: field_name,
+                reason: format!("{field_name} must not contain query or fragment components"),
+            });
+        }
+        Ok(())
+    }
+
+    /// Returns `true` when `self.0` is a loopback or `.local` test host permitted for `http://`.
+    fn is_loopback_or_local(&self) -> bool {
+        let lower = self.0.to_ascii_lowercase();
+        lower == "localhost"
+            || lower == "127.0.0.1"
+            || lower == "[::1]"
+            || lower.ends_with(".local")
+    }
+}
+
+impl<'a> RawEndpointPath<'a> {
+    /// Normalizes the wrapped endpoint path and preserves any `?query` suffix.
+    fn normalize(&self) -> String {
+        let trimmed = self.0.trim();
+        let (raw_path, query) = match trimmed.split_once('?') {
+            Some((p, q)) => (p, Some(q)),
+            None => (trimmed, None),
+        };
+        let mut clean = Self(raw_path).collapse_slashes();
+        if Self(&clean).requires_trailing_slash() {
+            clean.push('/');
+        }
+        if let Some(q) = query {
+            clean.push('?');
+            clean.push_str(q);
+        }
+        clean
+    }
+
+    /// Collapses duplicate slashes and guarantees a leading `/` without trailing `/`.
+    fn collapse_slashes(&self) -> String {
+        let joined = self
+            .0
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>()
+            .join("/");
+        format!("/{joined}")
+    }
+
+    /// Returns `true` when `self.0` (no trailing slash) requires a trailing `/`
+    /// under Paymob's API contract.
+    fn requires_trailing_slash(&self) -> bool {
+        self.0 == "/v1/intention"
+            || self.0 == "/api/secure"
+            || self.0.starts_with("/api/secure/")
+    }
 }
 
 /// Validates and resolves all four base URLs for [`PaymobRegion::Custom`].
 fn resolve_custom_endpoints(inputs: CustomUrlInputs<'_>) -> Result<RegionalEndpoints, PaymobError> {
-    let accept = validate_custom_url(CustomUrlField::AcceptBaseUrl, inputs.accept_base_url)?;
-    let checkout = validate_custom_url(CustomUrlField::CheckoutBaseUrl, inputs.checkout_base_url)?;
-    let payouts = validate_custom_url(CustomUrlField::PayoutsBaseUrl, inputs.payouts_base_url)?;
-    let payouts_staging = validate_custom_url(
-        CustomUrlField::PayoutsStagingBaseUrl,
-        inputs.payouts_staging_base_url,
-    )?;
+    let accept = CustomUrlCandidate(inputs.accept_base_url).validate(CustomUrlField::AcceptBaseUrl)?;
+    let checkout =
+        CustomUrlCandidate(inputs.checkout_base_url).validate(CustomUrlField::CheckoutBaseUrl)?;
+    let payouts =
+        CustomUrlCandidate(inputs.payouts_base_url).validate(CustomUrlField::PayoutsBaseUrl)?;
+    let payouts_staging = CustomUrlCandidate(inputs.payouts_staging_base_url)
+        .validate(CustomUrlField::PayoutsStagingBaseUrl)?;
 
     Ok(RegionalEndpoints {
         accept_base_url: accept,
@@ -384,74 +486,6 @@ fn resolve_custom_endpoints(inputs: CustomUrlInputs<'_>) -> Result<RegionalEndpo
         payouts_base_url: Some(payouts),
         payouts_staging_base_url: Some(payouts_staging),
     })
-}
-
-/// Validates a single custom URL field for non-emptiness, valid syntax, host
-/// presence, scheme policy, and absence of credentials, queries, or fragments.
-fn validate_custom_url(field: CustomUrlField, raw: &str) -> Result<String, PaymobError> {
-    let field_name = field.as_str();
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(PaymobError::ValidationError {
-            field: field_name,
-            reason: format!("{field_name} must not be empty"),
-        });
-    }
-    let parsed = Url::parse(trimmed).map_err(|err| PaymobError::ValidationError {
-        field: field_name,
-        reason: format!("invalid URL for {field_name}: {err}"),
-    })?;
-    validate_custom_url_scheme(field, &parsed)?;
-    validate_custom_url_parts(field, &parsed)?;
-    Ok(trimmed.trim_end_matches('/').to_string())
-}
-
-/// Enforces host presence, `https` for remote hosts, and `http` only on loopback/local test hosts.
-fn validate_custom_url_scheme(field: CustomUrlField, parsed: &Url) -> Result<(), PaymobError> {
-    let field_name = field.as_str();
-    let Some(host) = parsed.host_str() else {
-        return Err(PaymobError::ValidationError {
-            field: field_name,
-            reason: format!("{field_name} must include a host"),
-        });
-    };
-    if parsed.scheme() == "https" {
-        return Ok(());
-    }
-    if parsed.scheme() == "http" && is_loopback_or_local_host(host) {
-        return Ok(());
-    }
-    Err(PaymobError::ValidationError {
-        field: field_name,
-        reason: format!("{field_name} must use https unless targeting a local/loopback host"),
-    })
-}
-
-/// Rejects embedded credentials (`username`/`password`) and `query`/`fragment` parts.
-fn validate_custom_url_parts(field: CustomUrlField, parsed: &Url) -> Result<(), PaymobError> {
-    let field_name = field.as_str();
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(PaymobError::ValidationError {
-            field: field_name,
-            reason: format!("{field_name} must not contain embedded credentials"),
-        });
-    }
-    if parsed.query().is_some() || parsed.fragment().is_some() {
-        return Err(PaymobError::ValidationError {
-            field: field_name,
-            reason: format!("{field_name} must not contain query or fragment components"),
-        });
-    }
-    Ok(())
-}
-
-/// Returns `true` when `host` is a loopback or `.local` test host permitted for `http://`.
-fn is_loopback_or_local_host(host: &str) -> bool {
-    let lower = host.to_ascii_lowercase();
-    lower == "localhost"
-        || lower == "127.0.0.1"
-        || lower == "[::1]"
-        || lower.ends_with(".local")
 }
 
 /// Joins a base URL with a normalized endpoint path.
@@ -463,27 +497,9 @@ fn join_base_and_path(req: JoinPathRequest<'_>) -> Result<String, PaymobError> {
             reason: "endpoint path must not be empty".to_string(),
         });
     }
-    let normalized = normalize_endpoint_path(trimmed_path);
+    let normalized = RawEndpointPath(trimmed_path).normalize();
     let base_clean = req.base.trim_end_matches('/');
     Ok(format!("{base_clean}{normalized}"))
-}
-
-/// Collapses duplicate slashes and guarantees a leading `/` without trailing `/`.
-fn collapse_slashes(raw: &str) -> String {
-    let joined = raw
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
-    format!("/{joined}")
-}
-
-/// Returns `true` when `clean_path` (no trailing slash) requires a trailing `/`
-/// under Paymob's API contract.
-fn requires_trailing_slash(clean_path: &str) -> bool {
-    clean_path == "/v1/intention"
-        || clean_path == "/api/secure"
-        || clean_path.starts_with("/api/secure/")
 }
 
 #[cfg(test)]
@@ -504,6 +520,11 @@ mod tests {
         payouts: &'static str,
         staging: &'static str,
         expected_field: &'static str,
+    }
+
+    struct SlashCase {
+        input: &'static str,
+        expected: &'static str,
     }
 
     fn assert_endpoints(case: &BuiltinCase) {
@@ -574,20 +595,52 @@ mod tests {
     }
 
     #[test]
-    fn tc_1_1_1_trailing_slash_policy_normalizer() {
+    fn tc_1_1_1_trailing_slash_preserved_paths() {
         let cases = [
-            ("/v1/intention/", "/v1/intention/"),
-            ("v1/intention", "/v1/intention/"),
-            ("//v1//intention//", "/v1/intention/"),
-            ("/v1/intention?foo=bar", "/v1/intention/?foo=bar"),
-            ("/api/secure/disburse/", "/api/secure/disburse/"),
-            ("api/secure/disburse", "/api/secure/disburse/"),
-            ("/api/secure/budget/inquire", "/api/secure/budget/inquire/"),
-            ("/api/auth/tokens/", "/api/auth/tokens"),
-            ("/", "/"),
+            SlashCase {
+                input: "/v1/intention/",
+                expected: "/v1/intention/",
+            },
+            SlashCase {
+                input: "v1/intention",
+                expected: "/v1/intention/",
+            },
+            SlashCase {
+                input: "/v1/intention?foo=bar",
+                expected: "/v1/intention/?foo=bar",
+            },
+            SlashCase {
+                input: "api/secure/disburse",
+                expected: "/api/secure/disburse/",
+            },
+            SlashCase {
+                input: "/api/secure/budget/inquire",
+                expected: "/api/secure/budget/inquire/",
+            },
         ];
-        for (input, expected) in cases {
-            assert_eq!(normalize_endpoint_path(input), expected);
+        for case in &cases {
+            assert_eq!(normalize_endpoint_path(case.input), case.expected);
+        }
+    }
+
+    #[test]
+    fn tc_1_1_1_trailing_slash_stripped_paths() {
+        let cases = [
+            SlashCase {
+                input: "/api/auth/tokens/",
+                expected: "/api/auth/tokens",
+            },
+            SlashCase {
+                input: "//api//acceptance//orders//",
+                expected: "/api/acceptance/orders",
+            },
+            SlashCase {
+                input: "/",
+                expected: "/",
+            },
+        ];
+        for case in &cases {
+            assert_eq!(normalize_endpoint_path(case.input), case.expected);
         }
     }
 
@@ -715,10 +768,15 @@ mod tests {
         for (prefix, expected) in prefixes {
             assert_eq!(PaymobRegion::from_key_prefix(prefix), expected);
         }
-        assert_eq!(PaymobRegion::Egypt.country_code(), "EGY");
-        assert_eq!(PaymobRegion::SaudiArabia.country_code(), "KSA");
-        assert_eq!(PaymobRegion::Uae.country_code(), "UAE");
-        assert_eq!(PaymobRegion::Oman.country_code(), "OMN");
-        assert_eq!(PaymobRegion::Pakistan.country_code(), "PAK");
+        let codes = [
+            (PaymobRegion::Egypt, "EGY"),
+            (PaymobRegion::SaudiArabia, "KSA"),
+            (PaymobRegion::Uae, "UAE"),
+            (PaymobRegion::Oman, "OMN"),
+            (PaymobRegion::Pakistan, "PAK"),
+        ];
+        for (region, code) in codes {
+            assert_eq!(region.country_code(), code);
+        }
     }
 }

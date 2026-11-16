@@ -230,10 +230,11 @@ impl<'a> InquiriesService<'a> {
         params.validate()?;
 
         let token = acquire_accept_jwt(self).await?;
-        let mut body = serde_json::to_value(&params).map_err(|err| PaymobError::ValidationError {
-            field: "params",
-            reason: err.to_string(),
-        })?;
+        let mut body =
+            serde_json::to_value(&params).map_err(|err| PaymobError::ValidationError {
+                field: "params",
+                reason: err.to_string(),
+            })?;
         inject_body_auth_token(&mut body, &token).map_err(map_accept_jwt_error)?;
 
         let url = self
@@ -256,12 +257,15 @@ impl<'a> InquiriesService<'a> {
 }
 
 async fn acquire_accept_jwt(service: &InquiriesService<'_>) -> Result<SecretString, PaymobError> {
-    let api_key = service.client().config().api_key().ok_or_else(|| {
-        PaymobError::ValidationError {
-            field: "api_key",
-            reason: "api_key must be configured for Regime 2 inquiry endpoints".to_owned(),
-        }
-    })?;
+    let api_key =
+        service
+            .client()
+            .config()
+            .api_key()
+            .ok_or_else(|| PaymobError::ValidationError {
+                field: "api_key",
+                reason: "api_key must be configured for Regime 2 inquiry endpoints".to_owned(),
+            })?;
     let provider = AcceptJwtProvider::new(
         service.client().endpoints().accept_base_url.as_str(),
         SecretString::from(api_key.expose_secret().to_owned()),

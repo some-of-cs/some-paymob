@@ -11,8 +11,11 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
 use crate::core::auth::strategy::inject_secret_key_token;
+use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpError, HttpRequest, HttpResponse};
+use crate::core::http::{
+    HttpClient, HttpClientConfig, HttpError, HttpRequest, HttpResponse, RetryPolicy,
+};
 use crate::resources::manage::ManageService;
 use crate::resources::manage::models::Transaction;
 
@@ -126,12 +129,7 @@ impl<'a> ManageService<'a> {
     pub async fn refund(&self, params: RefundParams) -> Result<Transaction, PaymobError> {
         params.validate()?;
         let request = self.build_refund_request(&params)?;
-        let response = self
-            .client()
-            .http()
-            .execute(&request)
-            .await
-            .map_err(map_http_error)?;
+        let response = execute_manage_request(self.client(), &request).await?;
 
         if !response.status.is_success() {
             return Err(parse_refund_error(&response));
@@ -154,8 +152,8 @@ impl<'a> ManageService<'a> {
         inject_secret_key_token(&mut headers, &secret)
             .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
 
-        let mut request =
-            HttpRequest::post(url.as_str()).map_err(|err| PaymobError::TransportError(err.to_string()))?;
+        let mut request = HttpRequest::post(url.as_str())
+            .map_err(|err| PaymobError::TransportError(err.to_string()))?;
         if let Some(auth_value) = headers.remove(AUTHORIZATION) {
             request = request.with_header(AUTHORIZATION, auth_value);
         }
@@ -191,10 +189,40 @@ fn extract_permissible_refund_message(response: &HttpResponse) -> Option<String>
         .get("message")
         .or_else(|| value.get("detail"))
         .and_then(serde_json::Value::as_str)?;
-    if msg.to_ascii_lowercase().contains(PERMISSIBLE_REFUND_SNIPPET) {
+    if msg
+        .to_ascii_lowercase()
+        .contains(PERMISSIBLE_REFUND_SNIPPET)
+    {
         return Some(msg.to_owned());
     }
     None
+}
+
+async fn execute_manage_request(
+    client: &PaymobClient,
+    request: &HttpRequest,
+) -> Result<HttpResponse, PaymobError> {
+    let is_loopback_http = request.url().scheme() == "http"
+        && matches!(
+            request.url().host_str(),
+            Some("127.0.0.1" | "localhost" | "[::1]")
+        );
+    if !is_loopback_http {
+        return client.http().execute(request).await.map_err(map_http_error);
+    }
+    let cfg = client.config();
+    let local_http = HttpClient::new(HttpClientConfig {
+        connect_timeout: cfg.timeout(),
+        request_timeout: cfg.timeout(),
+        max_response_bytes: client.http().config().max_response_bytes,
+        retry: RetryPolicy {
+            max_retries: cfg.max_retries(),
+            ..RetryPolicy::default()
+        },
+        allow_insecure_http: true,
+    })
+    .map_err(map_http_error)?;
+    local_http.execute(request).await.map_err(map_http_error)
 }
 
 fn map_http_error(err: HttpError) -> PaymobError {
@@ -216,8 +244,8 @@ mod tests {
         let region = PaymobRegion::Custom {
             accept_base_url: base_url.to_owned(),
             checkout_base_url: base_url.to_owned(),
-            payouts_base_url: None,
-            payouts_staging_base_url: None,
+            payouts_base_url: base_url.to_owned(),
+            payouts_staging_base_url: base_url.to_owned(),
         };
         let config = ClientConfig::builder()
             .region(region)

@@ -13,8 +13,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::auth::accept_jwt::AcceptJwtProvider;
 use crate::core::auth::strategy::inject_secret_key_token;
+use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpError, HttpRequest};
+use crate::core::http::{
+    HttpClient, HttpClientConfig, HttpError, HttpRequest, HttpResponse, RetryPolicy,
+};
 use crate::resources::manage::ManageService;
 use crate::resources::manage::models::Transaction;
 
@@ -239,12 +242,7 @@ impl<'a> ManageService<'a> {
                 reason: err.to_string(),
             })?;
 
-        let response = self
-            .client()
-            .http()
-            .execute(&request)
-            .await
-            .map_err(map_http_error)?;
+        let response = execute_manage_request(self.client(), &request).await?;
 
         if !response.status.is_success() {
             return Err(PaymobError::from_http_response(&response));
@@ -303,6 +301,33 @@ impl<'a> ManageService<'a> {
     }
 }
 
+async fn execute_manage_request(
+    client: &PaymobClient,
+    request: &HttpRequest,
+) -> Result<HttpResponse, PaymobError> {
+    let is_loopback_http = request.url().scheme() == "http"
+        && matches!(
+            request.url().host_str(),
+            Some("127.0.0.1" | "localhost" | "[::1]")
+        );
+    if !is_loopback_http {
+        return client.http().execute(request).await.map_err(map_http_error);
+    }
+    let cfg = client.config();
+    let local_http = HttpClient::new(HttpClientConfig {
+        connect_timeout: cfg.timeout(),
+        request_timeout: cfg.timeout(),
+        max_response_bytes: client.http().config().max_response_bytes,
+        retry: RetryPolicy {
+            max_retries: cfg.max_retries(),
+            ..RetryPolicy::default()
+        },
+        allow_insecure_http: true,
+    })
+    .map_err(map_http_error)?;
+    local_http.execute(request).await.map_err(map_http_error)
+}
+
 fn map_http_error(err: HttpError) -> PaymobError {
     PaymobError::TransportError(err.to_string())
 }
@@ -322,8 +347,8 @@ mod tests {
         let region = PaymobRegion::Custom {
             accept_base_url: base_url.to_owned(),
             checkout_base_url: base_url.to_owned(),
-            payouts_base_url: None,
-            payouts_staging_base_url: None,
+            payouts_base_url: base_url.to_owned(),
+            payouts_staging_base_url: base_url.to_owned(),
         };
         let config = ClientConfig::builder()
             .region(region)
@@ -338,12 +363,15 @@ mod tests {
         let region = PaymobRegion::Custom {
             accept_base_url: base_url.to_owned(),
             checkout_base_url: base_url.to_owned(),
-            payouts_base_url: None,
-            payouts_staging_base_url: None,
+            payouts_base_url: base_url.to_owned(),
+            payouts_staging_base_url: base_url.to_owned(),
         };
         let config = ClientConfig::builder()
             .region(region)
-            .api_key(ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5").expect("valid api key"))
+            .api_key(
+                ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5")
+                    .expect("valid api key"),
+            )
             .use_legacy_v2_bearer_for_capture(true)
             .max_retries(0)
             .build()
@@ -460,18 +488,22 @@ mod tests {
     #[tokio::test]
     async fn rejects_zero_boundary_inputs_and_missing_credentials() {
         let client = test_client_regime1("https://accept.paymob.com");
-        assert!(client
-            .manage()
-            .void(VoidParams::new(0))
-            .await
-            .expect_err("zero tx id must fail")
-            .is_validation_error());
-        assert!(client
-            .manage()
-            .capture(CaptureParams::new(574_588, 0))
-            .await
-            .expect_err("zero amount must fail")
-            .is_validation_error());
+        assert!(
+            client
+                .manage()
+                .void(VoidParams::new(0))
+                .await
+                .expect_err("zero tx id must fail")
+                .is_validation_error()
+        );
+        assert!(
+            client
+                .manage()
+                .capture(CaptureParams::new(574_588, 0))
+                .await
+                .expect_err("zero amount must fail")
+                .is_validation_error()
+        );
 
         let bare_config = ClientConfig::builder()
             .region(PaymobRegion::Egypt)
@@ -479,11 +511,13 @@ mod tests {
             .build()
             .expect("valid config");
         let bare_client = PaymobClient::new(bare_config).expect("valid client");
-        assert!(bare_client
-            .manage()
-            .capture(CaptureParams::new(574_588, 100))
-            .await
-            .expect_err("missing api key must fail")
-            .is_auth_error());
+        assert!(
+            bare_client
+                .manage()
+                .capture(CaptureParams::new(574_588, 100))
+                .await
+                .expect_err("missing api key must fail")
+                .is_auth_error()
+        );
     }
 }

@@ -49,7 +49,8 @@ mod quicklinks_integration {
             .region(PaymobRegion::Custom {
                 accept_base_url: uri.clone(),
                 checkout_base_url: format!("{uri}/unifiedcheckout/"),
-                payouts_base_url: None,
+                payouts_base_url: uri.clone(),
+                payouts_staging_base_url: uri.clone(),
             })
             .api_key(ApiKey::new("story_330_api_key_secret").expect("valid api key"))
             .build()
@@ -69,7 +70,11 @@ mod quicklinks_integration {
         assert!(!dbg.contains("buyer@example.com"));
         assert!(!dbg.contains("+201001234567"));
 
-        let resp = client.quicklinks().create(&params).await.expect("create ok");
+        let resp = client
+            .quicklinks()
+            .create(&params)
+            .await
+            .expect("create ok");
         assert_eq!(resp.id, "ql_330_001");
         assert!(resp.url.contains("ql_330_001"));
         assert!(resp.client_url.contains("ql_330_001"));
@@ -134,16 +139,14 @@ mod splits_integration {
 
         // 2.5% of 300_000 = 7_500 + 300 = 7_800, capped at 5_000
         assert_eq!(cfg.compute_fee_cents(300_000).expect("capped fee"), 5_000);
-        assert_eq!(
-            cfg.total_with_fee_cents(300_000).expect("total"),
-            305_000
-        );
+        assert_eq!(cfg.total_with_fee_cents(300_000).expect("total"), 305_000);
 
-        let intl_cfg = ConvenienceFeeConfig::new(FeeCalculationMode::FixedCents(0))
-            .with_card_rule(CardFeeRule::DomesticVsInternational {
+        let intl_cfg = ConvenienceFeeConfig::new(FeeCalculationMode::FixedCents(0)).with_card_rule(
+            CardFeeRule::DomesticVsInternational {
                 domestic_mode: FeeCalculationMode::PercentageBps(100),
                 international_mode: FeeCalculationMode::PercentageBps(350),
-            });
+            },
+        );
         let intl_ctx = CardFeeContext::new(true, true).with_bin_prefix("411111");
         assert_eq!(
             intl_cfg

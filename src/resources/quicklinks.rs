@@ -8,14 +8,14 @@
 
 use std::fmt;
 
-use reqwest::header::AUTHORIZATION;
 use reqwest::Client;
+use reqwest::header::AUTHORIZATION;
 use secrecy::SecretString;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
 
-use crate::core::auth::accept_jwt::{format_bearer_header, AcceptJwtError, AcceptJwtProvider};
+use crate::core::auth::accept_jwt::{AcceptJwtError, AcceptJwtProvider, format_bearer_header};
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
 
@@ -83,11 +83,7 @@ impl fmt::Debug for CreateQuickLinkParams {
 impl CreateQuickLinkParams {
     /// Creates a new [`CreateQuickLinkParams`] with required amount, currency, and integrations.
     #[must_use]
-    pub fn new(
-        amount_cents: u64,
-        currency: impl Into<String>,
-        integrations: Vec<u64>,
-    ) -> Self {
+    pub fn new(amount_cents: u64, currency: impl Into<String>, integrations: Vec<u64>) -> Self {
         Self {
             amount_cents,
             currency: currency.into(),
@@ -437,7 +433,8 @@ mod tests {
             .region(PaymobRegion::Custom {
                 accept_base_url: uri.clone(),
                 checkout_base_url: format!("{uri}/unifiedcheckout/"),
-                payouts_base_url: None,
+                payouts_base_url: uri.clone(),
+                payouts_staging_base_url: uri.clone(),
             })
             .api_key(ApiKey::new("test_api_key_secret_123").expect("valid api key"))
             .build()
@@ -484,7 +481,11 @@ mod tests {
             .with_phone_number("+201000000000")
             .with_redirection_url("https://merchant.example.com/return");
 
-        let resp = client.quicklinks().create(&params).await.expect("create ok");
+        let resp = client
+            .quicklinks()
+            .create(&params)
+            .await
+            .expect("create ok");
         assert_eq!(resp.id, "ql_98765");
         assert!(resp.client_url.contains("ql_98765"));
 

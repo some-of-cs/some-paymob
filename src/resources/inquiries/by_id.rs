@@ -235,12 +235,15 @@ impl<'a> InquiriesService<'a> {
 }
 
 async fn acquire_accept_jwt(service: &InquiriesService<'_>) -> Result<SecretString, PaymobError> {
-    let api_key = service.client().config().api_key().ok_or_else(|| {
-        PaymobError::ValidationError {
-            field: "api_key",
-            reason: "api_key must be configured for Regime 2 inquiry endpoints".to_owned(),
-        }
-    })?;
+    let api_key =
+        service
+            .client()
+            .config()
+            .api_key()
+            .ok_or_else(|| PaymobError::ValidationError {
+                field: "api_key",
+                reason: "api_key must be configured for Regime 2 inquiry endpoints".to_owned(),
+            })?;
     let provider = AcceptJwtProvider::new(
         service.client().endpoints().accept_base_url.as_str(),
         SecretString::from(api_key.expose_secret().to_owned()),
@@ -439,7 +442,8 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/api/acceptance/transactions/999"))
             .respond_with(
-                ResponseTemplate::new(404).set_body_json(serde_json::json!({"detail": "Not found."})),
+                ResponseTemplate::new(404)
+                    .set_body_json(serde_json::json!({"detail": "Not found."})),
             )
             .mount(&server)
             .await;
@@ -463,6 +467,12 @@ mod tests {
             .by_transaction_id(888)
             .await
             .expect_err("malformed json must fail");
-        assert!(matches!(malformed, PaymobError::TransportError(_)));
+        assert!(matches!(
+            malformed,
+            PaymobError::ValidationError {
+                field: "http_config",
+                ..
+            }
+        ));
     }
 }

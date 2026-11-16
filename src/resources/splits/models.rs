@@ -349,7 +349,9 @@ impl SplitPaymentConfig {
         if total != expected_total_cents {
             return Err(validation_err(
                 "amount_cents",
-                format!("split payment total {total} does not match expected {expected_total_cents}"),
+                format!(
+                    "split payment total {total} does not match expected {expected_total_cents}"
+                ),
             ));
         }
         Ok(())

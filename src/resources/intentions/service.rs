@@ -149,24 +149,24 @@ impl<'a> IntentionsService<'a> {
         key_mode: EnvironmentMode,
     ) -> Result<(), PaymobError> {
         for method in methods {
-            let Some(id) = method.as_integration_id() else {
+            let PaymentMethodInput::IntegrationId(&id) = method else {
                 continue;
             };
-            if let Some(&known_mode) = self.known_integration_modes.get(&id) {
-                if known_mode != key_mode {
-                    return Err(env_mismatch_error(id, key_mode, known_mode));
-                }
+            let Some(&known_mode) = self.known_integration_modes.get(&id) else {
+                continue;
+            };
+            if known_mode != key_mode {
+                return Err(env_mismatch_error(id, key_mode, known_mode));
             }
         }
         Ok(())
     }
 
-    async fn dispatch_intention<T: serde::Serialize>(
+    fn build_request<T: serde::Serialize>(
         &self,
         method: Method,
         payload: &T,
-        key_mode: EnvironmentMode,
-    ) -> Result<IntentionResponse, PaymobError> {
+    ) -> Result<HttpRequest, PaymobError> {
         let url = self.resolve_intention_url()?;
         let headers = self.build_auth_headers(&method)?;
         let mut req = HttpRequest::new(method, &url)
@@ -176,7 +176,16 @@ impl<'a> IntentionsService<'a> {
         for (name, value) in &headers {
             req = req.with_header(name.clone(), value.clone());
         }
+        Ok(req)
+    }
 
+    async fn dispatch_intention<T: serde::Serialize>(
+        &self,
+        method: Method,
+        payload: &T,
+        key_mode: EnvironmentMode,
+    ) -> Result<IntentionResponse, PaymobError> {
+        let req = self.build_request(method, payload)?;
         let response = self.http_client().execute(&req).await.map_err(PaymobError::from)?;
         if !response.status.is_success() {
             return Err(PaymobError::from_http_response(&response));
@@ -190,7 +199,11 @@ impl<'a> IntentionsService<'a> {
         let secret_key = self.client.config().secret_key().ok_or_else(|| {
             PaymobError::AuthenticationError("missing SecretKey".to_owned())
         })?;
-        let spec = EndpointAuthSpec::new(INTENTION_PATH, method.clone(), AuthStrategy::SecretKeyToken)
+        let spec = EndpointAuthSpec::new(
+            INTENTION_PATH,
+            method.clone(),
+            AuthStrategy::SecretKeyToken,
+        )
             .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
         let mut headers = HeaderMap::new();
         let token = SecretString::from(secret_key.expose_secret().to_owned());

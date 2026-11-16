@@ -24,7 +24,7 @@ use thiserror::Error;
 use url::Url;
 use zeroize::Zeroizing;
 
-use crate::core::auth::cache::TokenCache;
+use crate::core::auth::cache::{CachedToken, TokenCache};
 
 /// Relative endpoint path for Paymob Accept JWT acquisition.
 pub const ACCEPT_AUTH_TOKENS_PATH: &str = "/api/auth/tokens";
@@ -190,9 +190,12 @@ impl AcceptJwtProvider {
     /// Propagates [`AcceptJwtError`] if `POST /api/auth/tokens` fails or returns invalid data.
     pub async fn token(&self) -> Result<SecretString, AcceptJwtError> {
         self.cache
-            .get_or_refresh(|| self.fetch_fresh_token())
+            .get_or_refresh(|| async {
+                let jwt = self.fetch_fresh_token().await?;
+                Ok(CachedToken::with_default_ttl(jwt, None))
+            })
             .await
-            .map_err(|err| AcceptJwtError::Cache(err.to_string()))
+            .map(|cached| cached.access_token.clone())
     }
 
     /// Attaches `Authorization: Bearer <auth_token>` to `builder` using a cached or refreshed JWT.

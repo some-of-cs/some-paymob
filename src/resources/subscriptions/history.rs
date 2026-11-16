@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use reqwest::{Client, Method, StatusCode};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::{Host, Url};

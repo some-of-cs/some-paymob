@@ -156,7 +156,7 @@ impl<'a> IntentionsService<'a> {
                 continue;
             };
             if known_mode != key_mode {
-                return Err(env_mismatch_error(id, key_mode, known_mode));
+                return Err(env_mismatch_error(*id, key_mode, known_mode));
             }
         }
         Ok(())

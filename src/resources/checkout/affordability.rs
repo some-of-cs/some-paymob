@@ -3,11 +3,10 @@
 //!
 //! Provides [`AffordabilityWidgetConfig`] and [`AffordabilityWidgetConfigBuilder`]
 //! using strictly integer minor-unit amounts ([`MinorUnitAmount`], zero floats)
-//! and [`PublicKey`](crate::core::credentials::PublicKey) (`pk_*`), plus helper
+//! and [`PublicKey`] (`pk_*`), plus helper
 //! methods for wiring selected installment plan IDs into
 //! `CreateIntentionParams::pre_selected_plan`.
 
-use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 
 use crate::core::client::PaymobClient;

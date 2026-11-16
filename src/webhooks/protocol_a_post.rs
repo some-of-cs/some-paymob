@@ -324,7 +324,10 @@ mod tests {
         assert!(matches!(err_syntax, WebhookError::InvalidJsonPayload(_)));
 
         let err_missing_fields = engine
-            .verify_transaction_post(r#"{"type":"TRANSACTION"}"#, SAMPLE_TEST_VECTOR_192036465_HMAC)
+            .verify_transaction_post(
+                r#"{"type":"TRANSACTION"}"#,
+                SAMPLE_TEST_VECTOR_192036465_HMAC,
+            )
             .expect_err("incomplete JSON missing obj must return InvalidJsonPayload");
         assert!(matches!(
             err_missing_fields,

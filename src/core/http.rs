@@ -625,6 +625,38 @@ mod tests {
         }
     }
 
+    async fn assert_retry_then_succeed(
+        first_status: u16,
+        retry_after: Option<&str>,
+        req_method: Method,
+        expected_body: &str,
+    ) {
+        let server = MockServer::start().await;
+        let first_template = match retry_after {
+            Some(val) => ResponseTemplate::new(first_status).insert_header("Retry-After", val),
+            None => ResponseTemplate::new(first_status),
+        };
+        Mock::given(method(req_method.as_str()))
+            .and(path("/retry"))
+            .respond_with(first_template)
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method(req_method.as_str()))
+            .and(path("/retry"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(expected_body))
+            .mount(&server)
+            .await;
+
+        let client = HttpClient::new(fast_config()).expect("client builds");
+        let req = HttpRequest::new(req_method, &format!("{}/retry", server.uri()))
+            .expect("valid URL");
+        let resp = client.execute(&req).await.expect("retry succeeds");
+
+        assert_eq!(resp.status, StatusCode::OK);
+        assert_eq!(resp.body, expected_body.as_bytes());
+    }
+
     #[test]
     fn tc_1_3_2_retry_after_parsing_positive_and_malformed() {
         let empty = HeaderMap::new();
@@ -723,73 +755,17 @@ mod tests {
 
     #[tokio::test]
     async fn tc_1_3_2_retries_429_with_retry_after_then_succeeds() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/intention"))
-            .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
-            .up_to_n_times(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .and(path("/intention"))
-            .respond_with(ResponseTemplate::new(200).set_body_string("{\"id\":1}"))
-            .mount(&server)
-            .await;
-
-        let client = HttpClient::new(fast_config()).expect("client builds");
-        let req = HttpRequest::post(&format!("{}/intention", server.uri()))
-            .expect("valid URL")
-            .with_body(b"{}".to_vec());
-        let resp = client.execute(&req).await.expect("retry succeeds");
-
-        assert_eq!(resp.status, StatusCode::OK);
-        assert_eq!(resp.body, b"{\"id\":1}");
+        assert_retry_then_succeed(429, Some("0"), Method::POST, "{\"id\":1}").await;
     }
 
     #[tokio::test]
     async fn tc_1_3_2_retries_502_bad_gateway_then_succeeds() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/gateway"))
-            .respond_with(ResponseTemplate::new(502).set_body_string("bad gateway"))
-            .up_to_n_times(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/gateway"))
-            .respond_with(ResponseTemplate::new(200).set_body_string("recovered"))
-            .mount(&server)
-            .await;
-
-        let client = HttpClient::new(fast_config()).expect("client builds");
-        let req = HttpRequest::get(&format!("{}/gateway", server.uri())).expect("valid URL");
-        let resp = client.execute(&req).await.expect("502 retry succeeds");
-
-        assert_eq!(resp.status, StatusCode::OK);
-        assert_eq!(resp.body, b"recovered");
+        assert_retry_then_succeed(502, None, Method::GET, "recovered").await;
     }
 
     #[tokio::test]
     async fn tc_1_3_2_retries_504_gateway_timeout_then_succeeds() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/timeout-gw"))
-            .respond_with(ResponseTemplate::new(504).set_body_string("gateway timeout"))
-            .up_to_n_times(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/timeout-gw"))
-            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
-            .mount(&server)
-            .await;
-
-        let client = HttpClient::new(fast_config()).expect("client builds");
-        let req = HttpRequest::get(&format!("{}/timeout-gw", server.uri())).expect("valid URL");
-        let resp = client.execute(&req).await.expect("504 retry succeeds");
-
-        assert_eq!(resp.status, StatusCode::OK);
-        assert_eq!(resp.body, b"ok");
+        assert_retry_then_succeed(504, None, Method::GET, "ok").await;
     }
 
     #[tokio::test]

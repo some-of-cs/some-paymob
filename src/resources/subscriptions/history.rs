@@ -335,7 +335,10 @@ impl SubscriptionHistoryService {
     /// Returns [`PaymobError::ValidationError`] if `sub_id == 0` or `api_key` is missing;
     /// [`PaymobError::AuthenticationError`] on rejected credentials; or
     /// [`PaymobError::ApiError`] / [`PaymobError::TransportError`] on gateway failure.
-    pub async fn last_transaction(&self, sub_id: u64) -> Result<SubscriptionTransaction, PaymobError> {
+    pub async fn last_transaction(
+        &self,
+        sub_id: u64,
+    ) -> Result<SubscriptionTransaction, PaymobError> {
         validate_sub_id(sub_id)?;
         let path = format!("/api/acceptance/subscriptions/{sub_id}/last-transaction");
         execute_regime2_json::<(), SubscriptionTransaction>(&self.client, Method::GET, &path, None)
@@ -357,8 +360,13 @@ impl SubscriptionHistoryService {
         validate_sub_id(sub_id)?;
         let path = format!("/api/acceptance/subscriptions/{sub_id}/transactions");
         let envelope: TransactionListEnvelope =
-            execute_regime2_json::<(), TransactionListEnvelope>(&self.client, Method::GET, &path, None)
-                .await?;
+            execute_regime2_json::<(), TransactionListEnvelope>(
+                &self.client,
+                Method::GET,
+                &path,
+                None,
+            )
+            .await?;
         Ok(envelope.into_vec())
     }
 }
@@ -434,7 +442,10 @@ impl SubscriptionsService {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn last_transaction(&self, sub_id: u64) -> Result<SubscriptionTransaction, PaymobError> {
+    pub async fn last_transaction(
+        &self,
+        sub_id: u64,
+    ) -> Result<SubscriptionTransaction, PaymobError> {
         self.history().last_transaction(sub_id).await
     }
 
@@ -494,10 +505,16 @@ fn is_loopback_host(parsed: &Url) -> bool {
 
 fn validate_webhook_url(raw: &str) -> Result<String, PaymobError> {
     let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed.bytes().any(|b| b.is_ascii_control() || b.is_ascii_whitespace()) {
+    if trimmed.is_empty()
+        || trimmed
+            .bytes()
+            .any(|b| b.is_ascii_control() || b.is_ascii_whitespace())
+    {
         return Err(PaymobError::ValidationError {
             field: "url",
-            reason: String::from("webhook URL must be non-empty without whitespace or control characters"),
+            reason: String::from(
+                "webhook URL must be non-empty without whitespace or control characters",
+            ),
         });
     }
     let parsed = Url::parse(trimmed).map_err(|err| PaymobError::ValidationError {
@@ -565,7 +582,9 @@ async fn send_once<Req: Serialize + ?Sized>(
     bearer_header: HeaderValue,
     body: Option<&Req>,
 ) -> Result<(StatusCode, Option<u64>, Vec<u8>), PaymobError> {
-    let mut builder = http.request(method, url.clone()).header(AUTHORIZATION, bearer_header);
+    let mut builder = http
+        .request(method, url.clone())
+        .header(AUTHORIZATION, bearer_header);
     if let Some(payload) = body {
         builder = builder.json(payload);
     }
@@ -863,7 +882,10 @@ mod tests {
             .expect_err("sub_id=0 must fail");
         assert!(matches!(
             err_zero,
-            PaymobError::ValidationError { field: "sub_id", .. }
+            PaymobError::ValidationError {
+                field: "sub_id",
+                ..
+            }
         ));
 
         let err_http = client
@@ -898,7 +920,10 @@ mod tests {
             .expect_err("missing api_key must fail");
         assert!(matches!(
             err_key,
-            PaymobError::ValidationError { field: "api_key", .. }
+            PaymobError::ValidationError {
+                field: "api_key",
+                ..
+            }
         ));
     }
 
@@ -927,10 +952,7 @@ mod tests {
             .last_transaction(9999)
             .await
             .expect_err("404 must fail");
-        assert!(matches!(
-            err_404,
-            PaymobError::ApiError { status: 404, .. }
-        ));
+        assert!(matches!(err_404, PaymobError::ApiError { status: 404, .. }));
 
         let err_json = client
             .subscriptions()

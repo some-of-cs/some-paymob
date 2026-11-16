@@ -11,8 +11,8 @@ categories = ["api-bindings", "web-programming::http-client"]
 
 [features]
 default = ["core", "webhooks", "rustls-tls"]
-core = []
-webhooks = ["core"]
+core = ["rustls-tls"]
+webhooks = ["core", "dep:hmac", "dep:sha2", "dep:subtle", "dep:hex"]
 webhook-engine = ["webhooks"]
 rustls-tls = ["reqwest/rustls-tls"]
 native-tls = ["reqwest/native-tls"]
@@ -20,15 +20,15 @@ native-tls = ["reqwest/native-tls"]
 [dependencies]
 arc-swap = "1.7"
 base64 = "0.22"
-hex = "0.4"
-hmac = "0.12"
+hex = { version = "0.4", optional = true }
+hmac = { version = "0.12", optional = true }
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sha2 = "0.10"
-subtle = "2.6"
+sha2 = { version = "0.10", optional = true }
+subtle = { version = "2.6", optional = true }
 thiserror = "2.0"
 tokio = { version = "1.40", features = ["sync", "time", "macros", "rt"] }
 tracing = "0.1"

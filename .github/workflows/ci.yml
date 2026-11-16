@@ -1,53 +1,42 @@
-name: CI
-
+name: Rust CI (Module 7)
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "feat/**"
+      - "patch/**"
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - "feat/**"
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 1
 
 jobs:
-  fmt:
-    name: Format
+  check-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
-      - run: cargo fmt --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-features
-
-  doc:
-    name: Doc
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - env:
+      - name: Format check
+        run: cargo fmt --check
+      - name: Check --no-default-features
+        run: cargo check --no-default-features
+      - name: Check --all-features
+        run: cargo check --all-features
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Unit & Integration Tests
+        run: cargo test --all-features
+      - name: Doc Tests
+        run: cargo test --doc --all-features
+      - name: Rustdoc
+        env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --all-features

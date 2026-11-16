@@ -413,13 +413,6 @@ mod tests {
                 plan.amount_cents,
                 plan.fee,
                 plan.effective_amount(),
-                plan.use_transaction_amount,
-                plan.is_active,
-                plan.is_suspended(),
-                plan.plan_type,
-                plan.reminder_days,
-                plan.retrial_days,
-                plan.number_of_deductions,
             ),
             (
                 42,
@@ -429,14 +422,19 @@ mod tests {
                 Some(MinorUnitAmount::new(150_000)),
                 Some(MinorUnitAmount::new(750)),
                 MinorUnitAmount::new(150_000),
-                false,
-                true,
-                false,
-                Some(PlanType::Rent),
-                Some(3),
-                Some(2),
-                Some(12),
             )
+        );
+        assert_eq!(
+            (
+                plan.use_transaction_amount,
+                plan.is_active,
+                plan.is_suspended(),
+                plan.plan_type,
+                plan.reminder_days,
+                plan.retrial_days,
+                plan.number_of_deductions,
+            ),
+            (false, true, false, Some(PlanType::Rent), Some(3), Some(2), Some(12))
         );
     }
 

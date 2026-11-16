@@ -649,12 +649,33 @@ mod tests {
             .await;
 
         let client = HttpClient::new(fast_config()).expect("client builds");
-        let req = HttpRequest::new(req_method, &format!("{}/retry", server.uri()))
-            .expect("valid URL");
+        let req =
+            HttpRequest::new(req_method, &format!("{}/retry", server.uri())).expect("valid URL");
         let resp = client.execute(&req).await.expect("retry succeeds");
 
         assert_eq!(resp.status, StatusCode::OK);
         assert_eq!(resp.body, expected_body.as_bytes());
+    }
+
+    async fn execute_mock_get(
+        cfg: HttpClientConfig,
+        route: &str,
+        template: ResponseTemplate,
+        expected_calls: Option<u64>,
+    ) -> Result<HttpResponse, HttpError> {
+        let server = MockServer::start().await;
+        let mut mock = Mock::given(method("GET"))
+            .and(path(route))
+            .and(header_exists(REQUEST_ID_HEADER))
+            .respond_with(template);
+        if let Some(calls) = expected_calls {
+            mock = mock.expect(calls);
+        }
+        mock.mount(&server).await;
+
+        let client = HttpClient::new(cfg).expect("client builds");
+        let req = HttpRequest::get(&format!("{}{route}", server.uri())).expect("valid URL");
+        client.execute(&req).await
     }
 
     #[test]
@@ -735,18 +756,14 @@ mod tests {
 
     #[tokio::test]
     async fn tc_1_3_2_executes_request_with_correlation_id() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/ping"))
-            .and(header_exists(REQUEST_ID_HEADER))
-            .respond_with(ResponseTemplate::new(200).set_body_string("pong"))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = HttpClient::new(fast_config()).expect("client builds");
-        let req = HttpRequest::get(&format!("{}/ping", server.uri())).expect("valid URL");
-        let resp = client.execute(&req).await.expect("200 OK succeeds");
+        let resp = execute_mock_get(
+            fast_config(),
+            "/ping",
+            ResponseTemplate::new(200).set_body_string("pong"),
+            Some(1),
+        )
+        .await
+        .expect("200 OK succeeds");
 
         assert_eq!(resp.status, StatusCode::OK);
         assert_eq!(resp.body, b"pong");
@@ -770,17 +787,14 @@ mod tests {
 
     #[tokio::test]
     async fn tc_1_3_2_retries_503_and_returns_exhausted_when_all_fail() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/unavailable"))
-            .respond_with(ResponseTemplate::new(503).set_body_string("down"))
-            .expect(3)
-            .mount(&server)
-            .await;
-
-        let client = HttpClient::new(fast_config()).expect("client builds");
-        let req = HttpRequest::get(&format!("{}/unavailable", server.uri())).expect("valid URL");
-        let err = client.execute(&req).await.unwrap_err();
+        let err = execute_mock_get(
+            fast_config(),
+            "/unavailable",
+            ResponseTemplate::new(503).set_body_string("down"),
+            Some(3),
+        )
+        .await
+        .unwrap_err();
 
         match err {
             HttpError::RetriesExhausted { status, body, .. } => {
@@ -793,34 +807,28 @@ mod tests {
 
     #[tokio::test]
     async fn tc_1_3_2_does_not_retry_non_retryable_4xx() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/bad"))
-            .respond_with(ResponseTemplate::new(400).set_body_string("bad"))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = HttpClient::new(fast_config()).expect("client builds");
-        let req = HttpRequest::get(&format!("{}/bad", server.uri())).expect("valid URL");
-        let resp = client.execute(&req).await.expect("400 returns response");
+        let resp = execute_mock_get(
+            fast_config(),
+            "/bad",
+            ResponseTemplate::new(400).set_body_string("bad"),
+            Some(1),
+        )
+        .await
+        .expect("400 returns response");
 
         assert_eq!(resp.status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
     async fn tc_1_3_2_enforces_bounded_response_size() {
-        let server = MockServer::start().await;
-        let oversized = vec![b'a'; 2048];
-        Mock::given(method("GET"))
-            .and(path("/large"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(oversized))
-            .mount(&server)
-            .await;
-
-        let client = HttpClient::new(fast_config()).expect("client builds");
-        let req = HttpRequest::get(&format!("{}/large", server.uri())).expect("valid URL");
-        let err = client.execute(&req).await.unwrap_err();
+        let err = execute_mock_get(
+            fast_config(),
+            "/large",
+            ResponseTemplate::new(200).set_body_bytes(vec![b'a'; 2048]),
+            None,
+        )
+        .await
+        .unwrap_err();
 
         assert!(matches!(
             err,
@@ -833,16 +841,14 @@ mod tests {
 
     #[tokio::test]
     async fn tc_1_3_2_enforces_content_length_precheck_response_too_large() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/declared-large"))
-            .respond_with(ResponseTemplate::new(200).insert_header("Content-Length", "4096"))
-            .mount(&server)
-            .await;
-
-        let client = HttpClient::new(fast_config()).expect("client builds");
-        let req = HttpRequest::get(&format!("{}/declared-large", server.uri())).expect("valid URL");
-        let err = client.execute(&req).await.unwrap_err();
+        let err = execute_mock_get(
+            fast_config(),
+            "/declared-large",
+            ResponseTemplate::new(200).insert_header("Content-Length", "4096"),
+            None,
+        )
+        .await
+        .unwrap_err();
 
         assert!(matches!(
             err,
@@ -856,20 +862,18 @@ mod tests {
 
     #[tokio::test]
     async fn tc_1_3_2_enforces_request_timeout() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/slow"))
-            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(250)))
-            .mount(&server)
-            .await;
-
         let mut cfg = fast_config();
         cfg.request_timeout = Duration::from_millis(50);
         cfg.retry.max_retries = 0;
 
-        let client = HttpClient::new(cfg).expect("client builds");
-        let req = HttpRequest::get(&format!("{}/slow", server.uri())).expect("valid URL");
-        let err = client.execute(&req).await.unwrap_err();
+        let err = execute_mock_get(
+            cfg,
+            "/slow",
+            ResponseTemplate::new(200).set_delay(Duration::from_millis(250)),
+            None,
+        )
+        .await
+        .unwrap_err();
 
         assert!(matches!(err, HttpError::Timeout { .. }));
     }

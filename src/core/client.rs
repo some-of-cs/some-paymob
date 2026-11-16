@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Arc-backed Paymob microkernel client and regional URL builders.
 //!
 //! [`PaymobClient`] is the primary entry point for `some-paymob`. It wraps a
@@ -46,13 +47,14 @@ impl fmt::Debug for PaymobCore {
 /// ```rust,no_run
 /// use some_paymob::core::client::PaymobClient;
 /// use some_paymob::core::config::ClientConfig;
+/// use some_paymob::core::credentials::{PublicKey, SecretKey};
 /// use some_paymob::core::region::PaymobRegion;
 ///
 /// # fn example() -> Result<(), some_paymob::core::error::PaymobError> {
 /// let config = ClientConfig::builder()
 ///     .region(PaymobRegion::Egypt)
-///     .secret_key("egy_sk_test_example")
-///     .public_key("egy_pk_test_example")
+///     .secret_key(SecretKey::new("egy_sk_test_example")?)
+///     .public_key(PublicKey::new("egy_pk_test_example")?)
 ///     .build()?;
 ///
 /// let client = PaymobClient::new(config)?;
@@ -100,12 +102,13 @@ impl PaymobClient {
     /// ```rust,no_run
     /// use some_paymob::core::client::PaymobClient;
     /// use some_paymob::core::config::ClientConfig;
+    /// use some_paymob::core::credentials::SecretKey;
     /// use some_paymob::core::region::PaymobRegion;
     ///
     /// # fn example() -> Result<(), some_paymob::core::error::PaymobError> {
     /// let config = ClientConfig::builder()
     ///     .region(PaymobRegion::Egypt)
-    ///     .secret_key("egy_sk_test_example")
+    ///     .secret_key(SecretKey::new("egy_sk_test_example")?)
     ///     .build()?;
     /// let client = PaymobClient::new(config)?;
     /// assert!(format!("{client:?}").contains("[REDACTED]"));
@@ -113,7 +116,7 @@ impl PaymobClient {
     /// # }
     /// ```
     pub fn new(config: ClientConfig) -> Result<Self, PaymobError> {
-        let endpoints = RegionalEndpoints::from_region(config.region())?;
+        let endpoints = config.region().endpoints()?;
         let http = Client::builder()
             .timeout(config.timeout())
             .build()
@@ -135,12 +138,13 @@ impl PaymobClient {
     /// ```rust,no_run
     /// use some_paymob::core::client::PaymobClient;
     /// use some_paymob::core::config::ClientConfig;
+    /// use some_paymob::core::credentials::SecretKey;
     /// use some_paymob::core::region::PaymobRegion;
     ///
     /// # fn example() -> Result<(), some_paymob::core::error::PaymobError> {
     /// let config = ClientConfig::builder()
     ///     .region(PaymobRegion::SaudiArabia)
-    ///     .secret_key("ksa_sk_test_example")
+    ///     .secret_key(SecretKey::new("ksa_sk_test_example")?)
     ///     .build()?;
     /// let client = PaymobClient::new(config)?;
     /// assert_eq!(client.config().region(), &PaymobRegion::SaudiArabia);
@@ -159,12 +163,13 @@ impl PaymobClient {
     /// ```rust,no_run
     /// use some_paymob::core::client::PaymobClient;
     /// use some_paymob::core::config::ClientConfig;
+    /// use some_paymob::core::credentials::SecretKey;
     /// use some_paymob::core::region::PaymobRegion;
     ///
     /// # fn example() -> Result<(), some_paymob::core::error::PaymobError> {
     /// let config = ClientConfig::builder()
     ///     .region(PaymobRegion::Egypt)
-    ///     .secret_key("egy_sk_test_example")
+    ///     .secret_key(SecretKey::new("egy_sk_test_example")?)
     ///     .build()?;
     /// let client = PaymobClient::new(config)?;
     /// let _endpoints = client.endpoints();
@@ -188,20 +193,21 @@ impl PaymobClient {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `path` contains an explicit URL
-    /// scheme/authority or produces an invalid URL.
+    /// Returns [`PaymobError::ValidationError`] if `path` is empty, contains an
+    /// explicit URL scheme/authority, or produces an invalid URL.
     ///
     /// # Examples
     ///
     /// ```rust,no_run
     /// use some_paymob::core::client::PaymobClient;
     /// use some_paymob::core::config::ClientConfig;
+    /// use some_paymob::core::credentials::SecretKey;
     /// use some_paymob::core::region::PaymobRegion;
     ///
     /// # fn example() -> Result<(), some_paymob::core::error::PaymobError> {
     /// let config = ClientConfig::builder()
     ///     .region(PaymobRegion::Egypt)
-    ///     .secret_key("egy_sk_test_example")
+    ///     .secret_key(SecretKey::new("egy_sk_test_example")?)
     ///     .build()?;
     /// let client = PaymobClient::new(config)?;
     /// let url = client.accept_url("/v1/intention/")?;
@@ -210,27 +216,30 @@ impl PaymobClient {
     /// # }
     /// ```
     pub fn accept_url(&self, path: &str) -> Result<Url, PaymobError> {
-        join_regional_url(self.inner.endpoints.accept_base_url(), path, "accept_url")
+        let clean_path = ensure_relative_path(path)?;
+        let resolved = self.inner.endpoints.accept_url(clean_path)?;
+        parse_regional_url(&resolved, "accept_url")
     }
 
     /// Builds a full Unified Checkout URL by joining `path` onto the regional Checkout base URL.
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `path` contains an explicit URL
-    /// scheme/authority or produces an invalid URL.
+    /// Returns [`PaymobError::ValidationError`] if `path` is empty, contains an
+    /// explicit URL scheme/authority, or produces an invalid URL.
     ///
     /// # Examples
     ///
     /// ```rust,no_run
     /// use some_paymob::core::client::PaymobClient;
     /// use some_paymob::core::config::ClientConfig;
+    /// use some_paymob::core::credentials::SecretKey;
     /// use some_paymob::core::region::PaymobRegion;
     ///
     /// # fn example() -> Result<(), some_paymob::core::error::PaymobError> {
     /// let config = ClientConfig::builder()
     ///     .region(PaymobRegion::Egypt)
-    ///     .secret_key("egy_sk_test_example")
+    ///     .secret_key(SecretKey::new("egy_sk_test_example")?)
     ///     .build()?;
     /// let client = PaymobClient::new(config)?;
     /// let url = client.checkout_url("/?publicKey=egy_pk_test_1&clientSecret=cs_1")?;
@@ -239,34 +248,36 @@ impl PaymobClient {
     /// # }
     /// ```
     pub fn checkout_url(&self, path: &str) -> Result<Url, PaymobError> {
-        join_regional_url(
-            self.inner.endpoints.checkout_base_url(),
-            path,
-            "checkout_url",
-        )
+        let clean_path = ensure_relative_path(path)?;
+        let resolved = self.inner.endpoints.checkout_url(clean_path)?;
+        parse_regional_url(&resolved, "checkout_url")
     }
 
     /// Builds a full Payouts URL by joining `path` onto the regional Payouts base URL.
     ///
-    /// Preserves trailing slashes required by Payouts endpoints (for example,
-    /// `/api/secure/disburse/`).
+    /// Routes to the Payouts staging host when [`ClientConfig::use_payouts_staging`]
+    /// is enabled, and preserves trailing slashes required by Payouts endpoints
+    /// (for example, `/api/secure/disburse/`).
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `path` contains an explicit URL
-    /// scheme/authority or produces an invalid URL.
+    /// Returns [`PaymobError::ValidationError`] if Payouts is unavailable for the
+    /// configured region (such as [`crate::core::region::PaymobRegion::Pakistan`]),
+    /// or if `path` is empty, contains an explicit URL scheme/authority, or
+    /// produces an invalid URL.
     ///
     /// # Examples
     ///
     /// ```rust,no_run
     /// use some_paymob::core::client::PaymobClient;
     /// use some_paymob::core::config::ClientConfig;
+    /// use some_paymob::core::credentials::SecretKey;
     /// use some_paymob::core::region::PaymobRegion;
     ///
     /// # fn example() -> Result<(), some_paymob::core::error::PaymobError> {
     /// let config = ClientConfig::builder()
     ///     .region(PaymobRegion::Egypt)
-    ///     .secret_key("egy_sk_test_example")
+    ///     .secret_key(SecretKey::new("egy_sk_test_example")?)
     ///     .build()?;
     /// let client = PaymobClient::new(config)?;
     /// let url = client.payouts_url("/api/secure/disburse/")?;
@@ -278,7 +289,12 @@ impl PaymobClient {
     /// # }
     /// ```
     pub fn payouts_url(&self, path: &str) -> Result<Url, PaymobError> {
-        join_regional_url(self.inner.endpoints.payouts_base_url(), path, "payouts_url")
+        let clean_path = ensure_relative_path(path)?;
+        let resolved = self
+            .inner
+            .endpoints
+            .payouts_url(clean_path, self.inner.config.use_payouts_staging())?;
+        parse_regional_url(&resolved, "payouts_url")
     }
 
     /// Returns `true` when two [`PaymobClient`] handles share the same underlying [`PaymobCore`].
@@ -288,17 +304,7 @@ impl PaymobClient {
     }
 }
 
-fn join_regional_url(base: &str, path: &str, field: &'static str) -> Result<Url, PaymobError> {
-    let trimmed_base = base.trim_end_matches('/');
-    let normalized_path = normalize_relative_path(path)?;
-    let full = format!("{trimmed_base}/{normalized_path}");
-    Url::parse(&full).map_err(|err| PaymobError::ValidationError {
-        field,
-        reason: format!("invalid regional URL: {err}"),
-    })
-}
-
-fn normalize_relative_path(path: &str) -> Result<&str, PaymobError> {
+fn ensure_relative_path(path: &str) -> Result<&str, PaymobError> {
     let trimmed = path.trim();
     if trimmed.contains("://") || trimmed.starts_with("//") {
         return Err(PaymobError::ValidationError {
@@ -306,19 +312,31 @@ fn normalize_relative_path(path: &str) -> Result<&str, PaymobError> {
             reason: "relative endpoint path must not contain a URL scheme or authority".to_owned(),
         });
     }
-    Ok(trimmed.trim_start_matches('/'))
+    Ok(trimmed)
+}
+
+fn parse_regional_url(resolved: &str, field: &'static str) -> Result<Url, PaymobError> {
+    Url::parse(resolved).map_err(|err| PaymobError::ValidationError {
+        field,
+        reason: format!("invalid regional URL: {err}"),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::credentials::{PublicKey, SecretKey};
     use crate::core::region::PaymobRegion;
 
     fn sample_client(region: PaymobRegion) -> PaymobClient {
         let config = ClientConfig::builder()
             .region(region)
-            .secret_key("egy_sk_test_626supersecretvalue")
-            .public_key("egy_pk_test_999publicvalue")
+            .secret_key(
+                SecretKey::new("egy_sk_test_626supersecretvalue").expect("valid test secret key"),
+            )
+            .public_key(
+                PublicKey::new("egy_pk_test_999publicvalue").expect("valid test public key"),
+            )
             .build()
             .expect("valid test client config");
         PaymobClient::new(config).expect("valid PaymobClient")
@@ -388,7 +406,7 @@ mod tests {
         let client = sample_client(PaymobRegion::SaudiArabia);
         assert_eq!(client.config().region(), &PaymobRegion::SaudiArabia);
         assert_eq!(
-            client.endpoints().accept_base_url(),
+            client.endpoints().accept_base_url,
             "https://ksa.paymob.com"
         );
     }
@@ -403,9 +421,45 @@ mod tests {
     }
 
     #[test]
-    fn tc_1_1_4_join_regional_url_handles_empty_path() {
-        let url = join_regional_url("https://accept.paymob.com/", "", "accept_url")
-            .expect("empty path should resolve to base");
-        assert_eq!(url.as_str(), "https://accept.paymob.com/");
+    fn tc_1_1_4_empty_path_and_unsupported_payouts_are_rejected() {
+        let client = sample_client(PaymobRegion::Pakistan);
+        let empty_err = client
+            .accept_url("")
+            .expect_err("empty path must be rejected");
+        assert!(matches!(
+            empty_err,
+            PaymobError::ValidationError { field: "path", .. }
+        ));
+
+        let payouts_err = client
+            .payouts_url("/api/secure/disburse/")
+            .expect_err("Pakistan payouts must be rejected");
+        assert!(matches!(
+            payouts_err,
+            PaymobError::ValidationError {
+                field: "region",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn tc_1_1_4_payouts_url_respects_staging_toggle() {
+        let config = ClientConfig::builder()
+            .region(PaymobRegion::Egypt)
+            .secret_key(
+                SecretKey::new("egy_sk_test_626supersecretvalue").expect("valid test secret key"),
+            )
+            .use_payouts_staging(true)
+            .build()
+            .expect("valid test client config");
+        let client = PaymobClient::new(config).expect("valid PaymobClient");
+        let url = client
+            .payouts_url("/api/secure/disburse/")
+            .expect("staging payouts URL should parse");
+        assert_eq!(
+            url.as_str(),
+            "https://stagingpayouts.paymobsolutions.com/api/secure/disburse/"
+        );
     }
 }

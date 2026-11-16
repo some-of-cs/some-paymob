@@ -3,7 +3,7 @@
 //!
 //! Implements Regime 2 (`Authorization: Bearer <auth_token>`) headless payment
 //! execution across saved-card MIT/MOTO tokens, Mobile Wallets, Kiosk
-//! aggregators, and raw `source` payloads, returning [`HeadlessPayResponse`].
+//! aggregators, and raw `source` payloads, returning [`HeadlessPayResponse`](self::HeadlessPayResponse).
 
 use std::fmt;
 
@@ -370,7 +370,7 @@ pub struct HeadlessPayResponse {
 }
 
 impl HeadlessPayResponse {
-    /// Parses a [`HeadlessPayResponse`] from a raw JSON [`Value`].
+    /// Parses a [`HeadlessPayResponse`](self::HeadlessPayResponse) from a raw JSON [`Value`].
     ///
     /// # Errors
     ///

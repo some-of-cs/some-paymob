@@ -176,7 +176,7 @@ impl PaymentSource {
 
     /// Validates the payment source invariants for the current variant.
     ///
-    /// Useful when a caller constructs a [`PaymentSource`](self::PaymentSource) directly via struct
+    /// Useful when a caller constructs a [`PaymentSource`] directly via struct
     /// literals or deserialization and wants to verify invariants before dispatch.
     pub fn validate(&self) -> Result<(), PaymobError> {
         match self {

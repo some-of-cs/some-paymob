@@ -49,7 +49,8 @@ mod quicklinks_integration {
             .region(PaymobRegion::Custom {
                 accept_base_url: uri.clone(),
                 checkout_base_url: format!("{uri}/unifiedcheckout/"),
-                payouts_base_url: None,
+                payouts_base_url: uri.clone(),
+                payouts_staging_base_url: uri.clone(),
             })
             .api_key(ApiKey::new("story_330_api_key_secret").expect("valid api key"))
             .build()

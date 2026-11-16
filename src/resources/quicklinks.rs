@@ -433,7 +433,8 @@ mod tests {
             .region(PaymobRegion::Custom {
                 accept_base_url: uri.clone(),
                 checkout_base_url: format!("{uri}/unifiedcheckout/"),
-                payouts_base_url: None,
+                payouts_base_url: uri.clone(),
+                payouts_staging_base_url: uri.clone(),
             })
             .api_key(ApiKey::new("test_api_key_secret_123").expect("valid api key"))
             .build()

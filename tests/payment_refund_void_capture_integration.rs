@@ -19,8 +19,8 @@ fn build_client(base_url: &str, legacy_v2_capture: bool) -> PaymobClient {
     let region = PaymobRegion::Custom {
         accept_base_url: base_url.to_owned(),
         checkout_base_url: base_url.to_owned(),
-        payouts_base_url: None,
-        payouts_staging_base_url: None,
+        payouts_base_url: base_url.to_owned(),
+        payouts_staging_base_url: base_url.to_owned(),
     };
     let config = ClientConfig::builder()
         .region(region)

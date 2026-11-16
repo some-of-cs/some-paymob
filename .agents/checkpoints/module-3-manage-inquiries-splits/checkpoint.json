@@ -1,0 +1,20 @@
+{
+  "module": "module-3-manage-inquiries-splits",
+  "branch": "feat/module-3-manage-inquiries-splits",
+  "base": "main",
+  "status": "in_progress",
+  "stories": {
+    "US-3.1.0": {
+      "branch": "feat/us-3.1.0-payment-refund-void-capture",
+      "status": "in_progress"
+    },
+    "US-3.2.0": {
+      "branch": "feat/us-3.2.0-transaction-order-inquiries",
+      "status": "in_progress"
+    },
+    "US-3.3.0": {
+      "branch": "feat/us-3.3.0-quicklinks-splits-fees",
+      "status": "in_progress"
+    }
+  }
+}

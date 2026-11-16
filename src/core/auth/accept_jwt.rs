@@ -242,6 +242,18 @@ impl AcceptJwtProvider {
             return Ok(response);
         }
 
+        self.refresh_and_retry(response, build_and_send).await
+    }
+
+    async fn refresh_and_retry<F, Fut>(
+        &self,
+        response: Response,
+        mut build_and_send: F,
+    ) -> Result<Response, AcceptJwtError>
+    where
+        F: FnMut(SecretString) -> Fut,
+        Fut: Future<Output = Result<Response, AcceptJwtError>>,
+    {
         let status = response.status();
         let body = response.bytes().await?;
         if !is_incorrect_credentials_401(status, &body) {

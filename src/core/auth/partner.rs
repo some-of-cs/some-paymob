@@ -302,7 +302,7 @@ impl PartnerAuthContext {
             .as_ref()
             .ok_or(PartnerAuthError::MissingCredential)?;
         let formatted = Zeroizing::new(format!("Bearer {}", token.expose_secret()));
-        let value = build_header_value(&formatted)?;
+        let value = build_header_value(&formatted, true)?;
         headers.insert(AUTHORIZATION, value);
         Ok(())
     }
@@ -319,7 +319,7 @@ impl PartnerAuthContext {
             .as_ref()
             .ok_or(PartnerAuthError::MissingCredential)?;
         let name = build_header_name(self.api_key_header_name.clone())?;
-        let value = build_header_value(key.expose_secret())?;
+        let value = build_header_value(key.expose_secret(), true)?;
         headers.insert(name, value);
         Ok(())
     }
@@ -329,7 +329,7 @@ impl PartnerAuthContext {
             return Ok(());
         };
         let name = build_header_name(self.merchant_id_header_name.clone())?;
-        let value = build_header_value(id)?;
+        let value = build_header_value(id, false)?;
         headers.insert(name, value);
         Ok(())
     }
@@ -370,8 +370,11 @@ fn build_header_name(name: String) -> Result<HeaderName, PartnerAuthError> {
         .map_err(|_| PartnerAuthError::InvalidHeaderName(name))
 }
 
-fn build_header_value(raw: &str) -> Result<HeaderValue, PartnerAuthError> {
-    HeaderValue::from_str(raw).map_err(|_| PartnerAuthError::InvalidHeaderValue)
+fn build_header_value(raw: &str, sensitive: bool) -> Result<HeaderValue, PartnerAuthError> {
+    let mut header_value =
+        HeaderValue::from_str(raw).map_err(|_| PartnerAuthError::InvalidHeaderValue)?;
+    header_value.set_sensitive(sensitive);
+    Ok(header_value)
 }
 
 #[cfg(test)]
@@ -392,12 +395,9 @@ mod tests {
         ctx.apply_request(&mut headers, &mut url)
             .expect("header injection should succeed");
 
-        assert_eq!(
-            headers
-                .get(AUTHORIZATION)
-                .and_then(|v| v.to_str().ok()),
-            Some("Bearer secret_partner_jwt")
-        );
+        let auth_header = headers.get(AUTHORIZATION).expect("authorization header");
+        assert!(auth_header.is_sensitive());
+        assert_eq!(auth_header.to_str().ok(), Some("Bearer secret_partner_jwt"));
         assert_eq!(url.query(), None);
         assert!(headers.get(DEFAULT_MERCHANT_ID_HEADER).is_none());
     }
@@ -415,12 +415,11 @@ mod tests {
         ctx.apply_request(&mut headers, &mut url)
             .expect("API key header injection should succeed");
 
-        assert_eq!(
-            headers
-                .get(DEFAULT_PARTNER_API_KEY_HEADER)
-                .and_then(|v| v.to_str().ok()),
-            Some("partner_api_key_abc")
-        );
+        let key_header = headers
+            .get(DEFAULT_PARTNER_API_KEY_HEADER)
+            .expect("api key header");
+        assert!(key_header.is_sensitive());
+        assert_eq!(key_header.to_str().ok(), Some("partner_api_key_abc"));
         assert!(headers.get(AUTHORIZATION).is_none());
         assert_eq!(url.query(), None);
     }

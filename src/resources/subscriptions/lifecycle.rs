@@ -1382,7 +1382,10 @@ mod tests {
         assert!(service.cards().client().ptr_eq(&client));
         assert!(matches!(
             validate_positive_id("sub_id", 0),
-            Err(PaymobError::ValidationError { field: "sub_id", .. })
+            Err(PaymobError::ValidationError {
+                field: "sub_id",
+                ..
+            })
         ));
     }
 }

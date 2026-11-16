@@ -394,8 +394,8 @@ mod tests {
             })
         ));
 
-        let bad_item_name =
-            CreateLegacyOrderParams::new(100, Currency::EGP).add_item(LegacyOrderItem::new("", 100, 1));
+        let bad_item_name = CreateLegacyOrderParams::new(100, Currency::EGP)
+            .add_item(LegacyOrderItem::new("", 100, 1));
         assert!(matches!(
             bad_item_name.validate(),
             Err(PaymobError::ValidationError {
@@ -451,8 +451,7 @@ mod tests {
         let http = HttpClient::new(HttpClientConfig::default().with_allow_insecure_http(true))
             .expect("http client");
         let url = Url::parse(&format!("{}{}", server.uri(), LEGACY_ORDERS_PATH)).expect("url");
-        let params =
-            CreateLegacyOrderParams::new(50_000, Currency::EGP).merchant_order_id("ord-1");
+        let params = CreateLegacyOrderParams::new(50_000, Currency::EGP).merchant_order_id("ord-1");
         let order = create_legacy_order(&http, url, &SecretString::from("jwt-123"), &params)
             .await
             .expect("order created");

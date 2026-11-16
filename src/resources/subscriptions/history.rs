@@ -503,13 +503,24 @@ fn is_loopback_host(parsed: &Url) -> bool {
     }
 }
 
+fn is_control_or_whitespace(b: u8) -> bool {
+    b.is_ascii_control() || b.is_ascii_whitespace()
+}
+
+fn has_invalid_url_chars(s: &str) -> bool {
+    s.is_empty() || s.bytes().any(is_control_or_whitespace)
+}
+
+fn has_allowed_scheme_and_host(parsed: &Url) -> bool {
+    let has_host = parsed.host_str().is_some();
+    let is_https = parsed.scheme() == "https";
+    let is_loopback_http = parsed.scheme() == "http" && is_loopback_host(parsed);
+    has_host && (is_https || is_loopback_http)
+}
+
 fn validate_webhook_url(raw: &str) -> Result<String, PaymobError> {
     let trimmed = raw.trim();
-    if trimmed.is_empty()
-        || trimmed
-            .bytes()
-            .any(|b| b.is_ascii_control() || b.is_ascii_whitespace())
-    {
+    if has_invalid_url_chars(trimmed) {
         return Err(PaymobError::ValidationError {
             field: "url",
             reason: String::from(
@@ -521,9 +532,7 @@ fn validate_webhook_url(raw: &str) -> Result<String, PaymobError> {
         field: "url",
         reason: format!("invalid webhook URL: {err}"),
     })?;
-    let allowed_scheme =
-        parsed.scheme() == "https" || (parsed.scheme() == "http" && is_loopback_host(&parsed));
-    if !allowed_scheme || parsed.host_str().is_none() {
+    if !has_allowed_scheme_and_host(&parsed) {
         return Err(PaymobError::ValidationError {
             field: "url",
             reason: String::from("webhook URL must use https scheme with a valid host"),

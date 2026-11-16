@@ -771,12 +771,6 @@ impl SubscriptionsService {
         SubscriptionPlansAccessor::new(self.client.clone())
     }
 
-    /// Returns a [`SubscriptionCardsAccessor`] bound to this client.
-    #[must_use]
-    pub fn cards(&self) -> SubscriptionCardsAccessor {
-        SubscriptionCardsAccessor::new(self.client.clone())
-    }
-
     /// Enrolls a customer into a subscription via Intention 3DS (`POST /v1/intention/`).
     ///
     /// Executes under Regime 1 (`Authorization: Token <secret_key>`).

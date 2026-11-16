@@ -417,17 +417,18 @@ mod tests {
         AcceptJwtProvider::new(base_url, SecretString::from(TEST_API_KEY)).expect("valid provider")
     }
 
-    async fn mount_post_mock(
-        server: &MockServer,
-        endpoint: &str,
+    struct MockPostSpec<'a> {
+        endpoint: &'a str,
         expected_body: Value,
         status: u16,
         response_body: Value,
-    ) {
+    }
+
+    async fn mount_post_mock(server: &MockServer, spec: MockPostSpec<'_>) {
         Mock::given(method("POST"))
-            .and(path(endpoint))
-            .and(body_json(expected_body))
-            .respond_with(ResponseTemplate::new(status).set_body_json(response_body))
+            .and(path(spec.endpoint))
+            .and(body_json(spec.expected_body))
+            .respond_with(ResponseTemplate::new(spec.status).set_body_json(spec.response_body))
             .expect(1)
             .mount(server)
             .await;
@@ -437,10 +438,12 @@ mod tests {
         let server = MockServer::start().await;
         mount_post_mock(
             &server,
-            ACCEPT_AUTH_TOKENS_PATH,
-            json!({ "api_key": TEST_API_KEY }),
-            status,
-            body,
+            MockPostSpec {
+                endpoint: ACCEPT_AUTH_TOKENS_PATH,
+                expected_body: json!({ "api_key": TEST_API_KEY }),
+                status,
+                response_body: body,
+            },
         )
         .await;
         let provider = build_provider(&server.uri());
@@ -480,10 +483,12 @@ mod tests {
             start_single_token_server(201, json!({ "token": "valid-jwt" })).await;
         mount_post_mock(
             &server,
-            INQUIRY_PATH,
-            json!({ "auth_token": "valid-jwt" }),
-            inquiry_status,
-            inquiry_body,
+            MockPostSpec {
+                endpoint: INQUIRY_PATH,
+                expected_body: json!({ "auth_token": "valid-jwt" }),
+                status: inquiry_status,
+                response_body: inquiry_body,
+            },
         )
         .await;
         execute_inquiry_with_retry(&provider, &server).await
@@ -640,18 +645,22 @@ mod tests {
 
         mount_post_mock(
             &server,
-            INQUIRY_PATH,
-            json!({ "auth_token": "stale-jwt" }),
-            401,
-            json!({ "detail": "incorrect credentials" }),
+            MockPostSpec {
+                endpoint: INQUIRY_PATH,
+                expected_body: json!({ "auth_token": "stale-jwt" }),
+                status: 401,
+                response_body: json!({ "detail": "incorrect credentials" }),
+            },
         )
         .await;
         mount_post_mock(
             &server,
-            INQUIRY_PATH,
-            json!({ "auth_token": "fresh-jwt" }),
-            200,
-            json!({ "id": 999 }),
+            MockPostSpec {
+                endpoint: INQUIRY_PATH,
+                expected_body: json!({ "auth_token": "fresh-jwt" }),
+                status: 200,
+                response_body: json!({ "id": 999 }),
+            },
         )
         .await;
 

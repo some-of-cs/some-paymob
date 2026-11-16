@@ -351,7 +351,12 @@ mod tests {
         let cases = [
             ("active", SubscriptionState::Active, "active", true),
             ("ACTIVE", SubscriptionState::Active, "active", true),
-            (" suspended ", SubscriptionState::Suspended, "suspended", true),
+            (
+                " suspended ",
+                SubscriptionState::Suspended,
+                "suspended",
+                true,
+            ),
             ("canceled", SubscriptionState::Canceled, "canceled", true),
             ("cancelled", SubscriptionState::Canceled, "canceled", true),
             ("INACTIVE", SubscriptionState::Inactive, "inactive", true),
@@ -361,12 +366,7 @@ mod tests {
                 "paused_custom",
                 false,
             ),
-            (
-                "   ",
-                SubscriptionState::Unknown(String::new()),
-                "",
-                false,
-            ),
+            ("   ", SubscriptionState::Unknown(String::new()), "", false),
         ];
 
         for (raw, expected, canonical, known) in cases {
@@ -375,7 +375,10 @@ mod tests {
             assert_eq!(parsed.as_str(), canonical);
             assert_eq!(parsed.is_known(), known);
             assert_eq!(parsed.to_string(), canonical);
-            assert_eq!(raw.parse::<SubscriptionState>().expect("infallible"), expected);
+            assert_eq!(
+                raw.parse::<SubscriptionState>().expect("infallible"),
+                expected
+            );
         }
 
         let serialized = serde_json::to_string(&SubscriptionState::Suspended).expect("serialize");

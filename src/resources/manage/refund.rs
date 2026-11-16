@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::core::auth::strategy::inject_secret_key_token;
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpClient, HttpClientConfig, HttpError, HttpRequest, HttpResponse, RetryPolicy};
+use crate::core::http::{
+    HttpClient, HttpClientConfig, HttpError, HttpRequest, HttpResponse, RetryPolicy,
+};
 use crate::resources::manage::ManageService;
 use crate::resources::manage::models::Transaction;
 

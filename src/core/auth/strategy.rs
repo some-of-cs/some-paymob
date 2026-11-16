@@ -11,11 +11,12 @@ use std::borrow::Cow;
 use std::fmt;
 
 use reqwest::Method;
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, HeaderMap};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use zeroize::Zeroizing;
+
+use crate::core::auth::format_sensitive_auth_header;
 
 /// High-level Paymob authentication regime grouping for [`AuthStrategy`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -280,13 +281,8 @@ pub fn inject_secret_key_token(
         return Err(StrategyError::InvalidHeaderValue);
     }
 
-    let mut formatted = Zeroizing::new(String::with_capacity(6 + raw.len()));
-    formatted.push_str("Token ");
-    formatted.push_str(raw);
-
-    let mut value =
-        HeaderValue::from_str(&formatted).map_err(|_| StrategyError::InvalidHeaderValue)?;
-    value.set_sensitive(true);
+    let value = format_sensitive_auth_header("Token", secret_key)
+        .ok_or(StrategyError::InvalidHeaderValue)?;
     headers.insert(AUTHORIZATION, value);
     Ok(())
 }
@@ -303,6 +299,8 @@ const fn is_invalid_token_byte(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use reqwest::header::HeaderValue;
+
     use super::*;
 
     #[test]

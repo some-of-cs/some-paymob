@@ -157,3 +157,136 @@ fn tc_1_2_3_inject_body_rejects_non_object() {
         Err(AcceptJwtError::InvalidJsonBody)
     ));
 }
+
+#[tokio::test]
+async fn tc_1_2_3_concurrent_401_eviction_race_refreshes_once_total_two_auth_calls() {
+    let server = MockServer::start().await;
+    let auth_calls = Arc::new(AtomicUsize::new(0));
+    let auth_calls_clone = Arc::clone(&auth_calls);
+
+    Mock::given(method("POST"))
+        .and(path(ACCEPT_AUTH_TOKENS_PATH))
+        .respond_with(move |_req: &Request| {
+            let n = auth_calls_clone.fetch_add(1, Ordering::SeqCst);
+            let tok = if n == 0 { "stale-jwt" } else { "fresh-jwt" };
+            ResponseTemplate::new(201).set_body_json(json!({ "token": tok }))
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path(ACCEPT_INQUIRY_PATH))
+        .and(body_json(json!({ "order_id": 101, "auth_token": "stale-jwt" })))
+        .respond_with(
+            ResponseTemplate::new(401).set_body_json(json!({ "detail": "incorrect credentials" })),
+        )
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path(ACCEPT_INQUIRY_PATH))
+        .and(body_json(json!({ "order_id": 101, "auth_token": "fresh-jwt" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 101 })))
+        .mount(&server)
+        .await;
+
+    let provider = Arc::new(
+        AcceptJwtProvider::new(&server.uri(), SecretString::from("accept-key-race"))
+            .expect("valid provider"),
+    );
+    // Warm cache with stale-jwt so all 20 tasks read it concurrently and hit 401.
+    let _ = provider.token().await.expect("initial stale token");
+
+    let client = Client::new();
+    let inquiry_url = format!("{}{ACCEPT_INQUIRY_PATH}", server.uri());
+    let mut handles = Vec::with_capacity(20);
+    for _ in 0..20 {
+        let p = Arc::clone(&provider);
+        let c = client.clone();
+        let u = inquiry_url.clone();
+        handles.push(tokio::spawn(async move {
+            send_accept_inquiry(&p, &c, &u)
+                .await
+                .expect("retry succeeds")
+                .status()
+        }));
+    }
+
+    let mut statuses = Vec::with_capacity(20);
+    for handle in handles {
+        statuses.push(handle.await.expect("task join"));
+    }
+    assert!(statuses.iter().all(|&s| s == StatusCode::OK));
+    assert_eq!(auth_calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn tc_1_2_3_single_flight_50_concurrent_tasks() {
+    let server = MockServer::start().await;
+    let auth_calls = Arc::new(AtomicUsize::new(0));
+    let auth_calls_clone = Arc::clone(&auth_calls);
+
+    Mock::given(method("POST"))
+        .and(path(ACCEPT_AUTH_TOKENS_PATH))
+        .respond_with(move |_req: &Request| {
+            auth_calls_clone.fetch_add(1, Ordering::SeqCst);
+            ResponseTemplate::new(201).set_body_json(json!({ "token": "sf-50-jwt" }))
+        })
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = Arc::new(
+        AcceptJwtProvider::new(&server.uri(), SecretString::from("accept-key-50"))
+            .expect("valid provider"),
+    );
+    let mut handles = Vec::with_capacity(50);
+    for _ in 0..50 {
+        let p = Arc::clone(&provider);
+        handles.push(tokio::spawn(async move {
+            p.token()
+                .await
+                .expect("token")
+                .expose_secret()
+                .to_owned()
+        }));
+    }
+
+    let mut tokens = Vec::with_capacity(50);
+    for handle in handles {
+        tokens.push(handle.await.expect("task join"));
+    }
+    assert!(tokens.iter().all(|t| t == "sf-50-jwt"));
+    assert_eq!(auth_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn tc_1_2_3_negative_malformed_json_and_500_status() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(ACCEPT_AUTH_TOKENS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{malformed"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = AcceptJwtProvider::new(&server.uri(), SecretString::from("accept-key-neg"))
+        .expect("valid provider");
+    assert!(matches!(provider.token().await, Err(AcceptJwtError::Transport(_))));
+
+    let server_500 = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(ACCEPT_AUTH_TOKENS_PATH))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "detail": "internal" })))
+        .expect(1)
+        .mount(&server_500)
+        .await;
+    let provider_500 =
+        AcceptJwtProvider::new(&server_500.uri(), SecretString::from("accept-key-neg"))
+            .expect("valid provider");
+    assert!(matches!(
+        provider_500.token().await,
+        Err(AcceptJwtError::UnexpectedStatus { status: 500, .. })
+    ));
+}

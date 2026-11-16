@@ -284,7 +284,7 @@ mod tests {
         let mapped = resp.map(|id| format!("ord_{id}"));
         assert_eq!(
             (mapped.count, mapped.results),
-            (42, vec!["ord_101", "ord_102", "ord_103"])
+            (42, vec!["ord_101".to_owned(), "ord_102".to_owned(), "ord_103".to_owned()])
         );
     }
 

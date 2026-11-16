@@ -124,6 +124,7 @@ impl PaymobClient {
             connect_timeout: config.timeout().min(default_http.connect_timeout),
             request_timeout: config.timeout(),
             max_response_bytes: default_http.max_response_bytes,
+            allow_insecure_http: default_http.allow_insecure_http,
             retry: RetryPolicy {
                 max_retries: config.max_retries(),
                 ..default_http.retry

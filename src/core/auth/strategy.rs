@@ -247,7 +247,7 @@ impl EndpointAuthSpec {
 
 /// Injects the Regime 1 `Authorization: Token <secret_key>` header into `headers`.
 ///
-/// The resulting [`HeaderValue`] is marked sensitive (`set_sensitive(true)`) so `HeaderMap`
+/// The resulting `HeaderValue` is marked sensitive (`set_sensitive(true)`) so `HeaderMap`
 /// debug output redacts the credential, and intermediate formatting buffers are zeroized
 /// on drop.
 ///

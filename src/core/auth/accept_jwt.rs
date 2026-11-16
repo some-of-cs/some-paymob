@@ -292,7 +292,7 @@ impl AcceptJwtProvider {
 }
 
 /// Formats an `Authorization: Bearer <auth_token>` [`HeaderValue`] marked as sensitive,
-/// scrubbing the temporary formatted buffer with [`Zeroizing`].
+/// scrubbing the temporary formatted buffer with `Zeroizing`.
 ///
 /// # Examples
 ///

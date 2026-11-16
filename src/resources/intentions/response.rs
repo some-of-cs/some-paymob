@@ -93,7 +93,10 @@ impl fmt::Debug for IntentionDetail {
             .field("amount", &self.amount)
             .field("currency", &self.currency)
             .field("items_count", &self.items.len())
-            .field("billing_data", &self.billing_data.as_ref().map(|_| REDACTED))
+            .field(
+                "billing_data",
+                &self.billing_data.as_ref().map(|_| REDACTED),
+            )
             .finish()
     }
 }

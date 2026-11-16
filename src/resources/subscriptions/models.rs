@@ -140,7 +140,8 @@ impl FromStr for SubscriptionState {
 /// use some_paymob::core::types::MinorUnitAmount;
 /// use some_paymob::resources::subscriptions::models::{Subscription, SubscriptionState};
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {\n/// let json = r#"{
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let json = r#"{
 ///     "id": 1264,
 ///     "plan_id": 88,
 ///     "state": "active",

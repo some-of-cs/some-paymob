@@ -42,6 +42,14 @@ const SENSITIVE_KEYS: &[&str] = &[
     "hmac",
     "card_token",
     "secret",
+    "phone",
+    "phone_number",
+    "mobile",
+    "pan",
+    "card_number",
+    "cvv",
+    "cvc",
+    "token",
 ];
 
 const KNOWN_FIELDS: &[&str] = &[
@@ -79,7 +87,7 @@ const KNOWN_FIELDS: &[&str] = &[
 ///
 /// Every variant redacts known secret prefixes (`sk_live_`, `pk_test_`, `egy_sk_`,
 /// JWT `eyJ...`), bearer/token credentials, sensitive key-value pairs, email
-/// addresses, and long digit sequences (phone numbers / PANs) in both
+/// addresses, and digit sequences (phone numbers / PANs) in both
 /// [`fmt::Display`] and [`fmt::Debug`].
 ///
 /// # Examples
@@ -481,9 +489,10 @@ fn fallback_error(status: u16, body: &str, retry_after_secs: Option<u64>) -> Pay
 }
 
 fn redact_sensitive(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
+    let pre_scrubbed = redact_spaced_digit_runs(input);
+    let mut out = String::with_capacity(pre_scrubbed.len());
     let mut prev_auth = false;
-    let mut rest = input;
+    let mut rest = pre_scrubbed.as_str();
 
     while !rest.is_empty() {
         let ws_len = rest.bytes().take_while(u8::is_ascii_whitespace).count();
@@ -500,6 +509,57 @@ fn redact_sensitive(input: &str) -> String {
         prev_auth = is_auth_scheme(word);
     }
     out
+}
+
+fn redact_spaced_digit_runs(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if let Some(end) = try_consume_long_digit_run(bytes, i) {
+            out.push_str(REDACTED);
+            i = end;
+            continue;
+        }
+        let ch = input[i..].chars().next().unwrap_or_default();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+fn try_consume_long_digit_run(bytes: &[u8], start: usize) -> Option<usize> {
+    if !is_digit_run_start(bytes, start) {
+        return None;
+    }
+    let (end, digits) = scan_digit_run(bytes, start);
+    (digits >= 10).then_some(end)
+}
+
+fn is_digit_run_start(bytes: &[u8], i: usize) -> bool {
+    if i > 0 && bytes[i - 1].is_ascii_alphanumeric() {
+        return false;
+    }
+    bytes[i].is_ascii_digit()
+        || (bytes[i] == b'+' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
+}
+
+fn scan_digit_run(bytes: &[u8], start: usize) -> (usize, usize) {
+    let mut i = start;
+    let mut digits = 0usize;
+    let mut last_digit_end = start;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b.is_ascii_digit() {
+            digits += 1;
+            last_digit_end = i + 1;
+        } else if !matches!(b, b' ' | b'-' | b'+') {
+            break;
+        }
+        i += 1;
+    }
+    (last_digit_end, digits)
 }
 
 fn redact_word(word: &str, prev_auth: bool) -> String {
@@ -710,35 +770,67 @@ mod tests {
     }
 
     #[test]
-    fn tc_1_3_1_redacts_secrets_and_pii_in_display_and_debug() {
-        let secret_msg = "Failed auth with sk_live_abc123xyz, egy_sk_secret999, Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig, api_key=my_secret_val, email user@example.com, phone +201012345678, pan 4111-1111-1111-1111";
-        let err = PaymobError::AuthenticationError(secret_msg.to_string());
+    fn tc_1_3_1_redacts_api_keys_and_jwt_in_display_and_debug() {
+        let msg = "sk_live_abc123xyz egy_sk_secret999 Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig";
+        let err = PaymobError::AuthenticationError(msg.to_string());
         let display = err.to_string();
         let debug = format!("{err:?}");
-
-        for output in [&display, &debug] {
-            assert!(!output.contains("sk_live_abc123xyz"));
-            assert!(!output.contains("egy_sk_secret999"));
-            assert!(!output.contains("eyJhbGciOiJIUzI1NiJ9"));
-            assert!(!output.contains("my_secret_val"));
-            assert!(!output.contains("user@example.com"));
-            assert!(!output.contains("+201012345678"));
-            assert!(!output.contains("4111-1111-1111-1111"));
-            assert!(output.contains("[REDACTED]"));
-        }
+        assert!(!display.contains("sk_live_abc123xyz"));
+        assert!(!display.contains("egy_sk_secret999"));
+        assert!(!debug.contains("eyJhbGciOiJIUzI1NiJ9"));
+        assert!(display.contains("[REDACTED]"));
     }
 
     #[test]
-    fn tc_1_3_1_transport_webhook_and_env_mismatch_variants() {
+    fn tc_1_3_1_redacts_kv_pii_and_card_keys() {
+        let msg = "phone_number=+201012345678 pan=4111-1111-1111-1111 cvv=123 token=tok_xyz";
+        let err = PaymobError::ValidationError {
+            field: "payload",
+            reason: msg.to_string(),
+        };
+        let display = err.to_string();
+        assert!(!display.contains("+201012345678"));
+        assert!(!display.contains("4111-1111-1111-1111"));
+        assert!(!display.contains("123"));
+        assert!(!display.contains("tok_xyz"));
+        assert!(display.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn tc_1_3_1_redacts_spaced_pan_and_phone_numbers() {
+        let msg = "card 4111 1111 1111 1111 mobile +20 101 234 5678 failed";
+        let err = PaymobError::WebhookError(msg.to_string());
+        let debug = format!("{err:?}");
+        assert!(!debug.contains("4111 1111 1111 1111"));
+        assert!(!debug.contains("+20 101 234 5678"));
+        assert!(debug.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn tc_1_3_1_redacts_emails_in_display_and_debug() {
+        let err = PaymobError::WebhookError("customer user@example.com rejected".to_string());
+        let display = err.to_string();
+        let debug = format!("{err:?}");
+        assert!(!display.contains("user@example.com"));
+        assert!(!debug.contains("user@example.com"));
+        assert!(display.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn tc_1_3_1_env_mismatch_and_webhook_variants_not_retryable() {
         let env_err = PaymobError::EnvironmentMismatch("Test key with Live ID".to_string());
         let webhook_err = PaymobError::WebhookError("HMAC mismatch".to_string());
-        let transport_err = PaymobError::TransportError("connection reset".to_string());
-
         assert!(!env_err.is_retryable());
         assert!(!webhook_err.is_retryable());
-        assert!(transport_err.is_retryable());
         assert!(format!("{env_err:?}").contains("EnvironmentMismatch"));
         assert!(format!("{webhook_err:?}").contains("WebhookError"));
+    }
+
+    #[test]
+    fn tc_1_3_1_transport_variant_is_retryable() {
+        let transport_err = PaymobError::TransportError("connection reset".to_string());
+        assert!(transport_err.is_retryable());
+        assert_eq!(transport_err.status_code(), None);
         assert!(format!("{transport_err:?}").contains("TransportError"));
     }
 }

@@ -19,12 +19,9 @@ use crate::core::error::PaymobError;
 
 pub use accept_jwt::{
     ACCEPT_AUTH_TOKENS_PATH, ACCEPT_JWT_REFRESH_MARGIN_SECS, ACCEPT_JWT_TTL_SECS, AcceptJwtError,
-    AcceptJwtProvider, format_bearer_header, inject_body_auth_token,
-    is_incorrect_credentials_401,
+    AcceptJwtProvider, format_bearer_header, inject_body_auth_token, is_incorrect_credentials_401,
 };
-pub use cache::{
-    CachedToken, DEFAULT_TOKEN_TTL_SECS, PROACTIVE_REFRESH_MARGIN_SECS, TokenCache,
-};
+pub use cache::{CachedToken, DEFAULT_TOKEN_TTL_SECS, PROACTIVE_REFRESH_MARGIN_SECS, TokenCache};
 pub use partner::{
     DEFAULT_MERCHANT_ID_HEADER, DEFAULT_PARTNER_API_KEY_HEADER,
     DEFAULT_PARTNER_API_KEY_QUERY_PARAM, PartnerApiKeyLocation, PartnerAuthContext,

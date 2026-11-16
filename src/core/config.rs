@@ -550,8 +550,14 @@ fn fmt_config_fields<R: fmt::Debug, E: fmt::Debug>(
         .field("public_key", &redact_option(view.public_key))
         .field("api_key", &redact_option(view.api_key))
         .field("hmac_secret", &redact_option(view.hmac_secret))
-        .field("payouts_credentials", &redact_option(view.payouts_credentials))
-        .field("partner_credentials", &redact_option(view.partner_credentials))
+        .field(
+            "payouts_credentials",
+            &redact_option(view.payouts_credentials),
+        )
+        .field(
+            "partner_credentials",
+            &redact_option(view.partner_credentials),
+        )
         .field("timeout", &view.timeout)
         .field("max_retries", &view.max_retries)
         .field("use_payouts_staging", &view.use_payouts_staging)
@@ -563,11 +569,7 @@ fn fmt_config_fields<R: fmt::Debug, E: fmt::Debug>(
 }
 
 fn redact_option<T>(opt: &Option<T>) -> &'static str {
-    if opt.is_some() {
-        "[REDACTED]"
-    } else {
-        "None"
-    }
+    if opt.is_some() { "[REDACTED]" } else { "None" }
 }
 
 fn parse_region_env(raw: &str) -> Result<PaymobRegion, PaymobError> {
@@ -648,7 +650,11 @@ fn check_region_pair(
         if lhs != rhs {
             return Err(PaymobError::ValidationError {
                 field: "region",
-                reason: format!("{context}: {} vs {}", lhs.country_code(), rhs.country_code()),
+                reason: format!(
+                    "{context}: {} vs {}",
+                    lhs.country_code(),
+                    rhs.country_code()
+                ),
             });
         }
     }
@@ -660,7 +666,11 @@ fn resolve_region_parity(
     sk_region: Option<&PaymobRegion>,
     pk_region: Option<&PaymobRegion>,
 ) -> Result<(), PaymobError> {
-    check_region_pair(sk_region, pk_region, "secret_key and public_key region mismatch")?;
+    check_region_pair(
+        sk_region,
+        pk_region,
+        "secret_key and public_key region mismatch",
+    )?;
     if matches!(configured, PaymobRegion::Custom { .. }) {
         return Ok(());
     }
@@ -723,8 +733,18 @@ mod tests {
             .expect("valid test config should build");
 
         assert_eq!(
-            (config.region(), config.environment(), config.timeout(), config.max_retries()),
-            (&PaymobRegion::Egypt, EnvironmentMode::Test, Duration::from_secs(30), 3)
+            (
+                config.region(),
+                config.environment(),
+                config.timeout(),
+                config.max_retries()
+            ),
+            (
+                &PaymobRegion::Egypt,
+                EnvironmentMode::Test,
+                Duration::from_secs(30),
+                3
+            )
         );
         assert!(!config.use_payouts_staging() && !config.use_legacy_v2_bearer_for_capture());
     }
@@ -756,7 +776,13 @@ mod tests {
             .secret_key(SecretKey::new("ksa_sk_test_123").expect("valid secret key"))
             .build()
             .expect_err("Egypt region with KSA key must fail");
-        assert!(matches!(err, PaymobError::ValidationError { field: "region", .. }));
+        assert!(matches!(
+            err,
+            PaymobError::ValidationError {
+                field: "region",
+                ..
+            }
+        ));
 
         let pair_err = ClientConfig::builder()
             .region(PaymobRegion::Custom {
@@ -769,7 +795,13 @@ mod tests {
             .public_key(PublicKey::new("uae_pk_test_1").expect("valid pk"))
             .build()
             .expect_err("EGY secret + UAE public must fail");
-        assert!(matches!(pair_err, PaymobError::ValidationError { field: "region", .. }));
+        assert!(matches!(
+            pair_err,
+            PaymobError::ValidationError {
+                field: "region",
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -798,7 +830,10 @@ mod tests {
             .expect_err("missing region must fail");
         assert!(matches!(
             err_region,
-            PaymobError::ValidationError { field: "region", .. }
+            PaymobError::ValidationError {
+                field: "region",
+                ..
+            }
         ));
 
         let err_timeout = ClientConfig::builder()
@@ -808,7 +843,10 @@ mod tests {
             .expect_err("zero timeout must fail");
         assert!(matches!(
             err_timeout,
-            PaymobError::ValidationError { field: "timeout", .. }
+            PaymobError::ValidationError {
+                field: "timeout",
+                ..
+            }
         ));
     }
 
@@ -821,8 +859,13 @@ mod tests {
             .api_key(ApiKey::new("super_api_key_value").expect("valid api key"))
             .hmac_secret(HmacSecret::new("super_hmac_secret_value").expect("valid hmac secret"))
             .payouts_credentials(
-                PayoutsCredentials::new("cid_leak_check", "csec_leak_check", "usr_leak", "pwd_leak")
-                    .expect("valid payouts"),
+                PayoutsCredentials::new(
+                    "cid_leak_check",
+                    "csec_leak_check",
+                    "usr_leak",
+                    "pwd_leak",
+                )
+                .expect("valid payouts"),
             )
             .partner_credentials(
                 PartnerCredentials::with_bearer_token("partner_api_leak", "partner_tok_leak")
@@ -861,8 +904,18 @@ mod tests {
             .build()
             .expect("valid env config");
         assert_eq!(
-            (cfg.region(), cfg.environment(), cfg.timeout(), cfg.max_retries()),
-            (&PaymobRegion::SaudiArabia, EnvironmentMode::Live, Duration::from_secs(45), 4)
+            (
+                cfg.region(),
+                cfg.environment(),
+                cfg.timeout(),
+                cfg.max_retries()
+            ),
+            (
+                &PaymobRegion::SaudiArabia,
+                EnvironmentMode::Live,
+                Duration::from_secs(45),
+                4
+            )
         );
         assert!(cfg.use_payouts_staging());
     }
@@ -872,7 +925,10 @@ mod tests {
         let missing = ClientConfigBuilder::from_env_with(|_| None);
         assert!(matches!(
             missing,
-            Err(PaymobError::ValidationError { field: "region", .. })
+            Err(PaymobError::ValidationError {
+                field: "region",
+                ..
+            })
         ));
 
         let empty = ClientConfigBuilder::from_env_with(|k| {
@@ -880,7 +936,10 @@ mod tests {
         });
         assert!(matches!(
             empty,
-            Err(PaymobError::ValidationError { field: "region", .. })
+            Err(PaymobError::ValidationError {
+                field: "region",
+                ..
+            })
         ));
     }
 

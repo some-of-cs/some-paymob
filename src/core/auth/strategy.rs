@@ -136,7 +136,9 @@ pub enum StrategyError {
     #[error("endpoint path must not be empty")]
     EmptyEndpointPath,
     /// The endpoint path does not start with `/` or contains invalid characters.
-    #[error("invalid endpoint path '{path}': must start with '/' and contain no whitespace or control characters")]
+    #[error(
+        "invalid endpoint path '{path}': must start with '/' and contain no whitespace or control characters"
+    )]
     InvalidEndpointPath {
         /// The rejected endpoint path.
         path: String,

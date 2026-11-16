@@ -543,7 +543,11 @@ impl HttpClient {
         }
     }
 
-    fn next_retry_delay(&self, outcome: AttemptOutcome, attempt: u32) -> Result<Duration, HttpError> {
+    fn next_retry_delay(
+        &self,
+        outcome: AttemptOutcome,
+        attempt: u32,
+    ) -> Result<Duration, HttpError> {
         match outcome {
             AttemptOutcome::Fatal(err) => Err(err),
             AttemptOutcome::Retryable { last_error, .. }
@@ -573,11 +577,10 @@ impl HttpClient {
             .build_reqwest(request, request_id)
             .map_err(AttemptOutcome::Fatal)?;
 
-        let response = self
-            .inner
-            .execute(req)
-            .await
-            .map_err(|err| self.classify_transport_error(err, request_id, attempt, idempotent))?;
+        let response =
+            self.inner.execute(req).await.map_err(|err| {
+                self.classify_transport_error(err, request_id, attempt, idempotent)
+            })?;
 
         let status = response.status();
         let headers = response.headers().clone();
@@ -861,8 +864,8 @@ mod tests {
         route: &str,
     ) -> Result<HttpResponse, HttpError> {
         let client = HttpClient::new(cfg).expect("client builds");
-        let req = HttpRequest::new(req_method, &format!("{}{route}", server.uri()))
-            .expect("valid URL");
+        let req =
+            HttpRequest::new(req_method, &format!("{}{route}", server.uri())).expect("valid URL");
         client.execute(&req).await
     }
 
@@ -1022,10 +1025,17 @@ mod tests {
             .expect("put")
             .with_json(&serde_json::json!({"ok": true}))
             .expect("json");
-        let patch_req = HttpRequest::patch("https://accept.paymob.com/api/v1/items/1").expect("patch");
-        let del_req = HttpRequest::delete("https://accept.paymob.com/api/v1/items/1").expect("delete");
+        let patch_req =
+            HttpRequest::patch("https://accept.paymob.com/api/v1/items/1").expect("patch");
+        let del_req =
+            HttpRequest::delete("https://accept.paymob.com/api/v1/items/1").expect("delete");
         assert_eq!(
-            (put_req.method(), patch_req.method(), del_req.method(), put_req.is_idempotent()),
+            (
+                put_req.method(),
+                patch_req.method(),
+                del_req.method(),
+                put_req.is_idempotent()
+            ),
             (&Method::PUT, &Method::PATCH, &Method::DELETE, true)
         );
     }
@@ -1039,10 +1049,18 @@ mod tests {
             body: b"sk_live_leaked_secret_body".to_vec(),
         };
         let dbg = format!("{err:?}");
-        assert!(dbg.contains("body_len: 26") && dbg.contains("[REDACTED]") && !dbg.contains("sk_live_leaked_secret_body"));
+        assert!(
+            dbg.contains("body_len: 26")
+                && dbg.contains("[REDACTED]")
+                && !dbg.contains("sk_live_leaked_secret_body")
+        );
 
-        let scrubbed = scrub_url_query("error for url (https://accept.paymob.com/cb?hmac=secret123&id=1)");
-        assert_eq!(scrubbed, "error for url (https://accept.paymob.com/cb?[REDACTED])");
+        let scrubbed =
+            scrub_url_query("error for url (https://accept.paymob.com/cb?hmac=secret123&id=1)");
+        assert_eq!(
+            scrubbed,
+            "error for url (https://accept.paymob.com/cb?[REDACTED])"
+        );
     }
 
     #[test]
@@ -1080,7 +1098,11 @@ mod tests {
         .expect("200 OK succeeds");
 
         assert_eq!(
-            (resp.status, resp.body.as_slice(), resp.request_id.get_version_num()),
+            (
+                resp.status,
+                resp.body.as_slice(),
+                resp.request_id.get_version_num()
+            ),
             (StatusCode::OK, b"pong".as_slice(), 4)
         );
     }
@@ -1105,7 +1127,10 @@ mod tests {
 
         match err {
             HttpError::RetriesExhausted { status, body, .. } => {
-                assert_eq!((status, body.as_slice()), (StatusCode::SERVICE_UNAVAILABLE, b"down".as_slice()));
+                assert_eq!(
+                    (status, body.as_slice()),
+                    (StatusCode::SERVICE_UNAVAILABLE, b"down".as_slice())
+                );
             }
             other => panic!("expected RetriesExhausted, got {other:?}"),
         }

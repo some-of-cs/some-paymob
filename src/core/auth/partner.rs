@@ -359,7 +359,10 @@ impl fmt::Debug for PartnerAuthContext {
             .field("api_key_header_name", &self.api_key_header_name.as_str())
             .field("api_key_query_param", &self.api_key_query_param)
             .field("merchant_id", &self.merchant_id)
-            .field("merchant_id_header_name", &self.merchant_id_header_name.as_str())
+            .field(
+                "merchant_id_header_name",
+                &self.merchant_id_header_name.as_str(),
+            )
             .finish()
     }
 }
@@ -414,8 +417,8 @@ mod tests {
         assert!(!ctx.is_delegated());
 
         let mut headers = HeaderMap::new();
-        let mut url = Url::parse("https://accept.paymob.com/api/partner/profile")
-            .expect("valid test URL");
+        let mut url =
+            Url::parse("https://accept.paymob.com/api/partner/profile").expect("valid test URL");
         ctx.apply_request(&mut headers, &mut url)
             .expect("header injection should succeed");
 
@@ -434,8 +437,8 @@ mod tests {
         assert_eq!(ctx.api_key_location(), Some(PartnerApiKeyLocation::Header));
 
         let mut headers = HeaderMap::new();
-        let mut url = Url::parse("https://accept.paymob.com/api/partner/merchants")
-            .expect("valid test URL");
+        let mut url =
+            Url::parse("https://accept.paymob.com/api/partner/merchants").expect("valid test URL");
         ctx.apply_request(&mut headers, &mut url)
             .expect("API key header injection should succeed");
 
@@ -458,9 +461,7 @@ mod tests {
             .apply_headers(&mut headers)
             .expect("custom header injection should succeed");
         assert_eq!(
-            headers
-                .get("x-partner-key")
-                .and_then(|v| v.to_str().ok()),
+            headers.get("x-partner-key").and_then(|v| v.to_str().ok()),
             Some("key_999")
         );
 
@@ -494,15 +495,11 @@ mod tests {
         ctx.apply_headers(&mut headers)
             .expect("delegated headers should apply");
         assert_eq!(
-            headers
-                .get(AUTHORIZATION)
-                .and_then(|v| v.to_str().ok()),
+            headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()),
             Some("Bearer partner_tok_1")
         );
         assert_eq!(
-            headers
-                .get("x-sub-merchant")
-                .and_then(|v| v.to_str().ok()),
+            headers.get("x-sub-merchant").and_then(|v| v.to_str().ok()),
             Some("sub_merch_777")
         );
     }
@@ -537,11 +534,14 @@ mod tests {
 
         let base = PartnerAuthContext::bearer("valid_tok").expect("valid bearer");
         assert_eq!(
-            base.clone().with_merchant_id("").expect_err("empty merchant"),
+            base.clone()
+                .with_merchant_id("")
+                .expect_err("empty merchant"),
             PartnerAuthError::EmptyMerchantId
         );
         assert_eq!(
-            base.with_merchant_id("   ").expect_err("whitespace merchant"),
+            base.with_merchant_id("   ")
+                .expect_err("whitespace merchant"),
             PartnerAuthError::EmptyMerchantId
         );
     }
@@ -613,8 +613,8 @@ mod tests {
         assert!(bearer_dbg.contains("[REDACTED]"));
         assert!(bearer_dbg.contains("merchant_99"));
 
-        let api_ctx = PartnerAuthContext::api_key_header("super_secret_api_key_xyz")
-            .expect("valid api key");
+        let api_ctx =
+            PartnerAuthContext::api_key_header("super_secret_api_key_xyz").expect("valid api key");
         let api_dbg = format!("{api_ctx:?}");
         assert!(!api_dbg.contains("super_secret_api_key_xyz"));
         assert!(api_dbg.contains("[REDACTED]"));

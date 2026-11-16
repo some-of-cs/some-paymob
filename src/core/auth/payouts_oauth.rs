@@ -244,7 +244,10 @@ impl PayoutsOAuthProvider {
     ///
     /// Propagates [`PayoutsOAuthError`] if token acquisition or renewal fails.
     pub async fn access_token(&self) -> Result<SecretString, PayoutsOAuthError> {
-        let cached = self.cache.get_or_refresh(|| self.acquire_or_refresh()).await?;
+        let cached = self
+            .cache
+            .get_or_refresh(|| self.acquire_or_refresh())
+            .await?;
         Ok(cached.access_token.clone())
     }
 
@@ -290,7 +293,8 @@ impl PayoutsOAuthProvider {
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token.expose_secret()),
         ];
-        self.send_token_form(&form, Some(refresh_token.clone())).await
+        self.send_token_form(&form, Some(refresh_token.clone()))
+            .await
     }
 
     async fn send_token_form(
@@ -298,10 +302,8 @@ impl PayoutsOAuthProvider {
         form: &[(&str, &str)],
         fallback_refresh: Option<SecretString>,
     ) -> Result<CachedToken, PayoutsOAuthError> {
-        let basic = format_basic_auth_header(
-            &self.credentials.client_id,
-            &self.credentials.client_secret,
-        )?;
+        let basic =
+            format_basic_auth_header(&self.credentials.client_id, &self.credentials.client_secret)?;
         let response = self
             .http
             .post(self.token_url.clone())
@@ -375,7 +377,10 @@ async fn parse_token_response(
     if body.access_token.expose_secret().trim().is_empty() {
         return Err(PayoutsOAuthError::MissingAccessToken);
     }
-    let ttl_secs = body.expires_in.filter(|&s| s > 0).unwrap_or(PAYOUTS_TOKEN_TTL_SECS);
+    let ttl_secs = body
+        .expires_in
+        .filter(|&s| s > 0)
+        .unwrap_or(PAYOUTS_TOKEN_TTL_SECS);
     let refresh = body
         .refresh_token
         .filter(|s| !s.expose_secret().trim().is_empty())
@@ -411,7 +416,12 @@ fn extract_sanitized_detail(status: StatusCode, parsed: Option<OAuthErrorBody>) 
         .and_then(|body| body.error.or(body.detail))
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| status.canonical_reason().unwrap_or("unknown error").to_owned())
+        .unwrap_or_else(|| {
+            status
+                .canonical_reason()
+                .unwrap_or("unknown error")
+                .to_owned()
+        })
 }
 
 #[cfg(test)]
@@ -426,8 +436,13 @@ mod tests {
 
     fn setup_provider(server: &MockServer, margin: Duration) -> PayoutsOAuthProvider {
         let cache = Arc::new(TokenCache::with_refresh_margin(margin));
-        PayoutsOAuthProvider::with_client_and_cache(&server.uri(), test_creds(), Client::new(), cache)
-            .expect("valid provider")
+        PayoutsOAuthProvider::with_client_and_cache(
+            &server.uri(),
+            test_creds(),
+            Client::new(),
+            cache,
+        )
+        .expect("valid provider")
     }
 
     fn token_body(access: &str, refresh: Option<&str>, expires_in: u64) -> serde_json::Value {
@@ -473,9 +488,11 @@ mod tests {
             .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
             .and(header("authorization", "Basic Y2lkOmNzZWM="))
             .and(body_string_contains("grant_type=password"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(token_body("acc-1", Some("ref-1"), 3600)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(token_body(
+                "acc-1",
+                Some("ref-1"),
+                3600,
+            )))
             .expect(1)
             .mount(&server)
             .await;
@@ -486,7 +503,14 @@ mod tests {
         assert_eq!(first.expose_secret(), "acc-1");
         assert_eq!(second.expose_secret(), "acc-1");
         assert_eq!(
-            provider.cache().peek().unwrap().refresh_token.as_ref().unwrap().expose_secret(),
+            provider
+                .cache()
+                .peek()
+                .unwrap()
+                .refresh_token
+                .as_ref()
+                .unwrap()
+                .expose_secret(),
             "ref-1"
         );
     }
@@ -497,9 +521,11 @@ mod tests {
         Mock::given(method("POST"))
             .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
             .and(body_string_contains("grant_type=password"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(token_body("acc-1", Some("ref-1"), 10)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(token_body(
+                "acc-1",
+                Some("ref-1"),
+                10,
+            )))
             .expect(1)
             .mount(&server)
             .await;
@@ -507,16 +533,24 @@ mod tests {
             .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
             .and(body_string_contains("grant_type=refresh_token"))
             .and(body_string_contains("refresh_token=ref-1"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(token_body("acc-2", Some("ref-2"), 3600)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(token_body(
+                "acc-2",
+                Some("ref-2"),
+                3600,
+            )))
             .expect(1)
             .mount(&server)
             .await;
 
         let provider = setup_provider(&server, Duration::from_secs(3600));
-        assert_eq!(provider.access_token().await.unwrap().expose_secret(), "acc-1");
-        assert_eq!(provider.access_token().await.unwrap().expose_secret(), "acc-2");
+        assert_eq!(
+            provider.access_token().await.unwrap().expose_secret(),
+            "acc-1"
+        );
+        assert_eq!(
+            provider.access_token().await.unwrap().expose_secret(),
+            "acc-2"
+        );
     }
 
     #[tokio::test]
@@ -532,10 +566,11 @@ mod tests {
         Mock::given(method("POST"))
             .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
             .and(body_string_contains("grant_type=password"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(token_body("acc-fallback", Some("ref-new"), 3600)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(token_body(
+                "acc-fallback",
+                Some("ref-new"),
+                3600,
+            )))
             .expect(1)
             .mount(&server)
             .await;
@@ -581,7 +616,10 @@ mod tests {
     fn tc_1_2_4_rejects_empty_username() {
         let err = PayoutsCredentials::new("cid", "csec", "   ", "pass")
             .expect_err("empty username must fail");
-        assert!(matches!(err, PayoutsOAuthError::EmptyCredential("username")));
+        assert!(matches!(
+            err,
+            PayoutsOAuthError::EmptyCredential("username")
+        ));
     }
 
     #[tokio::test]
@@ -605,8 +643,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
             .respond_with(
-                ResponseTemplate::new(502)
-                    .set_body_string("raw secret=super_secret_leaked_token"),
+                ResponseTemplate::new(502).set_body_string("raw secret=super_secret_leaked_token"),
             )
             .expect(1)
             .mount(&server)
@@ -627,7 +664,8 @@ mod tests {
             .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
             .and(body_string_contains("grant_type=refresh_token"))
             .respond_with(
-                ResponseTemplate::new(400).set_body_json(serde_json::json!({ "error": "invalid_grant" })),
+                ResponseTemplate::new(400)
+                    .set_body_json(serde_json::json!({ "error": "invalid_grant" })),
             )
             .expect(1)
             .mount(&server)
@@ -635,10 +673,11 @@ mod tests {
         Mock::given(method("POST"))
             .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
             .and(body_string_contains("grant_type=password"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(token_body("acc-400-fb", Some("ref-new"), 3600)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(token_body(
+                "acc-400-fb",
+                Some("ref-new"),
+                3600,
+            )))
             .expect(1)
             .mount(&server)
             .await;
@@ -667,7 +706,10 @@ mod tests {
             .await;
 
         let provider = setup_provider(&server, Duration::from_secs(60));
-        let tok = provider.access_token().await.expect("zero expires_in uses default");
+        let tok = provider
+            .access_token()
+            .await
+            .expect("zero expires_in uses default");
         assert_eq!(tok.expose_secret(), "acc-zero-exp");
         assert!(provider.cache().get_if_fresh().is_some());
     }
@@ -685,7 +727,10 @@ mod tests {
             .await;
 
         let provider = setup_provider(&server, Duration::from_secs(60));
-        let tok = provider.access_token().await.expect("omitted expires_in uses default");
+        let tok = provider
+            .access_token()
+            .await
+            .expect("omitted expires_in uses default");
         assert_eq!(tok.expose_secret(), "acc-omitted-exp");
         assert!(provider.cache().get_if_fresh().is_some());
     }

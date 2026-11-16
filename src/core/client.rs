@@ -412,7 +412,11 @@ mod tests {
         let client = PaymobClient::new(config).expect("valid PaymobClient");
         let http_cfg = client.http().config();
         assert_eq!(
-            (http_cfg.connect_timeout, http_cfg.request_timeout, http_cfg.retry.max_retries),
+            (
+                http_cfg.connect_timeout,
+                http_cfg.request_timeout,
+                http_cfg.retry.max_retries
+            ),
             (Duration::from_secs(5), Duration::from_secs(5), 7)
         );
     }
@@ -465,7 +469,10 @@ mod tests {
     fn tc_1_1_4_config_and_endpoints_accessors_match_region() {
         let client = sample_client(PaymobRegion::SaudiArabia);
         assert_eq!(
-            (client.config().region(), client.endpoints().accept_base_url.as_str()),
+            (
+                client.config().region(),
+                client.endpoints().accept_base_url.as_str()
+            ),
             (&PaymobRegion::SaudiArabia, "https://ksa.paymob.com")
         );
     }
@@ -487,7 +494,10 @@ mod tests {
         ));
         assert!(matches!(
             client.payouts_url("/api/secure/disburse/"),
-            Err(PaymobError::ValidationError { field: "region", .. })
+            Err(PaymobError::ValidationError {
+                field: "region",
+                ..
+            })
         ));
     }
 

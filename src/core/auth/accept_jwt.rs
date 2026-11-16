@@ -253,7 +253,8 @@ impl AcceptJwtProvider {
             return Ok(response);
         }
 
-        self.refresh_and_retry(&token, response, build_and_send).await
+        self.refresh_and_retry(&token, response, build_and_send)
+            .await
     }
 
     async fn refresh_and_retry<F, Fut>(
@@ -366,8 +367,11 @@ pub fn is_incorrect_credentials_401(status: StatusCode, body: &[u8]) -> bool {
     if status != StatusCode::UNAUTHORIZED {
         return false;
     }
-    parse_error_detail(body)
-        .is_some_and(|detail| detail.trim().eq_ignore_ascii_case(INCORRECT_CREDENTIALS_DETAIL))
+    parse_error_detail(body).is_some_and(|detail| {
+        detail
+            .trim()
+            .eq_ignore_ascii_case(INCORRECT_CREDENTIALS_DETAIL)
+    })
 }
 
 fn validate_api_key(api_key: &SecretString) -> Result<(), AcceptJwtError> {
@@ -411,8 +415,12 @@ fn parse_error_detail(body: &[u8]) -> Option<String> {
 async fn extract_error_detail(response: Response) -> String {
     let status = response.status();
     let bytes = response.bytes().await.unwrap_or_default();
-    parse_error_detail(&bytes)
-        .unwrap_or_else(|| status.canonical_reason().unwrap_or("unknown error").to_owned())
+    parse_error_detail(&bytes).unwrap_or_else(|| {
+        status
+            .canonical_reason()
+            .unwrap_or("unknown error")
+            .to_owned()
+    })
 }
 
 #[cfg(test)]
@@ -449,7 +457,10 @@ mod tests {
             .await;
     }
 
-    async fn start_single_token_server(status: u16, body: Value) -> (MockServer, AcceptJwtProvider) {
+    async fn start_single_token_server(
+        status: u16,
+        body: Value,
+    ) -> (MockServer, AcceptJwtProvider) {
         let server = MockServer::start().await;
         mount_post_mock(
             &server,
@@ -569,7 +580,13 @@ mod tests {
         assert_eq!(obj["auth_token"], "fresh-jwt-token");
         assert_eq!(obj["order_id"], 42);
 
-        for mut invalid in [json!(null), json!([1, 2]), json!("str"), json!(123), json!(true)] {
+        for mut invalid in [
+            json!(null),
+            json!([1, 2]),
+            json!("str"),
+            json!(123),
+            json!(true),
+        ] {
             let err = inject_body_auth_token(&mut invalid, &token);
             assert!(matches!(err, Err(AcceptJwtError::InvalidJsonBody)));
         }
@@ -578,15 +595,24 @@ mod tests {
     #[test]
     fn tc_1_2_3_is_incorrect_credentials_401_positive_and_negative() {
         let exact = br#"{"detail": "incorrect credentials"}"#;
-        assert!(is_incorrect_credentials_401(StatusCode::UNAUTHORIZED, exact));
+        assert!(is_incorrect_credentials_401(
+            StatusCode::UNAUTHORIZED,
+            exact
+        ));
         assert!(!is_incorrect_credentials_401(StatusCode::OK, exact));
         assert!(!is_incorrect_credentials_401(StatusCode::FORBIDDEN, exact));
 
         let other = br#"{"detail": "token expired"}"#;
-        assert!(!is_incorrect_credentials_401(StatusCode::UNAUTHORIZED, other));
+        assert!(!is_incorrect_credentials_401(
+            StatusCode::UNAUTHORIZED,
+            other
+        ));
 
         let malformed = b"not-json";
-        assert!(!is_incorrect_credentials_401(StatusCode::UNAUTHORIZED, malformed));
+        assert!(!is_incorrect_credentials_401(
+            StatusCode::UNAUTHORIZED,
+            malformed
+        ));
     }
 
     #[tokio::test]
@@ -735,7 +761,10 @@ mod tests {
             .await;
 
         let provider = build_provider(&server.uri());
-        let err = provider.fetch_fresh_token().await.expect_err("malformed json");
+        let err = provider
+            .fetch_fresh_token()
+            .await
+            .expect_err("malformed json");
         assert!(matches!(err, AcceptJwtError::Transport(_)));
     }
 

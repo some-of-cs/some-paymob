@@ -276,11 +276,7 @@ impl From<HttpError> for PaymobError {
                 ..
             } => {
                 let body_str = String::from_utf8_lossy(&body);
-                Self::from_response(
-                    status.as_u16(),
-                    &body_str,
-                    retry_after.map(|d| d.as_secs()),
-                )
+                Self::from_response(status.as_u16(), &body_str, retry_after.map(|d| d.as_secs()))
             }
             other => Self::TransportError(other.to_string()),
         }
@@ -565,9 +561,7 @@ fn extract_field_error(value: &Value) -> Option<(&'static str, String)> {
 
 fn flatten_first_leaf(key_hint: Option<&str>, value: &Value) -> Option<(String, String)> {
     match value {
-        Value::Object(map) => map
-            .iter()
-            .find_map(|(k, v)| flatten_first_leaf(Some(k), v)),
+        Value::Object(map) => map.iter().find_map(|(k, v)| flatten_first_leaf(Some(k), v)),
         Value::Array(items) => items
             .iter()
             .find_map(|item| flatten_first_leaf(key_hint, item)),
@@ -615,7 +609,10 @@ fn redact_sensitive(input: &str) -> String {
         out.push_str(&rest[..ws_len]);
         rest = &rest[ws_len..];
 
-        let word_len = rest.bytes().take_while(|b| !b.is_ascii_whitespace()).count();
+        let word_len = rest
+            .bytes()
+            .take_while(|b| !b.is_ascii_whitespace())
+            .count();
         if word_len == 0 {
             break;
         }
@@ -698,7 +695,9 @@ fn consume_kv_value(rest: &str) -> Option<usize> {
     }
     let len = bytes
         .iter()
-        .take_while(|&&b| !b.is_ascii_whitespace() && !matches!(b, b',' | b';' | b'}' | b']' | b')'))
+        .take_while(|&&b| {
+            !b.is_ascii_whitespace() && !matches!(b, b',' | b';' | b'}' | b']' | b')')
+        })
         .count();
     (len > 0).then_some(len)
 }
@@ -807,24 +806,23 @@ fn is_secret_token(core: &str) -> bool {
 }
 
 fn is_secret_prefix(core: &str) -> bool {
-    SECRET_PREFIXES.iter().any(|prefix| core.starts_with(prefix))
+    SECRET_PREFIXES
+        .iter()
+        .any(|prefix| core.starts_with(prefix))
 }
 
 fn is_email(core: &str) -> bool {
     let Some((local, domain)) = core.split_once('@') else {
         return false;
     };
-    !local.is_empty()
-        && domain.contains('.')
-        && !domain.starts_with('.')
-        && !domain.ends_with('.')
+    !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.')
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
     use reqwest::StatusCode;
+    use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
     use uuid::Uuid;
 
     fn assert_no_leaks(output: &str, leaks: &[&str]) {
@@ -871,9 +869,10 @@ mod tests {
             err,
             PaymobError::RefundExceedsPermissibleAmount { .. }
         ));
-        assert!(err
-            .to_string()
-            .starts_with("Refund amount exceeds maximum permissible balance:"));
+        assert!(
+            err.to_string()
+                .starts_with("Refund amount exceeds maximum permissible balance:")
+        );
     }
 
     #[test]
@@ -881,7 +880,12 @@ mod tests {
         let body = r#"{"status_description": "Rate limit exceeded", "status_code": 429}"#;
         let err = PaymobError::from_response(429, body, Some(15));
         assert_eq!(
-            (err.is_rate_limited(), err.is_retryable(), err.retry_after_secs(), err.status_code()),
+            (
+                err.is_rate_limited(),
+                err.is_retryable(),
+                err.retry_after_secs(),
+                err.status_code()
+            ),
             (true, true, Some(15), Some(429))
         );
         assert_eq!(
@@ -959,7 +963,10 @@ mod tests {
         );
 
         let err_502 = PaymobError::from_response(502, r#"{"upstream":{"reason":"timeout"}}"#, None);
-        assert_eq!((err_502.status_code(), err_502.is_retryable()), (Some(502), true));
+        assert_eq!(
+            (err_502.status_code(), err_502.is_retryable()),
+            (Some(502), true)
+        );
     }
 
     #[test]
@@ -1011,7 +1018,8 @@ mod tests {
 
     #[test]
     fn tc_1_3_1_redacts_regional_prefixes_and_basic_auth() {
-        let msg = "ksa_sk_live_111 uae_sk_test_222 sau_sk_live_333 are_sk_test_444 Basic dXNlcjpwYXNz";
+        let msg =
+            "ksa_sk_live_111 uae_sk_test_222 sau_sk_live_333 are_sk_test_444 Basic dXNlcjpwYXNz";
         let err = PaymobError::AuthenticationError(msg.to_string());
         let leaks = [
             "ksa_sk_live_111",
@@ -1069,7 +1077,11 @@ mod tests {
         let webhook_err = PaymobError::WebhookError("HMAC mismatch".to_string());
         let transport_err = PaymobError::TransportError("connection reset".to_string());
         assert_eq!(
-            (env_err.is_retryable(), webhook_err.is_retryable(), transport_err.is_retryable()),
+            (
+                env_err.is_retryable(),
+                webhook_err.is_retryable(),
+                transport_err.is_retryable()
+            ),
             (false, false, true)
         );
         assert_eq!(transport_err.status_code(), None);

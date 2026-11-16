@@ -465,7 +465,9 @@ mod tests {
         let cache = TokenCache::new();
         cache.store(CachedToken::with_default_ttl("fresh-tok", None));
 
-        let evicted_mismatch = cache.evict_if_matches(&SecretString::from("stale-tok")).await;
+        let evicted_mismatch = cache
+            .evict_if_matches(&SecretString::from("stale-tok"))
+            .await;
         assert!(!evicted_mismatch);
         assert!(cache.peek().is_some());
     }
@@ -475,7 +477,9 @@ mod tests {
         let cache = TokenCache::new();
         cache.store(CachedToken::with_default_ttl("stale-tok", None));
 
-        let evicted_match = cache.evict_if_matches(&SecretString::from("stale-tok")).await;
+        let evicted_match = cache
+            .evict_if_matches(&SecretString::from("stale-tok"))
+            .await;
         assert!(evicted_match);
         assert!(cache.peek().is_none());
     }

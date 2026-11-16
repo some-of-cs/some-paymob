@@ -348,7 +348,9 @@ fn has_leading_key_tag(normalized: &str, tag: &str, region_tag: &str) -> bool {
         return true;
     }
     normalized.len() >= 3 + region_tag.len()
-        && normalized.as_bytes()[..3].iter().all(u8::is_ascii_alphabetic)
+        && normalized.as_bytes()[..3]
+            .iter()
+            .all(u8::is_ascii_alphabetic)
         && normalized[3..].starts_with(region_tag)
 }
 
@@ -405,8 +407,8 @@ impl SecretKey {
                 reason: "public key (`pk_*`) cannot be used as a secret key".to_owned(),
             });
         }
-        let (mode, region) = parse_key_prefix(raw_str)
-            .map_or((EnvironmentMode::Test, None), |p| (p.mode, p.region));
+        let (mode, region) =
+            parse_key_prefix(raw_str).map_or((EnvironmentMode::Test, None), |p| (p.mode, p.region));
         Ok(Self {
             inner,
             mode,
@@ -472,8 +474,8 @@ impl PublicKey {
                 reason: "secret key (`sk_*`) cannot be used as a public key".to_owned(),
             });
         }
-        let (mode, region) = parse_key_prefix(raw_str)
-            .map_or((EnvironmentMode::Test, None), |p| (p.mode, p.region));
+        let (mode, region) =
+            parse_key_prefix(raw_str).map_or((EnvironmentMode::Test, None), |p| (p.mode, p.region));
         Ok(Self {
             inner,
             mode,
@@ -713,7 +715,10 @@ mod tests {
     use super::*;
 
     fn assert_redacted<T: fmt::Debug + fmt::Display>(value: &T) {
-        assert_eq!((format!("{value:?}"), format!("{value}")), (REDACTED.to_owned(), REDACTED.to_owned()));
+        assert_eq!(
+            (format!("{value:?}"), format!("{value}")),
+            (REDACTED.to_owned(), REDACTED.to_owned())
+        );
     }
 
     #[test]
@@ -749,8 +754,18 @@ mod tests {
                 EnvironmentMode::Live,
                 Some(PaymobRegion::Pakistan),
             ),
-            ("sk_test_legacy", KeyKind::Secret, EnvironmentMode::Test, None),
-            ("pk_live_legacy", KeyKind::Public, EnvironmentMode::Live, None),
+            (
+                "sk_test_legacy",
+                KeyKind::Secret,
+                EnvironmentMode::Test,
+                None,
+            ),
+            (
+                "pk_live_legacy",
+                KeyKind::Public,
+                EnvironmentMode::Live,
+                None,
+            ),
         ];
 
         for (raw, expected_kind, expected_mode, expected_region) in cases {
@@ -780,10 +795,19 @@ mod tests {
 
     #[test]
     fn tc_1_1_2_secret_key_rejects_empty_and_case_or_whitespace_pk_bypass() {
-        for bad in ["", "   \t\n ", "  pk_test_123", "PK_TEST_123", "egy_pk_test_12345"] {
+        for bad in [
+            "",
+            "   \t\n ",
+            "  pk_test_123",
+            "PK_TEST_123",
+            "egy_pk_test_12345",
+        ] {
             assert!(matches!(
                 SecretKey::new(bad),
-                Err(PaymobError::ValidationError { field: "secret_key", .. })
+                Err(PaymobError::ValidationError {
+                    field: "secret_key",
+                    ..
+                })
             ));
         }
         let valid_with_pk_substr =
@@ -810,7 +834,10 @@ mod tests {
         for bad in ["", "  sk_live_999", "SK_LIVE_999", "egy_sk_test_626xxx"] {
             assert!(matches!(
                 PublicKey::new(bad),
-                Err(PaymobError::ValidationError { field: "public_key", .. })
+                Err(PaymobError::ValidationError {
+                    field: "public_key",
+                    ..
+                })
             ));
         }
         let valid_with_sk_substr =
@@ -829,11 +856,17 @@ mod tests {
     fn tc_1_1_2_api_key_and_hmac_secret_reject_empty() {
         assert!(matches!(
             ApiKey::new("  "),
-            Err(PaymobError::ValidationError { field: "api_key", .. })
+            Err(PaymobError::ValidationError {
+                field: "api_key",
+                ..
+            })
         ));
         assert!(matches!(
             HmacSecret::new(""),
-            Err(PaymobError::ValidationError { field: "hmac_secret", .. })
+            Err(PaymobError::ValidationError {
+                field: "hmac_secret",
+                ..
+            })
         ));
     }
 
@@ -841,7 +874,12 @@ mod tests {
     fn tc_1_1_2_payouts_credentials_validation_and_redaction() {
         let payouts = PayoutsCredentials::new("cid", "csec", "usr", "pwd").expect("valid payouts");
         assert_eq!(
-            (payouts.client_id(), payouts.client_secret(), payouts.username(), payouts.password()),
+            (
+                payouts.client_id(),
+                payouts.client_secret(),
+                payouts.username(),
+                payouts.password()
+            ),
             ("cid", "csec", "usr", "pwd")
         );
         assert_redacted(&payouts);
@@ -856,13 +894,16 @@ mod tests {
             ("cid", "csec", "usr", "", "payouts_password"),
         ] {
             let err = PayoutsCredentials::new(cid, csec, usr, pwd).expect_err("empty field");
-            assert!(matches!(err, PaymobError::ValidationError { field, .. } if field == expected_field));
+            assert!(
+                matches!(err, PaymobError::ValidationError { field, .. } if field == expected_field)
+            );
         }
     }
 
     #[test]
     fn tc_1_1_2_partner_credentials_validation_and_redaction() {
-        let partner = PartnerCredentials::with_bearer_token("p_key", "b_tok").expect("valid partner");
+        let partner =
+            PartnerCredentials::with_bearer_token("p_key", "b_tok").expect("valid partner");
         assert_eq!(
             (partner.api_key(), partner.bearer_token()),
             ("p_key", Some("b_tok"))
@@ -874,22 +915,36 @@ mod tests {
     fn tc_1_1_2_partner_credentials_reject_empty_inputs() {
         assert!(matches!(
             PartnerCredentials::new("   "),
-            Err(PaymobError::ValidationError { field: "partner_api_key", .. })
+            Err(PaymobError::ValidationError {
+                field: "partner_api_key",
+                ..
+            })
         ));
         assert!(matches!(
             PartnerCredentials::with_bearer_token("p_key", ""),
-            Err(PaymobError::ValidationError { field: "partner_bearer_token", .. })
+            Err(PaymobError::ValidationError {
+                field: "partner_bearer_token",
+                ..
+            })
         ));
     }
 
     #[test]
     fn tc_1_1_2_environment_mode_helpers() {
         assert_eq!(
-            (EnvironmentMode::Test.is_test(), EnvironmentMode::Test.is_live(), EnvironmentMode::Test.as_str()),
+            (
+                EnvironmentMode::Test.is_test(),
+                EnvironmentMode::Test.is_live(),
+                EnvironmentMode::Test.as_str()
+            ),
             (true, false, "test")
         );
         assert_eq!(
-            (EnvironmentMode::Live.is_live(), EnvironmentMode::Live.is_test(), format!("{}", EnvironmentMode::Live)),
+            (
+                EnvironmentMode::Live.is_live(),
+                EnvironmentMode::Live.is_test(),
+                format!("{}", EnvironmentMode::Live)
+            ),
             (true, false, "live".to_string())
         );
     }

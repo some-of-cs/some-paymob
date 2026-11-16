@@ -186,7 +186,11 @@ impl<'a> IntentionsService<'a> {
         key_mode: EnvironmentMode,
     ) -> Result<IntentionResponse, PaymobError> {
         let req = self.build_request(method, payload)?;
-        let response = self.http_client().execute(&req).await.map_err(PaymobError::from)?;
+        let response = self
+            .http_client()
+            .execute(&req)
+            .await
+            .map_err(PaymobError::from)?;
         if !response.status.is_success() {
             return Err(PaymobError::from_http_response(&response));
         }
@@ -196,15 +200,14 @@ impl<'a> IntentionsService<'a> {
     }
 
     fn build_auth_headers(&self, method: &Method) -> Result<HeaderMap, PaymobError> {
-        let secret_key = self.client.config().secret_key().ok_or_else(|| {
-            PaymobError::AuthenticationError("missing SecretKey".to_owned())
-        })?;
-        let spec = EndpointAuthSpec::new(
-            INTENTION_PATH,
-            method.clone(),
-            AuthStrategy::SecretKeyToken,
-        )
-            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
+        let secret_key = self
+            .client
+            .config()
+            .secret_key()
+            .ok_or_else(|| PaymobError::AuthenticationError("missing SecretKey".to_owned()))?;
+        let spec =
+            EndpointAuthSpec::new(INTENTION_PATH, method.clone(), AuthStrategy::SecretKeyToken)
+                .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
         let mut headers = HeaderMap::new();
         let token = SecretString::from(secret_key.expose_secret().to_owned());
         spec.apply_secret_key(&mut headers, &token)
@@ -402,10 +405,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/intention/"))
-            .respond_with(
-                ResponseTemplate::new(400)
-                    .set_body_string(r#"{"billing_data":{"phone_number":["This field is required."]}}"#),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_string(
+                r#"{"billing_data":{"phone_number":["This field is required."]}}"#,
+            ))
             .mount(&server)
             .await;
 

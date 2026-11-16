@@ -4,8 +4,8 @@
 //! Implements `US-4.3.0` Unit 1 (`TC-4.3.1`):
 //! - [`Subscription`] record with integer minor-unit [`MinorUnitAmount`] pricing and lifecycle timestamps.
 //! - [`SubscriptionState`] backed by [`KNOWN_SUBSCRIPTION_STATES`] static lookup table (`CC <= 3`).
-//! - [`SubscriptionListFilter`] query builder for listing subscriptions.
-//! - [`SubscriptionCard`] vault model with [`SecretString`] token and `[REDACTED]` `Debug` formatting.
+//! - [`SubscriptionListFilter`](self::SubscriptionListFilter) query builder for listing subscriptions.
+//! - [`SubscriptionCard`](self::SubscriptionCard) vault model with [`secrecy::SecretString`] token and `[REDACTED]` `Debug` formatting.
 
 use std::convert::Infallible;
 use std::fmt;
@@ -236,7 +236,7 @@ pub struct SubscriptionListFilter {
 }
 
 impl SubscriptionListFilter {
-    /// Creates an empty [`SubscriptionListFilter`] with all filter fields unset.
+    /// Creates an empty [`SubscriptionListFilter`](self::SubscriptionListFilter) with all filter fields unset.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -272,7 +272,7 @@ impl SubscriptionListFilter {
 
 /// Saved card vault entry attached to a Paymob subscription.
 ///
-/// The card `token` is wrapped in [`SecretString`] (`ZeroizeOnDrop`) and its
+/// The card `token` is wrapped in [`secrecy::SecretString`] (`ZeroizeOnDrop`) and its
 /// [`fmt::Debug`] implementation always renders `token` as `"[REDACTED]"`.
 ///
 /// # Examples

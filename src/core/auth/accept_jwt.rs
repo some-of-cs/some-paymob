@@ -417,32 +417,34 @@ mod tests {
         AcceptJwtProvider::new(base_url, SecretString::from(TEST_API_KEY)).expect("valid provider")
     }
 
-    async fn start_single_token_server(status: u16, body: Value) -> (MockServer, AcceptJwtProvider) {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path(ACCEPT_AUTH_TOKENS_PATH))
-            .and(body_json(json!({ "api_key": TEST_API_KEY })))
-            .respond_with(ResponseTemplate::new(status).set_body_json(body))
-            .expect(1)
-            .mount(&server)
-            .await;
-        let provider = build_provider(&server.uri());
-        (server, provider)
-    }
-
-    async fn mount_inquiry_mock(
+    async fn mount_post_mock(
         server: &MockServer,
-        expected_token: &str,
+        endpoint: &str,
+        expected_body: Value,
         status: u16,
-        body: Value,
+        response_body: Value,
     ) {
         Mock::given(method("POST"))
-            .and(path(INQUIRY_PATH))
-            .and(body_json(json!({ "auth_token": expected_token })))
-            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .and(path(endpoint))
+            .and(body_json(expected_body))
+            .respond_with(ResponseTemplate::new(status).set_body_json(response_body))
             .expect(1)
             .mount(server)
             .await;
+    }
+
+    async fn start_single_token_server(status: u16, body: Value) -> (MockServer, AcceptJwtProvider) {
+        let server = MockServer::start().await;
+        mount_post_mock(
+            &server,
+            ACCEPT_AUTH_TOKENS_PATH,
+            json!({ "api_key": TEST_API_KEY }),
+            status,
+            body,
+        )
+        .await;
+        let provider = build_provider(&server.uri());
+        (server, provider)
     }
 
     async fn send_inquiry(
@@ -470,28 +472,49 @@ mod tests {
             .await
     }
 
+    async fn run_single_inquiry(
+        inquiry_status: u16,
+        inquiry_body: Value,
+    ) -> Result<Response, AcceptJwtError> {
+        let (server, provider) =
+            start_single_token_server(201, json!({ "token": "valid-jwt" })).await;
+        mount_post_mock(
+            &server,
+            INQUIRY_PATH,
+            json!({ "auth_token": "valid-jwt" }),
+            inquiry_status,
+            inquiry_body,
+        )
+        .await;
+        execute_inquiry_with_retry(&provider, &server).await
+    }
+
+    async fn assert_fetch_token_error(status: u16, body: Value) -> AcceptJwtError {
+        let (_server, provider) = start_single_token_server(status, body).await;
+        provider
+            .fetch_fresh_token()
+            .await
+            .expect_err("expected fetch_fresh_token error")
+    }
+
     #[test]
     fn tc_1_2_3_new_rejects_empty_and_whitespace_api_key() {
-        assert!(matches!(
-            AcceptJwtProvider::new("https://accept.paymob.com", SecretString::from("")),
-            Err(AcceptJwtError::EmptyApiKey)
-        ));
-        assert!(matches!(
-            AcceptJwtProvider::new("https://accept.paymob.com", SecretString::from("   \t\n")),
-            Err(AcceptJwtError::EmptyApiKey)
-        ));
+        for key in ["", "   \t\n"] {
+            assert!(matches!(
+                AcceptJwtProvider::new("https://accept.paymob.com", SecretString::from(key)),
+                Err(AcceptJwtError::EmptyApiKey)
+            ));
+        }
     }
 
     #[test]
     fn tc_1_2_3_new_rejects_invalid_and_non_http_base_url() {
-        assert!(matches!(
-            AcceptJwtProvider::new("not-a-url", SecretString::from("ak_test")),
-            Err(AcceptJwtError::InvalidBaseUrl(_))
-        ));
-        assert!(matches!(
-            AcceptJwtProvider::new("ftp://accept.paymob.com", SecretString::from("ak_test")),
-            Err(AcceptJwtError::InvalidBaseUrl(_))
-        ));
+        for url in ["not-a-url", "ftp://accept.paymob.com"] {
+            assert!(matches!(
+                AcceptJwtProvider::new(url, SecretString::from("ak_test")),
+                Err(AcceptJwtError::InvalidBaseUrl(_))
+            ));
+        }
     }
 
     #[test]
@@ -615,14 +638,22 @@ mod tests {
             .mount(&server)
             .await;
 
-        mount_inquiry_mock(
+        mount_post_mock(
             &server,
-            "stale-jwt",
+            INQUIRY_PATH,
+            json!({ "auth_token": "stale-jwt" }),
             401,
             json!({ "detail": "incorrect credentials" }),
         )
         .await;
-        mount_inquiry_mock(&server, "fresh-jwt", 200, json!({ "id": 999 })).await;
+        mount_post_mock(
+            &server,
+            INQUIRY_PATH,
+            json!({ "auth_token": "fresh-jwt" }),
+            200,
+            json!({ "id": 999 }),
+        )
+        .await;
 
         let provider = build_provider(&server.uri());
         let resp = execute_inquiry_with_retry(&provider, &server)
@@ -635,51 +666,36 @@ mod tests {
 
     #[tokio::test]
     async fn tc_1_2_3_execute_with_retry_returns_non_401_without_eviction() {
-        let (server, provider) =
-            start_single_token_server(201, json!({ "token": "valid-jwt" })).await;
-        mount_inquiry_mock(&server, "valid-jwt", 500, json!({ "detail": "server error" })).await;
-
-        let resp = execute_inquiry_with_retry(&provider, &server)
+        let resp = run_single_inquiry(500, json!({ "detail": "server error" }))
             .await
             .expect("non-401 returns response directly");
-
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[tokio::test]
     async fn tc_1_2_3_execute_with_retry_rejects_non_matching_401_without_retry() {
-        let (server, provider) =
-            start_single_token_server(201, json!({ "token": "valid-jwt" })).await;
-        mount_inquiry_mock(&server, "valid-jwt", 401, json!({ "detail": "token revoked" })).await;
-
-        let err = execute_inquiry_with_retry(&provider, &server)
+        let err = run_single_inquiry(401, json!({ "detail": "token revoked" }))
             .await
             .expect_err("non-matching 401 must fail without retry");
-
         assert!(matches!(err, AcceptJwtError::InvalidCredentials));
     }
 
     #[tokio::test]
     async fn tc_1_2_3_fetch_token_rejects_401_missing_token_and_unexpected_status() {
-        let (_s1, p1) =
-            start_single_token_server(401, json!({ "detail": "incorrect credentials" })).await;
-        assert!(matches!(p1.fetch_fresh_token().await, Err(AcceptJwtError::InvalidCredentials)));
-
-        let (_s2, p2) = start_single_token_server(200, json!({ "token": "  " })).await;
-        assert!(matches!(p2.fetch_fresh_token().await, Err(AcceptJwtError::MissingTokenField)));
-
-        let (_s3, p3) =
-            start_single_token_server(503, json!({ "detail": "gateway maintenance" })).await;
-        let err3 = p3.fetch_fresh_token().await.expect_err("503 must error");
         assert!(matches!(
-            err3,
+            assert_fetch_token_error(401, json!({ "detail": "incorrect credentials" })).await,
+            AcceptJwtError::InvalidCredentials
+        ));
+        assert!(matches!(
+            assert_fetch_token_error(200, json!({ "token": "  " })).await,
+            AcceptJwtError::MissingTokenField
+        ));
+        assert!(matches!(
+            assert_fetch_token_error(503, json!({ "detail": "gateway maintenance" })).await,
             AcceptJwtError::UnexpectedStatus { status: 503, ref detail } if detail == "gateway maintenance"
         ));
-
-        let (_s4, p4) = start_single_token_server(502, json!({})).await;
-        let err4 = p4.fetch_fresh_token().await.expect_err("502 must error");
         assert!(matches!(
-            err4,
+            assert_fetch_token_error(502, json!({})).await,
             AcceptJwtError::UnexpectedStatus { status: 502, ref detail } if detail == "Bad Gateway"
         ));
     }

@@ -149,10 +149,10 @@ impl<'a> IntentionsService<'a> {
         key_mode: EnvironmentMode,
     ) -> Result<(), PaymobError> {
         for method in methods {
-            let PaymentMethodInput::IntegrationId(&id) = method else {
+            let PaymentMethodInput::IntegrationId(id) = method else {
                 continue;
             };
-            let Some(&known_mode) = self.known_integration_modes.get(&id) else {
+            let Some(&known_mode) = self.known_integration_modes.get(id) else {
                 continue;
             };
             if known_mode != key_mode {

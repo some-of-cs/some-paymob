@@ -1,1 +1,43 @@
-{"module_id":"module-1-core-microkernel","module_branch":"feat/module-1-core-microkernel","base_branch":"main","status":"in_progress","stories":{"US-1.1.0":{"branch":"feat/us-1.1.0-region-router-config","status":"pending"},"US-1.2.0":{"branch":"feat/us-1.2.0-multi-regime-auth","status":"pending"},"US-1.3.0":{"branch":"feat/us-1.3.0-http-error-primitives","status":"pending"}}}
+{
+  "module_id": "module-1-core-microkernel",
+  "module_branch": "feat/module-1-core-microkernel",
+  "base_branch": "main",
+  "status": "ready_for_pr",
+  "total_stories": 3,
+  "stories_merged": 3,
+  "total_units": 13,
+  "units_merged": 13,
+  "stories": {
+    "US-1.1.0": {
+      "branch": "feat/us-1.1.0-region-router-config",
+      "status": "merged",
+      "units_merged": [
+        "src/core/region.rs",
+        "src/core/credentials.rs",
+        "src/core/config.rs",
+        "src/core/client.rs"
+      ]
+    },
+    "US-1.2.0": {
+      "branch": "feat/us-1.2.0-multi-regime-auth",
+      "status": "merged",
+      "units_merged": [
+        "src/core/auth/strategy.rs",
+        "src/core/auth/cache.rs",
+        "src/core/auth/accept_jwt.rs",
+        "src/core/auth/payouts_oauth.rs",
+        "src/core/auth/partner.rs"
+      ]
+    },
+    "US-1.3.0": {
+      "branch": "feat/us-1.3.0-http-error-primitives",
+      "status": "merged",
+      "units_merged": [
+        "src/core/error.rs",
+        "src/core/http.rs",
+        "src/core/types.rs",
+        "src/core/pagination.rs"
+      ]
+    }
+  }
+}

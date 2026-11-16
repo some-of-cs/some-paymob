@@ -1,7 +1,8 @@
+#![forbid(unsafe_code)]
 //! Convenience prelude re-exporting the core `some-paymob` primitives (`US-1.3.0/unit-4`).
 //!
 //! Import all essential client, configuration, credential, region, auth,
-//! money, error, and pagination types with a single wildcard import:
+//! HTTP transport, money, error, and pagination types with a single wildcard import:
 //!
 //! ```
 //! use some_paymob::prelude::*;
@@ -19,6 +20,9 @@ pub use crate::core::credentials::{
     SecretKey,
 };
 pub use crate::core::error::PaymobError;
+pub use crate::core::http::{
+    HttpClient, HttpClientConfig, HttpError, HttpRequest, HttpResponse, RetryPolicy,
+};
 pub use crate::core::pagination::{PageQuery, PaginatedResponse};
 pub use crate::core::region::{PaymobRegion, RegionalEndpoints};
-pub use crate::core::types::{Currency, MinorUnitAmount};
+pub use crate::core::types::{Currency, MinorUnitAmount, validate_prefixed_id};

@@ -237,10 +237,12 @@ impl CreateSubscriptionPlanParamsBuilder {
             field: "name",
             reason: "name is required".to_owned(),
         })?;
-        let integration = self.integration.ok_or_else(|| PaymobError::ValidationError {
-            field: "integration",
-            reason: "integration is required".to_owned(),
-        })?;
+        let integration = self
+            .integration
+            .ok_or_else(|| PaymobError::ValidationError {
+                field: "integration",
+                reason: "integration is required".to_owned(),
+            })?;
 
         let params = CreateSubscriptionPlanParams {
             frequency,

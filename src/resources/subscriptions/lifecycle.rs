@@ -1289,7 +1289,9 @@ mod tests {
         Mock::given(method("PUT"))
             .and(path("/api/acceptance/subscriptions/1264"))
             .and(header("authorization", &format!("Bearer {TEST_JWT}")))
-            .and(body_json(json!({ "amount_cents": 75000, "reminder_days": 3 })))
+            .and(body_json(
+                json!({ "amount_cents": 75000, "reminder_days": 3 }),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "id": 1264,
                 "plan_id": 88,

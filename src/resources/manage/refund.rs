@@ -154,8 +154,8 @@ impl<'a> ManageService<'a> {
         inject_secret_key_token(&mut headers, &secret)
             .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
 
-        let mut request =
-            HttpRequest::post(url.as_str()).map_err(|err| PaymobError::TransportError(err.to_string()))?;
+        let mut request = HttpRequest::post(url.as_str())
+            .map_err(|err| PaymobError::TransportError(err.to_string()))?;
         if let Some(auth_value) = headers.remove(AUTHORIZATION) {
             request = request.with_header(AUTHORIZATION, auth_value);
         }
@@ -191,7 +191,10 @@ fn extract_permissible_refund_message(response: &HttpResponse) -> Option<String>
         .get("message")
         .or_else(|| value.get("detail"))
         .and_then(serde_json::Value::as_str)?;
-    if msg.to_ascii_lowercase().contains(PERMISSIBLE_REFUND_SNIPPET) {
+    if msg
+        .to_ascii_lowercase()
+        .contains(PERMISSIBLE_REFUND_SNIPPET)
+    {
         return Some(msg.to_owned());
     }
     None

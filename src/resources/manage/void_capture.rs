@@ -343,7 +343,10 @@ mod tests {
         };
         let config = ClientConfig::builder()
             .region(region)
-            .api_key(ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5").expect("valid api key"))
+            .api_key(
+                ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5")
+                    .expect("valid api key"),
+            )
             .use_legacy_v2_bearer_for_capture(true)
             .max_retries(0)
             .build()
@@ -460,18 +463,22 @@ mod tests {
     #[tokio::test]
     async fn rejects_zero_boundary_inputs_and_missing_credentials() {
         let client = test_client_regime1("https://accept.paymob.com");
-        assert!(client
-            .manage()
-            .void(VoidParams::new(0))
-            .await
-            .expect_err("zero tx id must fail")
-            .is_validation_error());
-        assert!(client
-            .manage()
-            .capture(CaptureParams::new(574_588, 0))
-            .await
-            .expect_err("zero amount must fail")
-            .is_validation_error());
+        assert!(
+            client
+                .manage()
+                .void(VoidParams::new(0))
+                .await
+                .expect_err("zero tx id must fail")
+                .is_validation_error()
+        );
+        assert!(
+            client
+                .manage()
+                .capture(CaptureParams::new(574_588, 0))
+                .await
+                .expect_err("zero amount must fail")
+                .is_validation_error()
+        );
 
         let bare_config = ClientConfig::builder()
             .region(PaymobRegion::Egypt)
@@ -479,11 +486,13 @@ mod tests {
             .build()
             .expect("valid config");
         let bare_client = PaymobClient::new(bare_config).expect("valid client");
-        assert!(bare_client
-            .manage()
-            .capture(CaptureParams::new(574_588, 100))
-            .await
-            .expect_err("missing api key must fail")
-            .is_auth_error());
+        assert!(
+            bare_client
+                .manage()
+                .capture(CaptureParams::new(574_588, 100))
+                .await
+                .expect_err("missing api key must fail")
+                .is_auth_error()
+        );
     }
 }

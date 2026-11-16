@@ -259,11 +259,7 @@ const fn select_mode(
     when_true: FeeCalculationMode,
     when_false: FeeCalculationMode,
 ) -> FeeCalculationMode {
-    if condition {
-        when_true
-    } else {
-        when_false
-    }
+    if condition { when_true } else { when_false }
 }
 
 fn bin_in_range(bin_prefix: Option<&str>, start_bin: &str, end_bin: &str) -> bool {
@@ -296,8 +292,7 @@ fn checked_bps_fee(amount_cents: u64, bps: u32) -> Result<u64, PaymobError> {
         .checked_mul(u128::from(bps))
         .ok_or_else(|| validation_err("amount_cents", "convenience fee multiplication overflow"))?;
     let fee = scaled / u128::from(BASIS_POINTS_DENOMINATOR);
-    u64::try_from(fee)
-        .map_err(|_| validation_err("fee_cents", "convenience fee exceeds u64 range"))
+    u64::try_from(fee).map_err(|_| validation_err("fee_cents", "convenience fee exceeds u64 range"))
 }
 
 fn validate_mode(mode: FeeCalculationMode) -> Result<(), PaymobError> {

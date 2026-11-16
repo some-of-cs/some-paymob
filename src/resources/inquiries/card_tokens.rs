@@ -153,12 +153,15 @@ impl<'a> InquiriesService<'a> {
 }
 
 async fn acquire_accept_jwt(service: &InquiriesService<'_>) -> Result<SecretString, PaymobError> {
-    let api_key = service.client().config().api_key().ok_or_else(|| {
-        PaymobError::ValidationError {
-            field: "api_key",
-            reason: "api_key must be configured for Regime 2 inquiry endpoints".to_owned(),
-        }
-    })?;
+    let api_key =
+        service
+            .client()
+            .config()
+            .api_key()
+            .ok_or_else(|| PaymobError::ValidationError {
+                field: "api_key",
+                reason: "api_key must be configured for Regime 2 inquiry endpoints".to_owned(),
+            })?;
     let provider = AcceptJwtProvider::new(
         service.client().endpoints().accept_base_url.as_str(),
         SecretString::from(api_key.expose_secret().to_owned()),
@@ -254,8 +257,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/auth/tokens"))
             .respond_with(
-                ResponseTemplate::new(201)
-                    .set_body_json(serde_json::json!({"token": "jwt_cards"})),
+                ResponseTemplate::new(201).set_body_json(serde_json::json!({"token": "jwt_cards"})),
             )
             .mount(&server)
             .await;
@@ -297,7 +299,10 @@ mod tests {
         assert_eq!(env.token_type, "TOKEN");
         assert_eq!(env.obj.token.expose_secret(), "tok_live_secret_card_987654");
         assert_eq!(env.obj.masked_pan, "xxxx-xxxx-xxxx-2346");
-        assert_eq!(env.obj.next_payment_intention.as_deref(), Some("pi_next_123"));
+        assert_eq!(
+            env.obj.next_payment_intention.as_deref(),
+            Some("pi_next_123")
+        );
 
         let dbg = format!("{env:?}");
         assert!(dbg.contains("[REDACTED]"));

@@ -25,7 +25,9 @@ fn build_client(base_url: &str, legacy_v2_capture: bool) -> PaymobClient {
     let config = ClientConfig::builder()
         .region(region)
         .secret_key(SecretKey::new("egy_sk_test_us310_integration").expect("valid secret key"))
-        .api_key(ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5").expect("valid api key"))
+        .api_key(
+            ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5").expect("valid api key"),
+        )
         .use_legacy_v2_bearer_for_capture(legacy_v2_capture)
         .max_retries(0)
         .build()
@@ -38,7 +40,10 @@ async fn ac1_tc311_tc312_partial_and_full_refund_returns_child_transaction() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/acceptance/void_refund/refund"))
-        .and(header("authorization", "Token egy_sk_test_us310_integration"))
+        .and(header(
+            "authorization",
+            "Token egy_sk_test_us310_integration",
+        ))
         .and(body_json(serde_json::json!({
             "transaction_id": 192036465,
             "amount_cents": 25000
@@ -122,7 +127,10 @@ async fn ac3_tc313_void_and_capture_support_regime1_and_legacy_v2_bearer() {
 
     Mock::given(method("POST"))
         .and(path("/api/acceptance/void_refund/void"))
-        .and(header("authorization", "Token egy_sk_test_us310_integration"))
+        .and(header(
+            "authorization",
+            "Token egy_sk_test_us310_integration",
+        ))
         .and(body_json(serde_json::json!({ "transaction_id": 574588 })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": 574589,

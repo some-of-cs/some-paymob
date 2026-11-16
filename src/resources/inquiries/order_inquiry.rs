@@ -81,7 +81,10 @@ pub struct OrderShippingData {
 impl fmt::Debug for OrderShippingData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OrderShippingData")
-            .field("first_name", &self.first_name.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "first_name",
+                &self.first_name.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("last_name", &self.last_name.as_ref().map(|_| "[REDACTED]"))
             .field("email", &self.email.as_ref().map(|_| "[REDACTED]"))
             .field(
@@ -202,12 +205,15 @@ impl<'a> InquiriesService<'a> {
 }
 
 async fn acquire_accept_jwt(service: &InquiriesService<'_>) -> Result<SecretString, PaymobError> {
-    let api_key = service.client().config().api_key().ok_or_else(|| {
-        PaymobError::ValidationError {
-            field: "api_key",
-            reason: "api_key must be configured for Regime 2 inquiry endpoints".to_owned(),
-        }
-    })?;
+    let api_key =
+        service
+            .client()
+            .config()
+            .api_key()
+            .ok_or_else(|| PaymobError::ValidationError {
+                field: "api_key",
+                reason: "api_key must be configured for Regime 2 inquiry endpoints".to_owned(),
+            })?;
     let provider = AcceptJwtProvider::new(
         service.client().endpoints().accept_base_url.as_str(),
         SecretString::from(api_key.expose_secret().to_owned()),

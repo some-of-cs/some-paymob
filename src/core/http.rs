@@ -452,6 +452,25 @@ impl HttpClient {
             .map_err(|e| HttpError::InvalidConfig(e.to_string()))
     }
 
+    fn retryable_outcome(
+        &self,
+        request_id: Uuid,
+        attempt: u32,
+        retry_after: Option<Duration>,
+        reason: &str,
+        last_error: HttpError,
+    ) -> AttemptOutcome {
+        let delay = compute_backoff_delay(&self.config.retry, attempt, retry_after);
+        tracing::warn!(
+            request_id = %request_id,
+            attempt = attempt,
+            delay_ms = delay.as_millis() as u64,
+            reason = reason,
+            "scheduling HTTP retry"
+        );
+        AttemptOutcome::Retryable { delay, last_error }
+    }
+
     fn classify_transport_error(
         &self,
         err: reqwest::Error,
@@ -459,17 +478,13 @@ impl HttpClient {
         attempt: u32,
     ) -> AttemptOutcome {
         if err.is_timeout() {
-            let delay = compute_backoff_delay(&self.config.retry, attempt, None);
-            tracing::warn!(
-                request_id = %request_id,
-                attempt = attempt,
-                delay_ms = delay.as_millis() as u64,
-                "HTTP request timed out"
+            return self.retryable_outcome(
+                request_id,
+                attempt,
+                None,
+                "timeout",
+                HttpError::Timeout { request_id },
             );
-            return AttemptOutcome::Retryable {
-                delay,
-                last_error: HttpError::Timeout { request_id },
-            };
         }
 
         AttemptOutcome::Fatal(HttpError::Transport {
@@ -480,23 +495,19 @@ impl HttpClient {
 
     fn build_retryable_status_error(&self, ctx: RetryableStatusContext<'_>) -> AttemptOutcome {
         let retry_after = parse_retry_after(ctx.headers);
-        let delay = compute_backoff_delay(&self.config.retry, ctx.attempt, retry_after);
-        tracing::warn!(
-            request_id = %ctx.request_id,
-            status = ctx.status.as_u16(),
-            attempt = ctx.attempt,
-            delay_ms = delay.as_millis() as u64,
-            "received retryable HTTP status"
-        );
-        AttemptOutcome::Retryable {
-            delay,
-            last_error: HttpError::RetriesExhausted {
+        let status_label = ctx.status.as_u16().to_string();
+        self.retryable_outcome(
+            ctx.request_id,
+            ctx.attempt,
+            retry_after,
+            &status_label,
+            HttpError::RetriesExhausted {
                 request_id: ctx.request_id,
                 status: ctx.status,
                 retry_after,
                 body: ctx.body,
             },
-        }
+        )
     }
 }
 
@@ -570,21 +581,27 @@ pub fn compute_backoff_delay(
     Duration::from_millis(jittered_ms)
 }
 
+fn check_body_limit(
+    actual_bytes: Option<u64>,
+    max_bytes: usize,
+    request_id: Uuid,
+) -> Result<(), HttpError> {
+    if actual_bytes.is_some_and(|len| len > max_bytes as u64) {
+        return Err(HttpError::ResponseTooLarge {
+            request_id,
+            limit_bytes: max_bytes,
+            actual_bytes,
+        });
+    }
+    Ok(())
+}
+
 async fn read_bounded_body(
     mut response: reqwest::Response,
     max_bytes: usize,
     request_id: Uuid,
 ) -> Result<Vec<u8>, HttpError> {
-    if response
-        .content_length()
-        .is_some_and(|len| len > max_bytes as u64)
-    {
-        return Err(HttpError::ResponseTooLarge {
-            request_id,
-            limit_bytes: max_bytes,
-            actual_bytes: response.content_length(),
-        });
-    }
+    check_body_limit(response.content_length(), max_bytes, request_id)?;
 
     let mut buf = Vec::new();
     while let Some(chunk) = response
@@ -593,13 +610,7 @@ async fn read_bounded_body(
         .map_err(|source| HttpError::Transport { request_id, source })?
     {
         let next_len = buf.len().saturating_add(chunk.len());
-        if next_len > max_bytes {
-            return Err(HttpError::ResponseTooLarge {
-                request_id,
-                limit_bytes: max_bytes,
-                actual_bytes: Some(next_len as u64),
-            });
-        }
+        check_body_limit(Some(next_len as u64), max_bytes, request_id)?;
         buf.extend_from_slice(&chunk);
     }
 
@@ -625,6 +636,18 @@ mod tests {
         }
     }
 
+    async fn execute_on_server(
+        server: &MockServer,
+        cfg: HttpClientConfig,
+        req_method: Method,
+        route: &str,
+    ) -> Result<HttpResponse, HttpError> {
+        let client = HttpClient::new(cfg).expect("client builds");
+        let req = HttpRequest::new(req_method, &format!("{}{route}", server.uri()))
+            .expect("valid URL");
+        client.execute(&req).await
+    }
+
     async fn assert_retry_then_succeed(
         first_status: u16,
         retry_after: Option<&str>,
@@ -636,22 +659,26 @@ mod tests {
             Some(val) => ResponseTemplate::new(first_status).insert_header("Retry-After", val),
             None => ResponseTemplate::new(first_status),
         };
-        Mock::given(method(req_method.as_str()))
-            .and(path("/retry"))
-            .respond_with(first_template)
-            .up_to_n_times(1)
-            .mount(&server)
-            .await;
-        Mock::given(method(req_method.as_str()))
-            .and(path("/retry"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(expected_body))
-            .mount(&server)
-            .await;
+        let route = "/retry";
+        for (template, limit) in [
+            (first_template, Some(1)),
+            (
+                ResponseTemplate::new(200).set_body_string(expected_body),
+                None,
+            ),
+        ] {
+            let mut mock = Mock::given(method(req_method.as_str()))
+                .and(path(route))
+                .respond_with(template);
+            if let Some(n) = limit {
+                mock = mock.up_to_n_times(n);
+            }
+            mock.mount(&server).await;
+        }
 
-        let client = HttpClient::new(fast_config()).expect("client builds");
-        let req =
-            HttpRequest::new(req_method, &format!("{}/retry", server.uri())).expect("valid URL");
-        let resp = client.execute(&req).await.expect("retry succeeds");
+        let resp = execute_on_server(&server, fast_config(), req_method, route)
+            .await
+            .expect("retry succeeds");
 
         assert_eq!(resp.status, StatusCode::OK);
         assert_eq!(resp.body, expected_body.as_bytes());
@@ -673,47 +700,64 @@ mod tests {
         }
         mock.mount(&server).await;
 
-        let client = HttpClient::new(cfg).expect("client builds");
-        let req = HttpRequest::get(&format!("{}{route}", server.uri())).expect("valid URL");
-        client.execute(&req).await
+        execute_on_server(&server, cfg, Method::GET, route).await
+    }
+
+    async fn assert_response_too_large(
+        route: &str,
+        template: ResponseTemplate,
+        expected_actual: Option<u64>,
+    ) {
+        let err = execute_mock_get(fast_config(), route, template, None)
+            .await
+            .unwrap_err();
+
+        match err {
+            HttpError::ResponseTooLarge {
+                limit_bytes,
+                actual_bytes,
+                ..
+            } => {
+                assert_eq!(limit_bytes, 1024);
+                if let Some(expected) = expected_actual {
+                    assert_eq!(actual_bytes, Some(expected));
+                }
+            }
+            other => panic!("expected ResponseTooLarge, got {other:?}"),
+        }
     }
 
     #[test]
     fn tc_1_3_2_retry_after_parsing_positive_and_malformed() {
-        let empty = HeaderMap::new();
-        assert_eq!(parse_retry_after(&empty), None);
+        assert_eq!(parse_retry_after(&HeaderMap::new()), None);
 
-        let mut valid = HeaderMap::new();
-        valid.insert(RETRY_AFTER, HeaderValue::from_static(" 42 "));
-        assert_eq!(parse_retry_after(&valid), Some(Duration::from_secs(42)));
-
-        let mut zero = HeaderMap::new();
-        zero.insert(RETRY_AFTER, HeaderValue::from_static("0"));
-        assert_eq!(parse_retry_after(&zero), Some(Duration::ZERO));
-
-        let mut malformed = HeaderMap::new();
-        malformed.insert(
-            RETRY_AFTER,
-            HeaderValue::from_static("Wed, 21 Oct 2015 07:28:00 GMT"),
-        );
-        assert_eq!(parse_retry_after(&malformed), None);
-
-        let mut negative = HeaderMap::new();
-        negative.insert(RETRY_AFTER, HeaderValue::from_static("-5"));
-        assert_eq!(parse_retry_after(&negative), None);
+        let cases = [
+            (" 42 ", Some(Duration::from_secs(42))),
+            ("0", Some(Duration::ZERO)),
+            ("Wed, 21 Oct 2015 07:28:00 GMT", None),
+            ("-5", None),
+        ];
+        for (raw, expected) in cases {
+            let mut headers = HeaderMap::new();
+            headers.insert(RETRY_AFTER, HeaderValue::from_static(raw));
+            assert_eq!(parse_retry_after(&headers), expected, "raw={raw}");
+        }
     }
 
     #[test]
     fn tc_1_3_2_retryable_status_classification() {
-        assert!(is_retryable_status(StatusCode::TOO_MANY_REQUESTS));
-        assert!(is_retryable_status(StatusCode::BAD_GATEWAY));
-        assert!(is_retryable_status(StatusCode::SERVICE_UNAVAILABLE));
-        assert!(is_retryable_status(StatusCode::GATEWAY_TIMEOUT));
-
-        assert!(!is_retryable_status(StatusCode::OK));
-        assert!(!is_retryable_status(StatusCode::BAD_REQUEST));
-        assert!(!is_retryable_status(StatusCode::UNAUTHORIZED));
-        assert!(!is_retryable_status(StatusCode::NOT_FOUND));
+        for (status, expected) in [
+            (StatusCode::TOO_MANY_REQUESTS, true),
+            (StatusCode::BAD_GATEWAY, true),
+            (StatusCode::SERVICE_UNAVAILABLE, true),
+            (StatusCode::GATEWAY_TIMEOUT, true),
+            (StatusCode::OK, false),
+            (StatusCode::BAD_REQUEST, false),
+            (StatusCode::UNAUTHORIZED, false),
+            (StatusCode::NOT_FOUND, false),
+        ] {
+            assert_eq!(is_retryable_status(status), expected, "status={status}");
+        }
     }
 
     #[test]
@@ -821,43 +865,22 @@ mod tests {
 
     #[tokio::test]
     async fn tc_1_3_2_enforces_bounded_response_size() {
-        let err = execute_mock_get(
-            fast_config(),
+        assert_response_too_large(
             "/large",
             ResponseTemplate::new(200).set_body_bytes(vec![b'a'; 2048]),
             None,
         )
-        .await
-        .unwrap_err();
-
-        assert!(matches!(
-            err,
-            HttpError::ResponseTooLarge {
-                limit_bytes: 1024,
-                ..
-            }
-        ));
+        .await;
     }
 
     #[tokio::test]
     async fn tc_1_3_2_enforces_content_length_precheck_response_too_large() {
-        let err = execute_mock_get(
-            fast_config(),
+        assert_response_too_large(
             "/declared-large",
             ResponseTemplate::new(200).insert_header("Content-Length", "4096"),
-            None,
+            Some(4096),
         )
-        .await
-        .unwrap_err();
-
-        assert!(matches!(
-            err,
-            HttpError::ResponseTooLarge {
-                limit_bytes: 1024,
-                actual_bytes: Some(4096),
-                ..
-            }
-        ));
+        .await;
     }
 
     #[tokio::test]

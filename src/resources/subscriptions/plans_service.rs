@@ -780,7 +780,11 @@ mod tests {
             .and(path("/api/acceptance/subscription-plans/42"))
             .and(header("authorization", "Bearer jwt_update_123"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(sample_plan_json(42, "Pro Annual", true)),
+                ResponseTemplate::new(200).set_body_json(sample_plan_json(
+                    42,
+                    "Pro Annual",
+                    true,
+                )),
             )
             .mount(&server)
             .await;
@@ -848,7 +852,11 @@ mod tests {
             .and(path("/api/acceptance/subscription-plans/42/suspend"))
             .and(header("authorization", "Bearer jwt_lifecycle_123"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(sample_plan_json(42, "Pro Monthly", false)),
+                ResponseTemplate::new(200).set_body_json(sample_plan_json(
+                    42,
+                    "Pro Monthly",
+                    false,
+                )),
             )
             .mount(&server)
             .await;
@@ -857,7 +865,11 @@ mod tests {
             .and(path("/api/acceptance/subscription-plans/42/resume"))
             .and(header("authorization", "Bearer jwt_lifecycle_123"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(sample_plan_json(42, "Pro Monthly", true)),
+                ResponseTemplate::new(200).set_body_json(sample_plan_json(
+                    42,
+                    "Pro Monthly",
+                    true,
+                )),
             )
             .mount(&server)
             .await;
@@ -933,7 +945,11 @@ mod tests {
             .and(path("/api/acceptance/subscription-plans/42/suspend"))
             .and(header("authorization", "Bearer fresh_jwt_token"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(sample_plan_json(42, "Pro Monthly", false)),
+                ResponseTemplate::new(200).set_body_json(sample_plan_json(
+                    42,
+                    "Pro Monthly",
+                    false,
+                )),
             )
             .expect(1)
             .mount(&server)

@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! Subscription plans CRUD and lifecycle service (`US-4.2.0`, Unit 3).
 //!
-//! Provides [`SubscriptionPlansService`] for creating, updating, listing,
+//! Provides `SubscriptionPlansService` for creating, updating, listing,
 //! suspending, and resuming Paymob subscription plans over
 //! `/api/acceptance/subscription-plans` under Regime 2
 //! (`Authorization: Bearer <auth_token>`).
@@ -779,8 +779,7 @@ mod tests {
         Mock::given(method("PUT"))
             .and(path("/api/acceptance/subscription-plans/42"))
             .and(header("authorization", "Bearer jwt_update_123"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(sample_plan_json(
+            .respond_with(ResponseTemplate::new(200).set_body_json(sample_plan_json(
                     42,
                     "Pro Annual",
                     true,
@@ -851,8 +850,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/acceptance/subscription-plans/42/suspend"))
             .and(header("authorization", "Bearer jwt_lifecycle_123"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(sample_plan_json(
+            .respond_with(ResponseTemplate::new(200).set_body_json(sample_plan_json(
                     42,
                     "Pro Monthly",
                     false,
@@ -864,8 +862,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/acceptance/subscription-plans/42/resume"))
             .and(header("authorization", "Bearer jwt_lifecycle_123"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(sample_plan_json(
+            .respond_with(ResponseTemplate::new(200).set_body_json(sample_plan_json(
                     42,
                     "Pro Monthly",
                     true,
@@ -934,9 +931,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/acceptance/subscription-plans/42/suspend"))
             .and(header("authorization", "Bearer stale_jwt_token"))
-            .respond_with(
-                ResponseTemplate::new(401).set_body_json(json!({ "detail": "incorrect credentials" })),
-            )
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({ "detail": "incorrect credentials" })))
             .expect(1)
             .mount(&server)
             .await;
@@ -944,13 +939,11 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/acceptance/subscription-plans/42/suspend"))
             .and(header("authorization", "Bearer fresh_jwt_token"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(sample_plan_json(
+            .respond_with(ResponseTemplate::new(200).set_body_json(sample_plan_json(
                     42,
                     "Pro Monthly",
                     false,
-                )),
-            )
+                )))
             .expect(1)
             .mount(&server)
             .await;

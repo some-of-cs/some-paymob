@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
-//! Unit 4.1.3 — [`SavedCardsService`] executing `POST /api/acceptance/payments/pay`.
+//! Unit 4.1.3 — `SavedCardsService` executing `POST /api/acceptance/payments/pay`.
 //!
 //! Implements Regime 2 (`Authorization: Bearer <auth_token>`) headless payment
 //! execution across saved-card MIT/MOTO tokens, Mobile Wallets, Kiosk
-//! aggregators, and raw `source` payloads, returning [`HeadlessPayResponse`](self::HeadlessPayResponse).
+//! aggregators, and raw `source` payloads, returning `HeadlessPayResponse`.
 
 use std::fmt;
 

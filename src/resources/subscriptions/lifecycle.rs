@@ -819,12 +819,14 @@ impl SubscriptionsService {
         params: &CreateSubscriptionParams,
     ) -> Result<SubscriptionEnrollmentResponse, PaymobError> {
         params.validate()?;
-        let secret_key = self.client.config().secret_key().ok_or_else(|| {
-            PaymobError::ValidationError {
-                field: "secret_key",
-                reason: "Paymob secret_key is required for Intention 3DS enrollment".to_owned(),
-            }
-        })?;
+        let secret_key =
+            self.client
+                .config()
+                .secret_key()
+                .ok_or_else(|| PaymobError::ValidationError {
+                    field: "secret_key",
+                    reason: "Paymob secret_key is required for Intention 3DS enrollment".to_owned(),
+                })?;
         let url = self.client.accept_url(INTENTION_CREATE_PATH)?;
         let header_val = format!("Token {}", secret_key.expose_secret());
         let auth_header = HeaderValue::from_str(&header_val)
@@ -952,7 +954,9 @@ impl SubscriptionsService {
         let token = self.acquire_accept_token().await?;
         let response = self.send_once(&method, path, body, &token).await?;
         if is_incorrect_credentials_401(response.status, &response.body) {
-            return self.retry_with_fresh_token(&method, path, body, &token).await;
+            return self
+                .retry_with_fresh_token(&method, path, body, &token)
+                .await;
         }
         decode_response(response)
     }
@@ -999,14 +1003,14 @@ impl SubscriptionsService {
     }
 
     async fn acquire_accept_token(&self) -> Result<SecretString, PaymobError> {
-        let api_key = self
-            .client
-            .config()
-            .api_key()
-            .ok_or_else(|| PaymobError::ValidationError {
-                field: "api_key",
-                reason: "Paymob API key is required for Regime 2 authentication".to_owned(),
-            })?;
+        let api_key =
+            self.client
+                .config()
+                .api_key()
+                .ok_or_else(|| PaymobError::ValidationError {
+                    field: "api_key",
+                    reason: "Paymob API key is required for Regime 2 authentication".to_owned(),
+                })?;
         let base_url = self.client.endpoints().accept_base_url.clone();
         let raw_key = SecretString::from(api_key.expose_secret().to_owned());
 
@@ -1150,7 +1154,10 @@ mod tests {
             vec![42001],
         )
         .with_special_reference("sub_enroll_001");
-        let resp = service.create(&params).await.expect("enrollment should succeed");
+        let resp = service
+            .create(&params)
+            .await
+            .expect("enrollment should succeed");
 
         assert_eq!(resp.id, "pi_test_sub_001");
         assert_eq!(resp.subscription_plan_id, Some(88));
@@ -1230,11 +1237,17 @@ mod tests {
             .await;
 
         let service = SubscriptionsService::with_test_http(mock_client(&server.uri()));
-        let sub = service.retrieve(1264).await.expect("retrieve should succeed");
+        let sub = service
+            .retrieve(1264)
+            .await
+            .expect("retrieve should succeed");
         assert_eq!(sub.id, 1264);
         assert_eq!(sub.state, SubscriptionState::Active);
 
-        let err = service.retrieve(9999).await.expect_err("404 should map to ApiError");
+        let err = service
+            .retrieve(9999)
+            .await
+            .expect_err("404 should map to ApiError");
         assert!(matches!(err, PaymobError::ApiError { status: 404, .. }));
     }
 
@@ -1292,13 +1305,19 @@ mod tests {
         let empty = UpdateSubscriptionParams::new();
         assert!(matches!(
             service.update(1264, &empty).await,
-            Err(PaymobError::ValidationError { field: "params", .. })
+            Err(PaymobError::ValidationError {
+                field: "params",
+                ..
+            })
         ));
 
         let params = UpdateSubscriptionParams::new()
             .with_amount_cents(MinorUnitAmount::new(75_000))
             .with_reminder_days(3);
-        let updated = service.update(1264, &params).await.expect("update should succeed");
+        let updated = service
+            .update(1264, &params)
+            .await
+            .expect("update should succeed");
         assert_eq!(updated.amount_cents, MinorUnitAmount::new(75_000));
     }
 
@@ -1328,8 +1347,14 @@ mod tests {
             service.suspend(1264).await.expect("suspend").state,
             SubscriptionState::Suspended
         );
-        assert_eq!(service.resume(1264).await.expect("resume").state, SubscriptionState::Active);
-        assert_eq!(service.cancel(1264).await.expect("cancel").state, SubscriptionState::Canceled);
+        assert_eq!(
+            service.resume(1264).await.expect("resume").state,
+            SubscriptionState::Active
+        );
+        assert_eq!(
+            service.cancel(1264).await.expect("cancel").state,
+            SubscriptionState::Canceled
+        );
     }
 
     #[tokio::test]
@@ -1369,7 +1394,10 @@ mod tests {
             .await;
 
         let service = SubscriptionsService::with_test_http(mock_client(&server.uri()));
-        let sub = service.suspend(1264).await.expect("retry with fresh token should succeed");
+        let sub = service
+            .suspend(1264)
+            .await
+            .expect("retry with fresh token should succeed");
         assert_eq!(sub.state, SubscriptionState::Suspended);
         assert_eq!(auth_calls.load(Ordering::SeqCst), 2);
     }

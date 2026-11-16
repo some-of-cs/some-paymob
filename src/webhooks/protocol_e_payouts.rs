@@ -183,7 +183,7 @@ impl super::verifier::PaymobWebhookEngine {
     ) -> Result<DisbursementCallback, super::verifier::WebhookError> {
         verify_optional_payouts_hmac(self.payouts_secret(), raw_body, signature_hex)?;
         serde_json::from_str(raw_body)
-            .map_err(|_| super::verifier::WebhookError::InvalidJsonPayload)
+            .map_err(|err| super::verifier::WebhookError::InvalidJsonPayload(err.to_string()))
     }
 
     /// Verifies (when configured) and deserializes a Protocol E top-up
@@ -204,7 +204,7 @@ impl super::verifier::PaymobWebhookEngine {
     ) -> Result<TopupCallback, super::verifier::WebhookError> {
         verify_optional_payouts_hmac(self.payouts_secret(), raw_body, signature_hex)?;
         serde_json::from_str(raw_body)
-            .map_err(|_| super::verifier::WebhookError::InvalidJsonPayload)
+            .map_err(|err| super::verifier::WebhookError::InvalidJsonPayload(err.to_string()))
     }
 }
 

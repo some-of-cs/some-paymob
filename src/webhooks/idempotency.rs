@@ -83,13 +83,7 @@ impl IdempotentWebhookGuard for super::dispatcher::WebhookEvent {
         match self {
             Self::TransactionProcessed(evt) => evt.idempotency_tuple(),
             Self::TransactionResponseRedirect(params) => {
-                let id = params.get("id").cloned().unwrap_or_default();
-                let order = params
-                    .get("order_id")
-                    .or_else(|| params.get("order"))
-                    .cloned()
-                    .unwrap_or_default();
-                (id, order)
+                (params.id.clone(), params.order_id.clone())
             }
             Self::CardTokenSaved(evt) => evt.idempotency_tuple(),
             Self::SubscriptionLifecycle(evt) => evt.idempotency_tuple(),

@@ -438,7 +438,7 @@ impl super::verifier::PaymobWebhookEngine {
         raw_body: &str,
     ) -> Result<SubscriptionWebhookEvent, super::verifier::WebhookError> {
         let event: SubscriptionWebhookEvent = serde_json::from_str(raw_body)
-            .map_err(|_| super::verifier::WebhookError::InvalidJsonPayload)?;
+            .map_err(|err| super::verifier::WebhookError::InvalidJsonPayload(err.to_string()))?;
         let hmac_hex = event
             .hmac
             .as_deref()

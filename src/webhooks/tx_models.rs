@@ -69,14 +69,14 @@ pub type TransactionWebhook = TransactionProcessedEvent;
 /// Ergonomic type alias for [`TransactionWebhookObj`].
 pub type TransactionObject = TransactionWebhookObj;
 
-/// Top-level Paymob `TRANSACTION` webhook event envelope (Protocol A).
-///
-/// Wraps the event discriminator (`"type"`) and the nested [`TransactionWebhookObj`]
-/// containing the 20 HMAC-signed transaction fields and auxiliary metadata.
 fn default_transaction_event_type() -> String {
     "TRANSACTION".to_string()
 }
 
+/// Top-level Paymob `TRANSACTION` webhook event envelope (Protocol A).
+///
+/// Wraps the event discriminator (`"type"`) and the nested [`TransactionWebhookObj`]
+/// containing the 20 HMAC-signed transaction fields and auxiliary metadata.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransactionProcessedEvent {
     /// Webhook event discriminator (defaults to `"TRANSACTION"` when omitted), mapped from JSON `"type"`.

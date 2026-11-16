@@ -584,6 +584,7 @@ impl HmacSecret {
 
     /// Returns a reference to the underlying [`SecretString`].
     #[must_use]
+    #[allow(dead_code)]
     pub(crate) const fn as_secret_string(&self) -> &SecretString {
         &self.inner
     }

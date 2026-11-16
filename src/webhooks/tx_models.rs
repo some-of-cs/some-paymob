@@ -36,7 +36,7 @@
 //!         "created_at": "2026-11-16T12:00:00.000000",
 //!         "currency": "EGP",
 //!         "source_data": {
-//!             "pan": "2345",
+//!             "pan": "9876",
 //!             "sub_type": "MasterCard",
 //!             "type": "card"
 //!         },
@@ -53,7 +53,7 @@
 //!
 //! let debug_output = format!("{event:?}");
 //! assert!(debug_output.contains("[REDACTED]"));
-//! assert!(!debug_output.contains("2345"));
+//! assert!(!debug_output.contains("9876"));
 //! assert!(!debug_output.contains("buyer@example.com"));
 //! ```
 

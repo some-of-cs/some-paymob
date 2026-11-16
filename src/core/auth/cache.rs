@@ -6,7 +6,7 @@
 //! double-checked locking to prevent thundering-herd token storms.
 
 use arc_swap::ArcSwapOption;
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
@@ -19,6 +19,8 @@ pub const DEFAULT_TOKEN_TTL_SECS: u64 = 3600;
 
 /// Proactive refresh margin in seconds before token expiration (60 seconds).
 pub const PROACTIVE_REFRESH_MARGIN_SECS: u64 = 60;
+
+const MAX_FALLBACK_TTL: Duration = Duration::from_secs(100 * 365 * 24 * 60 * 60);
 
 /// Cached authentication token with automatic memory scrubbing on drop.
 ///
@@ -57,7 +59,10 @@ impl CachedToken {
         ttl: Duration,
     ) -> Self {
         let now = Instant::now();
-        let expires_at = now.checked_add(ttl).unwrap_or(now);
+        let expires_at = now
+            .checked_add(ttl)
+            .or_else(|| now.checked_add(MAX_FALLBACK_TTL))
+            .unwrap_or(now);
         Self {
             access_token: access_token.into(),
             refresh_token,
@@ -203,6 +208,22 @@ impl TokenCache {
         self.inner.store(None);
     }
 
+    /// Evicts the cached token only if it still matches `stale_access_token`.
+    ///
+    /// Acquires `refresh_lock` before checking and clearing the cache so concurrent
+    /// `401` retries do not evict a fresh token already stored by another task.
+    pub async fn evict_if_matches(&self, stale_access_token: &SecretString) -> bool {
+        let _guard = self.refresh_lock.lock().await;
+        let Some(current) = self.inner.load_full() else {
+            return false;
+        };
+        if current.access_token.expose_secret() == stale_access_token.expose_secret() {
+            self.inner.store(None);
+            return true;
+        }
+        false
+    }
+
     /// Returns a fresh cached token lock-free or executes a single-flight refresh.
     ///
     /// Uses double-checked locking: if another task completes the refresh while
@@ -244,7 +265,6 @@ impl fmt::Debug for TokenCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use secrecy::ExposeSecret;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn assert_zeroize_on_drop<T: ZeroizeOnDrop>() {}
@@ -417,5 +437,46 @@ mod tests {
         }
 
         assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn cached_token_duration_max_does_not_expire_immediately() {
+        let now = Instant::now();
+        let max_ttl = CachedToken::new("max-tok", None, Duration::MAX);
+        assert!(!max_ttl.is_expired());
+        assert!(max_ttl.is_fresh_at(now, Duration::from_secs(PROACTIVE_REFRESH_MARGIN_SECS)));
+    }
+
+    #[test]
+    fn cached_token_zero_ttl_is_expired() {
+        let zero_ttl = CachedToken::new("zero-tok", None, Duration::ZERO);
+        assert!(zero_ttl.is_expired());
+    }
+
+    #[test]
+    fn token_cache_with_zero_refresh_margin() {
+        let cache = TokenCache::with_refresh_margin(Duration::ZERO);
+        cache.store(CachedToken::new("short-tok", None, Duration::from_secs(5)));
+        assert!(cache.get_if_fresh().is_some());
+    }
+
+    #[tokio::test]
+    async fn token_cache_evict_if_matches_prevents_stale_eviction() {
+        let cache = TokenCache::new();
+        cache.store(CachedToken::with_default_ttl("fresh-tok", None));
+
+        let evicted_mismatch = cache.evict_if_matches(&SecretString::from("stale-tok")).await;
+        assert!(!evicted_mismatch);
+        assert!(cache.peek().is_some());
+    }
+
+    #[tokio::test]
+    async fn token_cache_evict_if_matches_clears_matching_token() {
+        let cache = TokenCache::new();
+        cache.store(CachedToken::with_default_ttl("stale-tok", None));
+
+        let evicted_match = cache.evict_if_matches(&SecretString::from("stale-tok")).await;
+        assert!(evicted_match);
+        assert!(cache.peek().is_none());
     }
 }

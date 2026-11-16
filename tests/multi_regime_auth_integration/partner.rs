@@ -117,12 +117,12 @@ fn tc_1_2_5_partner_bearer_header_is_sensitive() {
 #[test]
 fn tc_1_2_5_partner_rejects_empty_credentials() {
     assert_eq!(
-        PartnerAuthContext::bearer(""),
-        Err(PartnerAuthError::EmptyBearerToken)
+        PartnerAuthContext::bearer("").expect_err("empty bearer must fail"),
+        PartnerAuthError::EmptyBearerToken
     );
     assert_eq!(
-        PartnerAuthContext::api_key_header("   "),
-        Err(PartnerAuthError::EmptyApiKey)
+        PartnerAuthContext::api_key_header("   ").expect_err("empty api key must fail"),
+        PartnerAuthError::EmptyApiKey
     );
 }
 

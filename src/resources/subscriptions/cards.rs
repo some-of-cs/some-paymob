@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Unit 4.3.3 — Subscription card vault management ([`SubscriptionCardsService`]).
+//! Unit 4.3.3 — Subscription card vault management (`SubscriptionCardsService`).
 //!
 //! Provides Regime 2 (`Authorization: Bearer <auth_token>`) operations for
 //! listing cards bound to a Paymob subscription, adding secondary backup

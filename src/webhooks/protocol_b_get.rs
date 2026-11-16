@@ -198,6 +198,22 @@ impl TransactionRedirectParams {
         )
     }
 
+    /// Parses [`Self::amount_cents`] into a strongly-typed [`MinorUnitAmount`](crate::core::types::MinorUnitAmount).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WebhookError::InvalidJsonPayload`] if `amount_cents` is not a valid `u64`.
+    pub fn amount(&self) -> WebhookResult<crate::core::types::MinorUnitAmount> {
+        self.amount_cents_u64()
+            .map(crate::core::types::MinorUnitAmount::new)
+    }
+
+    /// Parses [`Self::currency`] into a strongly-typed [`Currency`](crate::core::types::Currency).
+    #[must_use]
+    pub fn parsed_currency(&self) -> crate::core::types::Currency {
+        crate::core::types::Currency::from_code(&self.currency)
+    }
+
     /// Builds the 20-key canonical HMAC concatenation string for these redirect parameters.
     #[must_use]
     pub fn canonical_hmac_string(&self) -> String {

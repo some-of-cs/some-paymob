@@ -37,11 +37,74 @@ pub use strategy::{
 
 const DEFAULT_AUTH_HTTP_TIMEOUT_SECS: u64 = 30;
 
-/// Builds a default `reqwest::Client` with a bounded timeout for auth token acquisition.
+/// Central authentication token cache manager holding isolated single-flight
+/// [`TokenCache`] instances for Regime 2 (Accept JWT) and Regime 3 (Payouts OAuth2).
+///
+/// # Examples
+///
+/// ```
+/// use some_paymob::core::auth::{AuthManager, CachedToken};
+///
+/// let manager = AuthManager::new();
+/// manager
+///     .accept_cache()
+///     .store(CachedToken::with_default_ttl("accept-jwt", None));
+/// manager
+///     .payouts_cache()
+///     .store(CachedToken::with_default_ttl("payouts-oauth", None));
+/// assert!(manager.accept_cache().peek().is_some());
+/// assert!(manager.payouts_cache().peek().is_some());
+///
+/// manager.invalidate_all();
+/// assert!(manager.accept_cache().peek().is_none());
+/// assert!(manager.payouts_cache().peek().is_none());
+/// ```
+#[derive(Debug, Default)]
+pub struct AuthManager {
+    accept_cache: TokenCache,
+    payouts_cache: TokenCache,
+}
+
+impl AuthManager {
+    /// Creates a new [`AuthManager`] with empty Accept and Payouts token caches.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            accept_cache: TokenCache::new(),
+            payouts_cache: TokenCache::new(),
+        }
+    }
+
+    /// Returns a reference to the Regime 2 Accept JWT [`TokenCache`].
+    #[must_use]
+    pub const fn accept_cache(&self) -> &TokenCache {
+        &self.accept_cache
+    }
+
+    /// Returns a reference to the Regime 3 Payouts OAuth2 [`TokenCache`].
+    #[must_use]
+    pub const fn payouts_cache(&self) -> &TokenCache {
+        &self.payouts_cache
+    }
+
+    /// Evicts both the Accept JWT cache and the Payouts OAuth2 cache immediately.
+    pub fn invalidate_all(&self) {
+        self.accept_cache.evict();
+        self.payouts_cache.evict();
+    }
+}
+
+/// Builds a default `reqwest::Client` with a bounded timeout and TLS 1.3 minimum for auth token acquisition.
 pub(crate) fn build_default_auth_client() -> Result<Client, reqwest::Error> {
-    Client::builder()
-        .timeout(Duration::from_secs(DEFAULT_AUTH_HTTP_TIMEOUT_SECS))
-        .build()
+    let builder = Client::builder().timeout(Duration::from_secs(DEFAULT_AUTH_HTTP_TIMEOUT_SECS));
+
+    #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
+    let builder = builder.min_tls_version(reqwest::tls::Version::TLS_1_3);
+
+    #[cfg(feature = "rustls-tls")]
+    let builder = builder.use_rustls_tls();
+
+    builder.build()
 }
 
 /// Formats `<scheme> <secret>` as a sensitive [`HeaderValue`] with zeroized staging memory.
@@ -60,11 +123,44 @@ pub(crate) fn format_sensitive_auth_header(
     Some(value)
 }
 
-/// Parses `base_url` as an HTTP/HTTPS URL with host and joins `path`.
+fn is_local_domain(domain: &str) -> bool {
+    domain.eq_ignore_ascii_case("localhost") || domain.to_ascii_lowercase().ends_with(".local")
+}
+
+fn is_loopback_or_local_host(parsed: &Url) -> bool {
+    match parsed.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(domain)) => is_local_domain(domain),
+        None => false,
+    }
+}
+
+fn is_allowed_auth_scheme(parsed: &Url) -> bool {
+    parsed.scheme() == "https" || (parsed.scheme() == "http" && is_loopback_or_local_host(parsed))
+}
+
+fn has_no_url_credentials_or_query(parsed: &Url) -> bool {
+    parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
+}
+
+fn is_safe_relative_auth_path(path: &str) -> bool {
+    path.starts_with('/') && !path.starts_with("//") && !path.contains('\\') && !path.contains("..")
+}
+
+/// Parses `base_url` as an HTTPS (or loopback HTTP) URL with host and safely joins `path`.
 pub(crate) fn join_http_url(base_url: &str, path: &str) -> Result<Url, String> {
-    let parsed = Url::parse(base_url).map_err(|err| err.to_string())?;
-    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+    let parsed = Url::parse(base_url.trim()).map_err(|err| err.to_string())?;
+    if parsed.host_str().is_none() || !has_no_url_credentials_or_query(&parsed) {
         return Err(String::from("expected http(s) URL with host"));
+    }
+    if !is_allowed_auth_scheme(&parsed) || !is_safe_relative_auth_path(path) {
+        return Err(String::from(
+            "expected https (or loopback http) URL and safe path",
+        ));
     }
     parsed.join(path).map_err(|err| err.to_string())
 }

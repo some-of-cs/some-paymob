@@ -98,16 +98,30 @@ impl IdempotentWebhookGuard for super::protocol_e_payouts::TopupCallback {
     }
 }
 
-impl IdempotentWebhookGuard for super::dispatcher::WebhookEvent {
-    fn idempotency_tuple(&self) -> (String, String) {
+impl super::dispatcher::WebhookEvent {
+    fn acquiring_idempotency_tuple(&self) -> Option<(String, String)> {
         match self {
-            Self::TransactionProcessed(evt) => evt.idempotency_tuple(),
-            Self::TransactionResponseRedirect(params) => params.idempotency_tuple(),
-            Self::CardTokenSaved(evt) => evt.idempotency_tuple(),
+            Self::TransactionProcessed(evt) => Some(evt.idempotency_tuple()),
+            Self::TransactionResponseRedirect(params) => Some(params.idempotency_tuple()),
+            Self::CardTokenSaved(evt) => Some(evt.idempotency_tuple()),
+            _ => None,
+        }
+    }
+
+    fn lifecycle_or_payout_idempotency_tuple(&self) -> (String, String) {
+        match self {
             Self::SubscriptionLifecycle(evt) => evt.idempotency_tuple(),
             Self::PayoutDisbursement(evt) => evt.idempotency_tuple(),
             Self::PayoutTopup(evt) => evt.idempotency_tuple(),
+            _ => unreachable!("acquiring variants handled by acquiring_idempotency_tuple"),
         }
+    }
+}
+
+impl IdempotentWebhookGuard for super::dispatcher::WebhookEvent {
+    fn idempotency_tuple(&self) -> (String, String) {
+        self.acquiring_idempotency_tuple()
+            .unwrap_or_else(|| self.lifecycle_or_payout_idempotency_tuple())
     }
 }
 
@@ -355,6 +369,7 @@ impl InMemoryWebhookDeduplicator {
     pub fn release_key(&self, idempotency_key: &str, correlation_id: &str) -> bool {
         let tuple = (idempotency_key.to_owned(), correlation_id.to_owned());
         let mut state = self.lock_state();
+        state.order.retain(|(k, _)| k != &tuple);
         state.entries.remove(&tuple).is_some()
     }
 

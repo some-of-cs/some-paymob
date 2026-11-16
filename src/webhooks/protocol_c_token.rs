@@ -432,6 +432,25 @@ mod tests {
     }
 
     #[test]
+    fn paymob_docs_verbatim_card_token_canonical_concatenation() {
+        let obj = CardTokenObj {
+            id: 15978654,
+            token: "3f22ce8a4e77125c70f0bc69830e34c36df469351e2fa6be76428be4".to_string(),
+            masked_pan: "xxxx-xxxx-xxxx-2346".to_string(),
+            merchant_id: 1053928,
+            card_subtype: "MasterCard".to_string(),
+            created_at: "2026-08-24T13:28:31.015314".to_string(),
+            email: "kiyedi3052@claspira.com".to_string(),
+            order_id: "593881581".to_string(),
+        };
+        let canonical = build_protocol_c_canonical_string(&obj);
+        assert_eq!(
+            canonical,
+            "MasterCard2026-08-24T13:28:31.015314kiyedi3052@claspira.com15978654xxxx-xxxx-xxxx-234610539285938815813f22ce8a4e77125c70f0bc69830e34c36df469351e2fa6be76428be4"
+        );
+    }
+
+    #[test]
     fn card_token_obj_and_envelope_debug_redact_sensitive_fields() {
         let event: CardTokenWebhook = serde_json::from_str(OFFICIAL_TEST_VECTOR_15978654_JSON)
             .expect("official test vector JSON must deserialize");

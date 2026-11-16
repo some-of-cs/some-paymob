@@ -11,6 +11,7 @@
 //! assert_eq!(query.to_query_string(), "?page=1");
 //! ```
 
+pub use crate::core::auth::AuthManager;
 pub use crate::core::auth::cache::CachedToken;
 pub use crate::core::auth::strategy::AuthStrategy;
 pub use crate::core::client::PaymobClient;

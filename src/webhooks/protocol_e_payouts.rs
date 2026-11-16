@@ -81,6 +81,20 @@ pub struct DisbursementCallback {
     pub recipient_identifier: Option<String>,
 }
 
+impl DisbursementCallback {
+    /// Returns the disbursed amount as a strongly-typed [`MinorUnitAmount`](crate::core::types::MinorUnitAmount).
+    #[must_use]
+    pub const fn amount(&self) -> crate::core::types::MinorUnitAmount {
+        crate::core::types::MinorUnitAmount::new(self.amount_cents)
+    }
+
+    /// Parses [`Self::currency`] into a strongly-typed [`Currency`](crate::core::types::Currency).
+    #[must_use]
+    pub fn parsed_currency(&self) -> crate::core::types::Currency {
+        crate::core::types::Currency::from_code(&self.currency)
+    }
+}
+
 impl fmt::Debug for DisbursementCallback {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let redacted_recipient: Option<&str> =
@@ -120,6 +134,20 @@ pub struct TopupCallback {
     pub currency: String,
     /// Approval or rejection status of the top-up.
     pub status: TopupStatus,
+}
+
+impl TopupCallback {
+    /// Returns the top-up amount as a strongly-typed [`MinorUnitAmount`](crate::core::types::MinorUnitAmount).
+    #[must_use]
+    pub const fn amount(&self) -> crate::core::types::MinorUnitAmount {
+        crate::core::types::MinorUnitAmount::new(self.amount_cents)
+    }
+
+    /// Parses [`Self::currency`] into a strongly-typed [`Currency`](crate::core::types::Currency).
+    #[must_use]
+    pub fn parsed_currency(&self) -> crate::core::types::Currency {
+        crate::core::types::Currency::from_code(&self.currency)
+    }
 }
 
 /// Verifies an optional `HMAC-SHA512` signature against `raw_body` when a

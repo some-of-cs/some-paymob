@@ -42,13 +42,26 @@ impl WebhookEvent {
     /// Returns a canonical `snake_case` identifier for this webhook event variant.
     #[must_use]
     pub const fn event_type(&self) -> &'static str {
+        if let Some(kind) = self.acquiring_event_type() {
+            return kind;
+        }
+        self.lifecycle_or_payout_event_type()
+    }
+
+    const fn acquiring_event_type(&self) -> Option<&'static str> {
         match self {
-            Self::TransactionProcessed(_) => "transaction_processed",
-            Self::TransactionResponseRedirect(_) => "transaction_redirect",
-            Self::CardTokenSaved(_) => "card_token_saved",
+            Self::TransactionProcessed(_) => Some("transaction_processed"),
+            Self::TransactionResponseRedirect(_) => Some("transaction_redirect"),
+            Self::CardTokenSaved(_) => Some("card_token_saved"),
+            _ => None,
+        }
+    }
+
+    const fn lifecycle_or_payout_event_type(&self) -> &'static str {
+        match self {
             Self::SubscriptionLifecycle(_) => "subscription_lifecycle",
             Self::PayoutDisbursement(_) => "payout_disbursement",
-            Self::PayoutTopup(_) => "payout_topup",
+            _ => "payout_topup",
         }
     }
 
@@ -210,13 +223,6 @@ fn detect_webhook_kind(value: &serde_json::Value) -> Option<DetectedWebhookKind>
     detect_payout_kind(value)
 }
 
-fn ensure_explicit_transaction_type(raw_body: &str) -> String {
-    if raw_body.contains("\"type\"") {
-        return raw_body.to_owned();
-    }
-    raw_body.replacen('{', "{\"type\":\"TRANSACTION\",", 1)
-}
-
 impl PaymobWebhookEngine {
     /// Parses, auto-detects, and verifies an incoming Paymob JSON webhook payload.
     ///
@@ -327,8 +333,7 @@ impl PaymobWebhookEngine {
         query_hmac: Option<&str>,
     ) -> WebhookResult<WebhookEvent> {
         let hmac = super::verifier::require_non_empty_query_hmac(query_hmac)?;
-        let normalized = ensure_explicit_transaction_type(raw_body);
-        self.verify_transaction_post(&normalized, hmac)
+        self.verify_transaction_post(raw_body, hmac)
             .map(WebhookEvent::TransactionProcessed)
     }
 }

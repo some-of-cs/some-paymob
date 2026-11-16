@@ -434,7 +434,15 @@ mod tests {
                 plan.retrial_days,
                 plan.number_of_deductions,
             ),
-            (false, true, false, Some(PlanType::Rent), Some(3), Some(2), Some(12))
+            (
+                false,
+                true,
+                false,
+                Some(PlanType::Rent),
+                Some(3),
+                Some(2),
+                Some(12)
+            )
         );
     }
 

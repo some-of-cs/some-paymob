@@ -423,11 +423,18 @@ impl PaymobClient {
     }
 }
 
-fn build_http_for_base_url(client: &PaymobClient, base_url: &str) -> Result<HttpClient, PaymobError> {
+fn build_http_for_base_url(
+    client: &PaymobClient,
+    base_url: &str,
+) -> Result<HttpClient, PaymobError> {
     if !base_url.starts_with("http://") {
         return Ok(client.http().clone());
     }
-    let cfg = client.http().config().clone().with_allow_insecure_http(true);
+    let cfg = client
+        .http()
+        .config()
+        .clone()
+        .with_allow_insecure_http(true);
     HttpClient::new(cfg).map_err(|err| PaymobError::TransportError(err.to_string()))
 }
 
@@ -551,7 +558,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path(ACCEPT_AUTH_TOKENS_PATH))
-            .and(body_partial_json(serde_json::json!({"api_key": "test_api_key_value"})))
+            .and(body_partial_json(
+                serde_json::json!({"api_key": "test_api_key_value"}),
+            ))
             .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
                 "token": "jwt-step-1"
             })))
@@ -591,14 +600,9 @@ mod tests {
             .await;
 
         let service = LegacyV2Service::with_base_url(test_client(), server.uri()).expect("service");
-        let params = LegacyCheckoutParams::new(
-            50_000,
-            Currency::EGP,
-            4_097_558,
-            812_345,
-            sample_billing(),
-        )
-        .merchant_order_id("ord-1");
+        let params =
+            LegacyCheckoutParams::new(50_000, Currency::EGP, 4_097_558, 812_345, sample_billing())
+                .merchant_order_id("ord-1");
 
         let session = service.create_checkout(&params).await.expect("checkout");
         assert_eq!(session.order.id, 998_877);

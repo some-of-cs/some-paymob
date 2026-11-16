@@ -1175,12 +1175,33 @@ mod tests {
 
     #[tokio::test]
     async fn tc_1_3_2_enforces_content_length_precheck_response_too_large() {
-        assert_response_too_large(
-            "/declared-large",
-            ResponseTemplate::new(200).insert_header("Content-Length", "4096"),
-            Some(4096),
-        )
-        .await;
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut req_buf = [0_u8; 1024];
+                let _ = stream.read(&mut req_buf).await;
+                let payload =
+                    "HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(payload.as_bytes()).await;
+            }
+        });
+
+        let cfg = fast_config();
+        let client = HttpClient::new(cfg).expect("client");
+        let req = HttpRequest::get(&format!("http://{addr}/declared-large")).expect("url");
+        let err = client.execute(&req).await.unwrap_err();
+        let _ = server_task.await;
+
+        assert!(matches!(
+            err,
+            HttpError::ResponseTooLarge {
+                limit_bytes: 1024,
+                actual_bytes: Some(999_999_999),
+                ..
+            }
+        ));
     }
 
     #[tokio::test]

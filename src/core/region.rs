@@ -163,20 +163,20 @@ struct CustomUrlInputs<'a> {
 /// Identifies a [`PaymobRegion::Custom`] URL field for validation errors.
 #[derive(Clone, Copy)]
 enum CustomUrlField {
-    AcceptBaseUrl,
-    CheckoutBaseUrl,
-    PayoutsBaseUrl,
-    PayoutsStagingBaseUrl,
+    Accept,
+    Checkout,
+    Payouts,
+    PayoutsStaging,
 }
 
 impl CustomUrlField {
     /// Returns the static field name used in [`PaymobError::ValidationError`].
     const fn as_str(self) -> &'static str {
         match self {
-            Self::AcceptBaseUrl => "accept_base_url",
-            Self::CheckoutBaseUrl => "checkout_base_url",
-            Self::PayoutsBaseUrl => "payouts_base_url",
-            Self::PayoutsStagingBaseUrl => "payouts_staging_base_url",
+            Self::Accept => "accept_base_url",
+            Self::Checkout => "checkout_base_url",
+            Self::Payouts => "payouts_base_url",
+            Self::PayoutsStaging => "payouts_staging_base_url",
         }
     }
 }
@@ -555,13 +555,13 @@ impl RawEndpointPath<'_> {
 
 /// Validates and resolves all four base URLs for [`PaymobRegion::Custom`].
 fn resolve_custom_endpoints(inputs: CustomUrlInputs<'_>) -> Result<RegionalEndpoints, PaymobError> {
-    let accept = CustomUrlCandidate(inputs.accept_base_url).validate(CustomUrlField::AcceptBaseUrl)?;
+    let accept = CustomUrlCandidate(inputs.accept_base_url).validate(CustomUrlField::Accept)?;
     let checkout =
-        CustomUrlCandidate(inputs.checkout_base_url).validate(CustomUrlField::CheckoutBaseUrl)?;
+        CustomUrlCandidate(inputs.checkout_base_url).validate(CustomUrlField::Checkout)?;
     let payouts =
-        CustomUrlCandidate(inputs.payouts_base_url).validate(CustomUrlField::PayoutsBaseUrl)?;
+        CustomUrlCandidate(inputs.payouts_base_url).validate(CustomUrlField::Payouts)?;
     let payouts_staging = CustomUrlCandidate(inputs.payouts_staging_base_url)
-        .validate(CustomUrlField::PayoutsStagingBaseUrl)?;
+        .validate(CustomUrlField::PayoutsStaging)?;
 
     Ok(RegionalEndpoints {
         accept_base_url: accept,

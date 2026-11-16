@@ -69,6 +69,7 @@ pub struct PaymobClient {
     inner: Arc<PaymobCore>,
 }
 
+#[allow(dead_code)]
 const _: () = {
     fn assert_send_sync<T: Send + Sync>() {}
     fn check() {
@@ -368,14 +369,19 @@ mod tests {
     use crate::core::region::PaymobRegion;
 
     fn sample_client(region: PaymobRegion) -> PaymobClient {
+        let prefix = match region {
+            PaymobRegion::Egypt | PaymobRegion::Custom { .. } => "egy",
+            PaymobRegion::SaudiArabia => "ksa",
+            PaymobRegion::Uae => "uae",
+            PaymobRegion::Oman => "omn",
+            PaymobRegion::Pakistan => "pak",
+        };
+        let secret = format!("{prefix}_sk_test_626supersecretvalue");
+        let public = format!("{prefix}_pk_test_999publicvalue");
         let config = ClientConfig::builder()
             .region(region)
-            .secret_key(
-                SecretKey::new("egy_sk_test_626supersecretvalue").expect("valid test secret key"),
-            )
-            .public_key(
-                PublicKey::new("egy_pk_test_999publicvalue").expect("valid test public key"),
-            )
+            .secret_key(SecretKey::new(&secret).expect("valid test secret key"))
+            .public_key(PublicKey::new(&public).expect("valid test public key"))
             .build()
             .expect("valid test client config");
         PaymobClient::new(config).expect("valid PaymobClient")

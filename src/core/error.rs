@@ -217,7 +217,7 @@ impl PaymobError {
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::RateLimited { .. } | Self::TransportError(_) => true,
-            Self::ApiError { status, .. } => matches!(status, 502 | 503 | 504),
+            Self::ApiError { status, .. } => matches!(status, 502..=504),
             _ => false,
         }
     }

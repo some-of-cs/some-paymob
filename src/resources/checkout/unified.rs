@@ -214,6 +214,7 @@ fn validate_client_secret(client_secret: &SecretString) -> Result<&str, PaymobEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::config::ClientConfig;
     use crate::core::credentials::SecretKey;
     use crate::core::region::PaymobRegion;
 

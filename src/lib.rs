@@ -11,8 +11,13 @@
 pub mod core;
 pub mod prelude;
 
-/// Resource-domain SDK modules (saved cards, subscriptions, and future modules).
-#[cfg(any(feature = "saved-cards", feature = "subscriptions"))]
+/// Paymob API resource modules and checkout builders.
+#[cfg(any(
+    feature = "intentions",
+    feature = "legacy-v2",
+    feature = "saved-cards",
+    feature = "subscriptions"
+))]
 pub mod resources;
 
 /// Constant-time cryptographic webhook verification engine (Protocols A–E & Idempotency Guard).

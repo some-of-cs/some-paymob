@@ -322,6 +322,15 @@ struct RetryableStatusContext<'a> {
     attempt: u32,
 }
 
+/// Grouped context for constructing a retryable attempt outcome.
+struct RetryableOutcomeSpec<'a> {
+    request_id: Uuid,
+    attempt: u32,
+    retry_after: Option<Duration>,
+    reason: &'a str,
+    last_error: HttpError,
+}
+
 impl HttpClient {
     /// Builds a new [`HttpClient`] with the provided [`HttpClientConfig`].
     ///
@@ -452,23 +461,19 @@ impl HttpClient {
             .map_err(|e| HttpError::InvalidConfig(e.to_string()))
     }
 
-    fn retryable_outcome(
-        &self,
-        request_id: Uuid,
-        attempt: u32,
-        retry_after: Option<Duration>,
-        reason: &str,
-        last_error: HttpError,
-    ) -> AttemptOutcome {
-        let delay = compute_backoff_delay(&self.config.retry, attempt, retry_after);
+    fn retryable_outcome(&self, spec: RetryableOutcomeSpec<'_>) -> AttemptOutcome {
+        let delay = compute_backoff_delay(&self.config.retry, spec.attempt, spec.retry_after);
         tracing::warn!(
-            request_id = %request_id,
-            attempt = attempt,
+            request_id = %spec.request_id,
+            attempt = spec.attempt,
             delay_ms = delay.as_millis() as u64,
-            reason = reason,
+            reason = spec.reason,
             "scheduling HTTP retry"
         );
-        AttemptOutcome::Retryable { delay, last_error }
+        AttemptOutcome::Retryable {
+            delay,
+            last_error: spec.last_error,
+        }
     }
 
     fn classify_transport_error(
@@ -478,13 +483,13 @@ impl HttpClient {
         attempt: u32,
     ) -> AttemptOutcome {
         if err.is_timeout() {
-            return self.retryable_outcome(
+            return self.retryable_outcome(RetryableOutcomeSpec {
                 request_id,
                 attempt,
-                None,
-                "timeout",
-                HttpError::Timeout { request_id },
-            );
+                retry_after: None,
+                reason: "timeout",
+                last_error: HttpError::Timeout { request_id },
+            });
         }
 
         AttemptOutcome::Fatal(HttpError::Transport {
@@ -496,18 +501,18 @@ impl HttpClient {
     fn build_retryable_status_error(&self, ctx: RetryableStatusContext<'_>) -> AttemptOutcome {
         let retry_after = parse_retry_after(ctx.headers);
         let status_label = ctx.status.as_u16().to_string();
-        self.retryable_outcome(
-            ctx.request_id,
-            ctx.attempt,
+        self.retryable_outcome(RetryableOutcomeSpec {
+            request_id: ctx.request_id,
+            attempt: ctx.attempt,
             retry_after,
-            &status_label,
-            HttpError::RetriesExhausted {
+            reason: &status_label,
+            last_error: HttpError::RetriesExhausted {
                 request_id: ctx.request_id,
                 status: ctx.status,
                 retry_after,
                 body: ctx.body,
             },
-        )
+        })
     }
 }
 

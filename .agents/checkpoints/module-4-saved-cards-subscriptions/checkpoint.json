@@ -1,81 +1,38 @@
 {
-  "module_id": "module-4-saved-cards-subscriptions",
-  "module_branch": "feat/module-4-saved-cards-subscriptions",
-  "base_branch": "main",
-  "merge_order_position": 5,
-  "status": "wave_1_scaffolded",
+  "module": "module-4-saved-cards-subscriptions",
+  "branch": "feat/module-4-saved-cards-subscriptions",
+  "status": "wave_4_pr_opened",
   "stories": {
-    "US-4.1.0": {
+    "us-4.1.0": {
       "branch": "feat/us-4.1.0-saved-cards-headless-pay",
-      "status": "pending",
+      "story_pr": 77,
+      "merged_sha": "3ccfa0e8933130c1bee25d58163fe364681aeed1",
       "units": {
-        "unit-1": {
-          "branch": "feat/us-4.1.0/unit-1-payment-sources",
-          "file": "src/resources/saved_cards/sources.rs",
-          "status": "pending"
-        },
-        "unit-2": {
-          "branch": "feat/us-4.1.0/unit-2-cit-mit-workflows",
-          "file": "src/resources/saved_cards/cit_mit.rs",
-          "status": "pending"
-        },
-        "unit-3": {
-          "branch": "feat/us-4.1.0/unit-3-headless-pay-service",
-          "file": "src/resources/saved_cards/service.rs",
-          "status": "pending"
-        }
+        "unit-1": 37,
+        "unit-2": 52,
+        "unit-3": 68
       }
     },
-    "US-4.2.0": {
+    "us-4.2.0": {
       "branch": "feat/us-4.2.0-subscription-plans",
-      "status": "pending",
+      "story_pr": 79,
+      "merged_sha": "6d87ec246b8be2acfce3ba7e434591f77b6e16f",
       "units": {
-        "unit-1": {
-          "branch": "feat/us-4.2.0/unit-1-plan-models-frequency",
-          "file": "src/resources/subscriptions/plan_models.rs",
-          "status": "pending"
-        },
-        "unit-2": {
-          "branch": "feat/us-4.2.0/unit-2-plan-params",
-          "file": "src/resources/subscriptions/plan_params.rs",
-          "status": "pending"
-        },
-        "unit-3": {
-          "branch": "feat/us-4.2.0/unit-3-plans-service",
-          "file": "src/resources/subscriptions/plans_service.rs",
-          "status": "pending"
-        }
+        "unit-1": 41,
+        "unit-2": 38,
+        "unit-3": 62
       }
     },
-    "US-4.3.0": {
+    "us-4.3.0": {
       "branch": "feat/us-4.3.0-subscription-lifecycle-cards-refunds",
-      "status": "pending",
+      "story_pr": 78,
+      "merged_sha": "6c0b0ee9e77437dffe0595dcac0184448f46e16f",
       "units": {
-        "unit-1": {
-          "branch": "feat/us-4.3.0/unit-1-subscription-models",
-          "file": "src/resources/subscriptions/models.rs",
-          "status": "pending"
-        },
-        "unit-2": {
-          "branch": "feat/us-4.3.0/unit-2-subscription-lifecycle",
-          "file": "src/resources/subscriptions/lifecycle.rs",
-          "status": "pending"
-        },
-        "unit-3": {
-          "branch": "feat/us-4.3.0/unit-3-subscription-cards",
-          "file": "src/resources/subscriptions/cards.rs",
-          "status": "pending"
-        },
-        "unit-4": {
-          "branch": "feat/us-4.3.0/unit-4-subscription-history-webhook",
-          "file": "src/resources/subscriptions/history.rs",
-          "status": "pending"
-        },
-        "unit-5": {
-          "branch": "feat/us-4.3.0/unit-5-subscription-refund-helper",
-          "file": "src/resources/subscriptions/refund.rs",
-          "status": "pending"
-        }
+        "unit-1": 40,
+        "unit-2": 73,
+        "unit-3": 64,
+        "unit-4": 65,
+        "unit-5": 63
       }
     }
   }

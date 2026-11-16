@@ -211,7 +211,9 @@ fn resolve_redirect_param<'a, P: QueryParams>(
     key: &str,
 ) -> Result<&'a str, WebhookError> {
     let value = if key == "order_id" {
-        params.get_param("order_id").or_else(|| params.get_param("order"))
+        params
+            .get_param("order_id")
+            .or_else(|| params.get_param("order"))
     } else {
         params.get_param(key)
     };

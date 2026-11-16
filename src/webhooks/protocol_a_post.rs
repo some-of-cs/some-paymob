@@ -281,8 +281,11 @@ mod tests {
     #[test]
     fn test_verify_transaction_post_rejects_tampered_amount_cents() {
         let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
-        let tampered_json = OFFICIAL_TEST_VECTOR_192036465_JSON
-            .replacen("\"amount_cents\": 100000", "\"amount_cents\": 100", 1);
+        let tampered_json = OFFICIAL_TEST_VECTOR_192036465_JSON.replacen(
+            "\"amount_cents\": 100000",
+            "\"amount_cents\": 100",
+            1,
+        );
         let err = engine
             .verify_transaction_post(&tampered_json, SAMPLE_TEST_VECTOR_192036465_HMAC)
             .expect_err("tampered amount_cents must be rejected in constant time");
@@ -321,11 +324,11 @@ mod tests {
         assert!(matches!(err_syntax, WebhookError::InvalidJsonPayload(_)));
 
         let err_missing_fields = engine
-            .verify_transaction_post(
-                r#"{"type":"TRANSACTION"}"#,
-                SAMPLE_TEST_VECTOR_192036465_HMAC,
-            )
+            .verify_transaction_post(r#"{"type":"TRANSACTION"}"#, SAMPLE_TEST_VECTOR_192036465_HMAC)
             .expect_err("incomplete JSON missing obj must return InvalidJsonPayload");
-        assert!(matches!(err_missing_fields, WebhookError::InvalidJsonPayload(_)));
+        assert!(matches!(
+            err_missing_fields,
+            WebhookError::InvalidJsonPayload(_)
+        ));
     }
 }

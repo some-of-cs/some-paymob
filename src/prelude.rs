@@ -27,6 +27,12 @@ pub use crate::core::http::{
 pub use crate::core::pagination::{PageQuery, PaginatedResponse};
 pub use crate::core::region::{PaymobRegion, RegionalEndpoints};
 pub use crate::core::types::{Currency, MinorUnitAmount, validate_prefixed_id};
+/// Re-exports all public saved-card tokenization and headless payment types.
+#[cfg(feature = "saved-cards")]
+pub use crate::resources::saved_cards::*;
+/// Re-exports all public subscription plan, lifecycle, card vault, and history types.
+#[cfg(feature = "subscriptions")]
+pub use crate::resources::subscriptions::*;
 /// Re-exports all public webhook verification types, traits, and helpers.
 #[cfg(feature = "webhooks")]
 pub use crate::webhooks::*;

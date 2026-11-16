@@ -11,7 +11,11 @@
 pub mod core;
 pub mod prelude;
 
-/// Constant-time cryptographic webhook verification engine (Protocols A-E & Idempotency Guard).
+/// Resource-domain SDK modules (saved cards, subscriptions, and future modules).
+#[cfg(any(feature = "saved-cards", feature = "subscriptions"))]
+pub mod resources;
+
+/// Constant-time cryptographic webhook verification engine (Protocols A–E & Idempotency Guard).
 #[cfg(feature = "webhooks")]
 pub mod webhooks;
 
@@ -21,6 +25,14 @@ pub use crate::core::config::{ClientConfig, ClientConfigBuilder};
 pub use crate::core::error::PaymobError;
 pub use crate::core::region::PaymobRegion;
 pub use crate::core::types::{Currency, MinorUnitAmount};
+
+/// Crate-root re-exports of saved-card tokenization and headless payment services.
+#[cfg(feature = "saved-cards")]
+pub use resources::saved_cards::SavedCardsService;
+
+/// Crate-root re-exports of subscription plan and recurring billing services.
+#[cfg(feature = "subscriptions")]
+pub use resources::subscriptions::SubscriptionsService;
 
 /// Crate-root re-exports of the core Paymob webhook engine, event, error, and result types.
 #[cfg(feature = "webhooks")]

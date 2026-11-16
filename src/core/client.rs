@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use url::Url;
 
+use crate::core::auth::AuthManager;
 use crate::core::config::ClientConfig;
 use crate::core::error::PaymobError;
 use crate::core::http::{HttpClient, HttpClientConfig, RetryPolicy};
@@ -24,6 +25,7 @@ pub struct PaymobCore {
     config: ClientConfig,
     endpoints: RegionalEndpoints,
     http: HttpClient,
+    auth: AuthManager,
 }
 
 impl fmt::Debug for PaymobCore {
@@ -199,6 +201,12 @@ impl PaymobClient {
         &self.inner.http
     }
 
+    /// Returns a reference to the shared [`AuthManager`] token cache.
+    #[must_use]
+    pub fn auth(&self) -> &AuthManager {
+        &self.inner.auth
+    }
+
     /// Builds a full Accept Acquiring URL by joining `path` onto the regional Accept base URL.
     ///
     /// Preserves trailing slashes on `path` (for example, `/v1/intention/`).
@@ -339,6 +347,22 @@ impl PaymobClient {
     #[cfg(feature = "webhooks")]
     pub fn webhook_engine(&self) -> Result<crate::webhooks::PaymobWebhookEngine, PaymobError> {
         self.inner.config.webhook_engine()
+    }
+
+    /// Returns a [`SavedCardsService`](crate::resources::saved_cards::SavedCardsService)
+    /// bound to this client for saved-card CIT/MIT and headless payments.
+    #[cfg(feature = "saved-cards")]
+    #[must_use]
+    pub fn saved_cards(&self) -> crate::resources::saved_cards::SavedCardsService {
+        crate::resources::saved_cards::SavedCardsService::new(self.clone())
+    }
+
+    /// Returns a [`SubscriptionsService`](crate::resources::subscriptions::SubscriptionsService)
+    /// bound to this client for subscription plans, lifecycle, card vault, and history operations.
+    #[cfg(feature = "subscriptions")]
+    #[must_use]
+    pub fn subscriptions(&self) -> crate::resources::subscriptions::SubscriptionsService {
+        crate::resources::subscriptions::SubscriptionsService::new(self.clone())
     }
 }
 

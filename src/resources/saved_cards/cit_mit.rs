@@ -2,12 +2,12 @@
 //! CIT saved-card token configuration, MIT charge parameters, and MOTO CVC guard (`US-4.1.0`).
 //!
 //! Implements Unit 4.1.2 (`TC-4.1.2`):
-//! - [`CitCardTokenConfig`] for wiring saved card tokens into Intention `card_tokens`.
-//! - [`MitChargeParams`] for off-session Merchant-Initiated Transaction (MIT) / MOTO charges.
-//! - [`validate_use_cvc_with_moto`](self::validate_use_cvc_with_moto) for enforcing PCI-DSS CVN presence/minimization rules.
+//! - `CitCardTokenConfig` for wiring saved card tokens into Intention `card_tokens`.
+//! - `MitChargeParams` for off-session Merchant-Initiated Transaction (MIT) / MOTO charges.
+//! - `validate_use_cvc_with_moto` for enforcing PCI-DSS CVN presence/minimization rules.
 //!
 //! All secret-bearing fields (`payment_token`, `saved_token`, `cvn`, `card_tokens`) wrap
-//! [`secrecy::SecretString`] and emit `"[REDACTED]"` in [`std::fmt::Debug`] output.
+//! `secrecy::SecretString` and emit `"[REDACTED]"` in `std::fmt::Debug` output.
 
 use std::fmt;
 

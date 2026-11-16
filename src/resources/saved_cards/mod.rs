@@ -7,7 +7,7 @@
 pub mod cit_mit;
 /// Unit 4.1.3: [`SavedCardsService`] executing `POST /api/acceptance/payments/pay`.
 pub mod service;
-/// Unit 4.1.1: Polymorphic [`PaymentSource`](sources::PaymentSource) enum with `[REDACTED]` formatting.
+/// Unit 4.1.1: Polymorphic `PaymentSource` enum with `[REDACTED]` formatting.
 pub mod sources;
 
 pub use service::SavedCardsService;

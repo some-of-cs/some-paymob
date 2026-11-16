@@ -3,7 +3,7 @@
 //!
 //! Provides [`CheckoutService`] and [`PaymobClient::checkout`] for constructing
 //! percent-encoded Paymob Unified Checkout redirect URLs using only the
-//! client-side [`PublicKey`](crate::core::credentials::PublicKey) (`pk_*`).
+//! client-side [`PublicKey`] (`pk_*`).
 //! Server-side [`SecretKey`](crate::core::credentials::SecretKey) and
 //! [`ApiKey`](crate::core::credentials::ApiKey) credentials are never read or
 //! exposed by this module.

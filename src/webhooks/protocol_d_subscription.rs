@@ -27,34 +27,13 @@ pub const KNOWN_SUBSCRIPTION_TRIGGERS: &[(&str, SubscriptionTriggerType)] = &[
     ("canceled", SubscriptionTriggerType::Canceled),
     ("resumed", SubscriptionTriggerType::Resumed),
     ("updated", SubscriptionTriggerType::Updated),
-    (
-        "add_secondry_card",
-        SubscriptionTriggerType::SecondaryCardAdded,
-    ),
-    (
-        "change_primary_card",
-        SubscriptionTriggerType::PrimaryCardChanged,
-    ),
-    (
-        "delete_card",
-        SubscriptionTriggerType::SecondaryCardDeleted,
-    ),
-    (
-        "register_webhook",
-        SubscriptionTriggerType::WebhookRegistered,
-    ),
-    (
-        "Successful Transaction",
-        SubscriptionTriggerType::SuccessfulTransaction,
-    ),
-    (
-        "Failed Transaction",
-        SubscriptionTriggerType::FailedTransaction,
-    ),
-    (
-        "Failed Overdue Transaction",
-        SubscriptionTriggerType::FailedOverdueTransaction,
-    ),
+    ("add_secondry_card", SubscriptionTriggerType::SecondaryCardAdded),
+    ("change_primary_card", SubscriptionTriggerType::PrimaryCardChanged),
+    ("delete_card", SubscriptionTriggerType::SecondaryCardDeleted),
+    ("register_webhook", SubscriptionTriggerType::WebhookRegistered),
+    ("Successful Transaction", SubscriptionTriggerType::SuccessfulTransaction),
+    ("Failed Transaction", SubscriptionTriggerType::FailedTransaction),
+    ("Failed Overdue Transaction", SubscriptionTriggerType::FailedOverdueTransaction),
 ];
 
 /// Subscription lifecycle trigger type delivered in Protocol D webhooks.
@@ -512,7 +491,7 @@ mod tests {
             assert_eq!(parsed.to_string(), *wire);
 
             let serialized = serde_json::to_string(&parsed).expect("serialize trigger");
-            assert_eq!(serialized, format!(""{wire}""));
+            assert_eq!(serialized, format!("\"{wire}\""));
             let deserialized: SubscriptionTriggerType =
                 serde_json::from_str(&serialized).expect("deserialize trigger");
             assert_eq!(deserialized, *expected_variant);

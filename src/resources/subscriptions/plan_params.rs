@@ -357,18 +357,22 @@ impl UpdateSubscriptionPlanParams {
     }
 
     fn has_any_field(&self) -> bool {
-        self.frequency.is_some()
-            || self.name.is_some()
-            || self.integration.is_some()
-            || self.webhook_url.is_some()
-            || self.reminder_days.is_some()
-            || self.retrial_days.is_some()
-            || self.plan_type.is_some()
-            || self.number_of_deductions.is_some()
-            || self.amount_cents.is_some()
-            || self.use_transaction_amount.is_some()
-            || self.is_active.is_some()
-            || self.fee.is_some()
+        [
+            self.frequency.is_some(),
+            self.name.is_some(),
+            self.integration.is_some(),
+            self.webhook_url.is_some(),
+            self.reminder_days.is_some(),
+            self.retrial_days.is_some(),
+            self.plan_type.is_some(),
+            self.number_of_deductions.is_some(),
+            self.amount_cents.is_some(),
+            self.use_transaction_amount.is_some(),
+            self.is_active.is_some(),
+            self.fee.is_some(),
+        ]
+        .into_iter()
+        .any(std::convert::identity)
     }
 }
 

@@ -4,10 +4,10 @@
 //! Implements Unit 4.1.2 (`TC-4.1.2`):
 //! - [`CitCardTokenConfig`] for wiring saved card tokens into Intention `card_tokens`.
 //! - [`MitChargeParams`] for off-session Merchant-Initiated Transaction (MIT) / MOTO charges.
-//! - [`validate_use_cvc_with_moto`] for enforcing PCI-DSS CVN presence/minimization rules.
+//! - [`validate_use_cvc_with_moto`](self::validate_use_cvc_with_moto) for enforcing PCI-DSS CVN presence/minimization rules.
 //!
 //! All secret-bearing fields (`payment_token`, `saved_token`, `cvn`, `card_tokens`) wrap
-//! [`secrecy::SecretString`] and emit `"[REDACTED]"` in [`fmt::Debug`] output.
+//! [`secrecy::SecretString`] and emit `"[REDACTED]"` in [`std::fmt::Debug`] output.
 
 use std::fmt;
 
@@ -23,7 +23,7 @@ const REDACTED: &str = "[REDACTED]";
 /// into `CreateIntentionParams::card_tokens`.
 ///
 /// Wraps each saved card token in [`SecretString`] and redacts all token values
-/// in [`fmt::Debug`] output.
+/// in [`std::fmt::Debug`] output.
 ///
 /// # Examples
 ///
@@ -137,7 +137,7 @@ impl Serialize for CitCardTokenConfig {
 /// or MOTO saved-card charge via `POST /api/acceptance/payments/pay`.
 ///
 /// All secret-bearing fields (`payment_token`, `saved_token`, and optional `cvn`)
-/// are stored in [`SecretString`] and redacted to `"[REDACTED]"` in [`fmt::Debug`].
+/// are stored in [`SecretString`] and redacted to `"[REDACTED]"` in [`std::fmt::Debug`].
 ///
 /// # Examples
 ///
@@ -197,7 +197,7 @@ impl MitChargeParams {
     /// # Errors
     ///
     /// Returns [`PaymobError::ValidationError`] if `payment_token` or `saved_token`
-    /// is invalid, or if `cvn` fails [`validate_use_cvc_with_moto`] (must be 3 or 4 ASCII digits).
+    /// is invalid, or if `cvn` fails [`validate_use_cvc_with_moto`](self::validate_use_cvc_with_moto) (must be 3 or 4 ASCII digits).
     pub fn with_moto_cvc(
         payment_token: SecretString,
         saved_token: SecretString,

@@ -455,6 +455,21 @@ mod tests {
         Ok(client.post(url).json(&body).send().await?)
     }
 
+    async fn execute_inquiry_with_retry(
+        provider: &AcceptJwtProvider,
+        server: &MockServer,
+    ) -> Result<Response, AcceptJwtError> {
+        let client = Client::new();
+        let endpoint = format!("{}{INQUIRY_PATH}", server.uri());
+        provider
+            .execute_with_retry(|tok| {
+                let client = client.clone();
+                let url = endpoint.clone();
+                async move { send_inquiry(&client, &url, &tok).await }
+            })
+            .await
+    }
+
     #[test]
     fn tc_1_2_3_new_rejects_empty_and_whitespace_api_key() {
         assert!(matches!(
@@ -610,15 +625,7 @@ mod tests {
         mount_inquiry_mock(&server, "fresh-jwt", 200, json!({ "id": 999 })).await;
 
         let provider = build_provider(&server.uri());
-        let client = Client::new();
-        let endpoint = format!("{}{INQUIRY_PATH}", server.uri());
-
-        let resp = provider
-            .execute_with_retry(|tok| {
-                let client = client.clone();
-                let url = endpoint.clone();
-                async move { send_inquiry(&client, &url, &tok).await }
-            })
+        let resp = execute_inquiry_with_retry(&provider, &server)
             .await
             .expect("retry succeeds");
 
@@ -632,14 +639,7 @@ mod tests {
             start_single_token_server(201, json!({ "token": "valid-jwt" })).await;
         mount_inquiry_mock(&server, "valid-jwt", 500, json!({ "detail": "server error" })).await;
 
-        let client = Client::new();
-        let endpoint = format!("{}{INQUIRY_PATH}", server.uri());
-        let resp = provider
-            .execute_with_retry(|tok| {
-                let client = client.clone();
-                let url = endpoint.clone();
-                async move { send_inquiry(&client, &url, &tok).await }
-            })
+        let resp = execute_inquiry_with_retry(&provider, &server)
             .await
             .expect("non-401 returns response directly");
 
@@ -652,14 +652,7 @@ mod tests {
             start_single_token_server(201, json!({ "token": "valid-jwt" })).await;
         mount_inquiry_mock(&server, "valid-jwt", 401, json!({ "detail": "token revoked" })).await;
 
-        let client = Client::new();
-        let endpoint = format!("{}{INQUIRY_PATH}", server.uri());
-        let err = provider
-            .execute_with_retry(|tok| {
-                let client = client.clone();
-                let url = endpoint.clone();
-                async move { send_inquiry(&client, &url, &tok).await }
-            })
+        let err = execute_inquiry_with_retry(&provider, &server)
             .await
             .expect_err("non-matching 401 must fail without retry");
 

@@ -239,10 +239,7 @@ impl RawPayParams {
     ///
     /// Returns [`PaymobError::ValidationError`] if `payment_token` is empty or `source`
     /// is not a JSON object containing non-empty `"identifier"` and `"subtype"` strings.
-    pub fn new(
-        payment_token: impl Into<SecretString>,
-        source: Value,
-    ) -> Result<Self, PaymobError> {
+    pub fn new(payment_token: impl Into<SecretString>, source: Value) -> Result<Self, PaymobError> {
         let payment_token = validate_non_empty_secret("payment_token", payment_token.into())?;
         validate_raw_source(&source)?;
         Ok(Self {
@@ -508,9 +505,15 @@ impl SavedCardsService {
     async fn execute_pay(&self, payload: &Value) -> Result<HeadlessPayResponse, PaymobError> {
         let pay_url = self.client.accept_url(ACCEPT_PAY_PATH)?;
         let token = self.acquire_accept_jwt().await?;
-        let response = self.send_pay_request(pay_url.as_str(), &token, payload).await?;
+        let response = self
+            .send_pay_request(pay_url.as_str(), &token, payload)
+            .await?;
         if is_incorrect_credentials_401(response.status, &response.body) {
-            self.client.auth().accept_cache().evict_if_matches(&token).await;
+            self.client
+                .auth()
+                .accept_cache()
+                .evict_if_matches(&token)
+                .await;
             let fresh_token = self.acquire_accept_jwt().await?;
             let retry_resp = self
                 .send_pay_request(pay_url.as_str(), &fresh_token, payload)

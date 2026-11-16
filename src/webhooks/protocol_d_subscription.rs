@@ -421,7 +421,7 @@ impl super::verifier::PaymobWebhookEngine {
     /// use some_paymob::webhooks::verifier::PaymobWebhookEngine;
     ///
     /// # fn example() -> Result<(), some_paymob::webhooks::verifier::WebhookError> {
-    /// let engine = PaymobWebhookEngine::new("your_hmac_secret");
+    /// let engine = PaymobWebhookEngine::new("your_hmac_secret")?;
     /// let raw_body = r#"{
     ///     "paymob_request_id": "df9e4ecf-12e0-4925-b258-65423f32bc98",
     ///     "subscription_data": { "id": 1264 },

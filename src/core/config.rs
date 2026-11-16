@@ -207,7 +207,9 @@ impl ClientConfig {
                 reason: MISSING_HMAC_SECRET_REASON.to_owned(),
             });
         };
-        Ok(crate::webhooks::PaymobWebhookEngine::from_hmac_secret(secret))
+        Ok(crate::webhooks::PaymobWebhookEngine::from_hmac_secret(
+            secret,
+        ))
     }
 }
 

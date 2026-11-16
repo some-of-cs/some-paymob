@@ -148,10 +148,7 @@ fn has_no_url_credentials_or_query(parsed: &Url) -> bool {
 }
 
 fn is_safe_relative_auth_path(path: &str) -> bool {
-    path.starts_with('/')
-        && !path.starts_with("//")
-        && !path.contains('\\')
-        && !path.contains("..")
+    path.starts_with('/') && !path.starts_with("//") && !path.contains('\\') && !path.contains("..")
 }
 
 /// Parses `base_url` as an HTTPS (or loopback HTTP) URL with host and safely joins `path`.
@@ -161,7 +158,9 @@ pub(crate) fn join_http_url(base_url: &str, path: &str) -> Result<Url, String> {
         return Err(String::from("expected http(s) URL with host"));
     }
     if !is_allowed_auth_scheme(&parsed) || !is_safe_relative_auth_path(path) {
-        return Err(String::from("expected https (or loopback http) URL and safe path"));
+        return Err(String::from(
+            "expected https (or loopback http) URL and safe path",
+        ));
     }
     parsed.join(path).map_err(|err| err.to_string())
 }

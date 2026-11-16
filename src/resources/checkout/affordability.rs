@@ -179,11 +179,7 @@ pub struct AffordabilityWidgetConfigBuilder {
 impl AffordabilityWidgetConfigBuilder {
     /// Initializes a new [`AffordabilityWidgetConfigBuilder`].
     #[must_use]
-    pub fn new(
-        public_key: &PublicKey,
-        amount: MinorUnitAmount,
-        currency: Currency,
-    ) -> Self {
+    pub fn new(public_key: &PublicKey, amount: MinorUnitAmount, currency: Currency) -> Self {
         Self {
             public_key: public_key.expose_secret().trim().to_owned(),
             amount,
@@ -303,17 +299,14 @@ mod tests {
     #[test]
     fn tc_2_2_3_affordability_widget_builds_and_wires_plan_id() {
         let pk = PublicKey::new("egy_pk_test_ABC").expect("valid pk");
-        let widget = AffordabilityWidgetConfig::builder(
-            &pk,
-            MinorUnitAmount::new(100_000),
-            Currency::EGP,
-        )
-        .pre_selected_plan(77)
-        .supported_banks(["CIB", "NBE"])
-        .tenure_months(12)
-        .down_payment(MinorUnitAmount::new(10_000))
-        .build()
-        .expect("valid widget config");
+        let widget =
+            AffordabilityWidgetConfig::builder(&pk, MinorUnitAmount::new(100_000), Currency::EGP)
+                .pre_selected_plan(77)
+                .supported_banks(["CIB", "NBE"])
+                .tenure_months(12)
+                .down_payment(MinorUnitAmount::new(10_000))
+                .build()
+                .expect("valid widget config");
 
         assert_eq!(widget.amount_cents(), 100_000);
         assert_eq!(widget.selected_plan_id(), Some(77));
@@ -358,9 +351,10 @@ mod tests {
     fn tc_2_2_3_rejects_zero_amount_invalid_plan_and_excess_down_payment() {
         let pk = PublicKey::new("egy_pk_test_ABC").expect("valid pk");
 
-        let zero_amt = AffordabilityWidgetConfig::builder(&pk, MinorUnitAmount::ZERO, Currency::EGP)
-            .build()
-            .expect_err("zero amount must fail");
+        let zero_amt =
+            AffordabilityWidgetConfig::builder(&pk, MinorUnitAmount::ZERO, Currency::EGP)
+                .build()
+                .expect_err("zero amount must fail");
         assert!(matches!(
             zero_amt,
             PaymobError::ValidationError {

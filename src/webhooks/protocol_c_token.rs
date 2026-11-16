@@ -300,9 +300,8 @@ mod tests {
 
     #[test]
     fn official_vector_15978654_canonical_concatenation_order() {
-        let event: CardTokenWebhookEvent =
-            serde_json::from_str(OFFICIAL_TEST_VECTOR_15978654_JSON)
-                .expect("official test vector 15978654 JSON must deserialize");
+        let event: CardTokenWebhookEvent = serde_json::from_str(OFFICIAL_TEST_VECTOR_15978654_JSON)
+            .expect("official test vector 15978654 JSON must deserialize");
         assert_eq!(event.event_type, "TOKEN");
         assert_eq!(event.obj.id, 15978654);
         assert_eq!(event.obj.masked_pan, "xxxx-xxxx-xxxx-2346");
@@ -388,9 +387,8 @@ mod tests {
 
     #[test]
     fn card_token_obj_debug_redacts_sensitive_fields() {
-        let event: CardTokenWebhookEvent =
-            serde_json::from_str(OFFICIAL_TEST_VECTOR_15978654_JSON)
-                .expect("official test vector JSON must deserialize");
+        let event: CardTokenWebhookEvent = serde_json::from_str(OFFICIAL_TEST_VECTOR_15978654_JSON)
+            .expect("official test vector JSON must deserialize");
         let rendered = format!("{:?}", event.obj);
         assert!(rendered.contains("[REDACTED]"));
         assert!(!rendered.contains("tok_test_15978654_abcdef"));

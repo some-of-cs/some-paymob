@@ -311,8 +311,8 @@ mod tests {
     #[test]
     fn optional_payouts_hmac_fails_closed_when_secret_without_signature() {
         let secret = SecretString::from("payouts_secret_123".to_owned());
-        let err = verify_optional_payouts_hmac(Some(&secret), "{}", None)
-            .expect_err("must fail closed");
+        let err =
+            verify_optional_payouts_hmac(Some(&secret), "{}", None).expect_err("must fail closed");
         assert_eq!(err, WebhookError::MissingQueryHmac);
     }
 
@@ -320,7 +320,8 @@ mod tests {
     fn optional_payouts_hmac_verifies_valid_and_rejects_tampered_or_malformed() {
         let secret_str = "payouts_secret_123";
         let secret = SecretString::from(secret_str.to_owned());
-        let body = r#"{"topup_id":"top_9","amount_cents":1000,"currency":"EGP","status":"Approved"}"#;
+        let body =
+            r#"{"topup_id":"top_9","amount_cents":1000,"currency":"EGP","status":"Approved"}"#;
         let valid_sig = compute_test_hmac_hex(secret_str, body);
 
         assert_eq!(

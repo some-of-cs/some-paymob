@@ -55,8 +55,7 @@ enum DetectedWebhookKind {
 }
 
 fn parse_webhook_json(raw_body: &str) -> Result<serde_json::Value, WebhookError> {
-    serde_json::from_str(raw_body)
-        .map_err(|err| WebhookError::InvalidJsonPayload(err.to_string()))
+    serde_json::from_str(raw_body).map_err(|err| WebhookError::InvalidJsonPayload(err.to_string()))
 }
 
 fn require_query_hmac(query_hmac: Option<&str>) -> Result<&str, WebhookError> {

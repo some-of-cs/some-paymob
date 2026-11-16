@@ -590,7 +590,7 @@ impl SubscriptionPlansService {
 
     async fn acquire_bearer_token(&self) -> Result<SecretString, PaymobError> {
         if let Some(cached) = self.client.auth().accept_cache().peek() {
-            return Ok(cached.access_token);
+            return Ok(cached.access_token.clone());
         }
 
         let api_key = self.client.config().api_key().ok_or_else(|| {
@@ -616,7 +616,7 @@ impl SubscriptionPlansService {
                 Ok::<CachedToken, PaymobError>(CachedToken::with_default_ttl(jwt, None))
             })
             .await?;
-        Ok(cached.access_token)
+        Ok(cached.access_token.clone())
     }
 }
 

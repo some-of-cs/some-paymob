@@ -362,27 +362,23 @@ fn validate_custom_url(field: &'static str, raw: &str) -> Result<String, PaymobE
         field,
         reason: format!("invalid URL for {field}: {err}"),
     })?;
+    validate_custom_url_scheme(field, &parsed)?;
+    validate_custom_url_parts(field, &parsed)?;
+    Ok(trimmed.trim_end_matches('/').to_string())
+}
+
+/// Enforces host presence, `https` for remote hosts, and `http` only on loopback/local test hosts.
+fn validate_custom_url_scheme(field: &'static str, parsed: &Url) -> Result<(), PaymobError> {
     let Some(host) = parsed.host_str() else {
         return Err(PaymobError::ValidationError {
             field,
             reason: format!("{field} must include a host"),
         });
     };
-    validate_custom_url_scheme(field, parsed.scheme(), host)?;
-    validate_custom_url_parts(field, &parsed)?;
-    Ok(trimmed.trim_end_matches('/').to_string())
-}
-
-/// Enforces `https` for remote hosts and permits `http` only on loopback/local test hosts.
-fn validate_custom_url_scheme(
-    field: &'static str,
-    scheme: &str,
-    host: &str,
-) -> Result<(), PaymobError> {
-    if scheme == "https" {
+    if parsed.scheme() == "https" {
         return Ok(());
     }
-    if scheme == "http" && is_loopback_or_local_host(host) {
+    if parsed.scheme() == "http" && is_loopback_or_local_host(host) {
         return Ok(());
     }
     Err(PaymobError::ValidationError {

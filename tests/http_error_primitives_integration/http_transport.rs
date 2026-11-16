@@ -239,12 +239,30 @@ async fn tc_1_3_2_http_client_enforces_bounded_body_and_timeout() {
     )
     .await;
 
-    assert_response_too_large(
-        "/oversized-header",
-        ResponseTemplate::new(200).insert_header("Content-Length", "4096"),
-        Some(4096),
-    )
-    .await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let header_server = tokio::spawn(async move {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let mut req_buf = [0_u8; 1024];
+            let _ = stream.read(&mut req_buf).await;
+            let payload = "HTTP/1.1 200 OK\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(payload.as_bytes()).await;
+        }
+    });
+
+    let client = HttpClient::new(fast_config()).expect("client builds");
+    let req = HttpRequest::get(&format!("http://{addr}/oversized-header")).expect("valid URL");
+    let header_err = client.execute(&req).await.unwrap_err();
+    let _ = header_server.await;
+
+    assert!(matches!(
+        header_err,
+        HttpError::ResponseTooLarge {
+            limit_bytes: 1024,
+            actual_bytes: Some(4096),
+            ..
+        }
+    ));
 
     let mut cfg = fast_config();
     cfg.request_timeout = Duration::from_millis(50);

@@ -5,9 +5,9 @@ use uuid::Uuid;
 use some_paymob::core::error::PaymobError;
 use some_paymob::core::http::{HttpError, HttpResponse};
 
-fn assert_error_mapping_cases(
-    cases: &[(u16, &str, Option<u64>, PaymobError, bool, Option<u16>)],
-) {
+type ErrorCase<'a> = (u16, &'a str, Option<u64>, PaymobError, bool, Option<u16>);
+
+fn assert_error_mapping_cases(cases: &[ErrorCase<'_>]) {
     for (status, body, retry_after, expected, retryable, expected_status) in cases {
         let actual = PaymobError::from_response(*status, body, *retry_after);
         assert_eq!(&actual, expected);

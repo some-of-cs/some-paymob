@@ -2,7 +2,8 @@
   "module_id": "module-7-webhooks-engine",
   "module_branch": "feat/module-7-webhooks-engine",
   "base_branch": "main",
-  "status": "ready_for_module_review",
+  "pr_number": 31,
+  "status": "merged",
   "merge_order_position": 2,
   "stories": {
     "US-7.1.0": {

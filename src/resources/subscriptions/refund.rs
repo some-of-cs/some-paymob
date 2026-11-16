@@ -323,7 +323,10 @@ async fn dispatch_refund(
     })?;
     let url = client.accept_url("/api/acceptance/void_refund/refund")?;
     let mut headers = HeaderMap::new();
-    inject_secret_key_token(&mut headers, &SecretString::from(secret_key.expose_secret()))?;
+    inject_secret_key_token(
+        &mut headers,
+        &SecretString::from(secret_key.expose_secret()),
+    )?;
     let auth_header = headers.get(AUTHORIZATION).cloned().ok_or_else(|| {
         PaymobError::AuthenticationError(String::from(
             "failed to construct Regime 1 authorization header",
@@ -593,9 +596,7 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/api/acceptance/subscriptions/9999/last-transaction"))
-            .respond_with(
-                ResponseTemplate::new(404).set_body_json(json!({"detail": "Not found."})),
-            )
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({"detail": "Not found."})))
             .expect(1)
             .mount(&server)
             .await;

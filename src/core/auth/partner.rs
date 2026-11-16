@@ -17,7 +17,7 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use url::Url;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// Default HTTP header name used when injecting a partner API key.
 pub const DEFAULT_PARTNER_API_KEY_HEADER: &str = "X-Api-Key";
@@ -154,7 +154,8 @@ impl PartnerAuthContext {
 
     /// Creates a [`PartnerAuthMode::PartnerApiKey`] context injecting into a custom HTTP header.
     ///
-    /// Returns [`PartnerAuthError::EmptyApiKey`] or [`PartnerAuthError::InvalidHeaderName`] on invalid input.
+    /// Returns [`PartnerAuthError::EmptyApiKey`] or [`PartnerAuthError::InvalidHeaderName`] on
+    /// invalid input.
     pub fn api_key_with_header_name(
         api_key: impl Into<String>,
         header_name: impl Into<String>,
@@ -182,7 +183,8 @@ impl PartnerAuthContext {
 
     /// Creates a [`PartnerAuthMode::PartnerApiKey`] context injecting into a custom query parameter.
     ///
-    /// Returns [`PartnerAuthError::EmptyApiKey`] or [`PartnerAuthError::EmptyQueryParamName`] on invalid input.
+    /// Returns [`PartnerAuthError::EmptyApiKey`] or [`PartnerAuthError::EmptyQueryParamName`] on
+    /// invalid input.
     pub fn api_key_with_query_param(
         api_key: impl Into<String>,
         param_name: impl Into<String>,
@@ -216,7 +218,8 @@ impl PartnerAuthContext {
 
     /// Overrides the HTTP header name used when injecting the delegated `merchant_id`.
     ///
-    /// Returns [`PartnerAuthError::InvalidHeaderName`] if `header_name` is not a valid HTTP header name.
+    /// Returns [`PartnerAuthError::InvalidHeaderName`] if `header_name` is not a valid HTTP
+    /// header name.
     pub fn with_merchant_id_header(
         mut self,
         header_name: impl Into<String>,
@@ -298,7 +301,7 @@ impl PartnerAuthContext {
             .bearer_token
             .as_ref()
             .ok_or(PartnerAuthError::MissingCredential)?;
-        let formatted = format!("Bearer {}", token.expose_secret());
+        let formatted = Zeroizing::new(format!("Bearer {}", token.expose_secret()));
         let value = build_header_value(&formatted)?;
         headers.insert(AUTHORIZATION, value);
         Ok(())
@@ -363,7 +366,8 @@ fn build_header_name(name: String) -> Result<HeaderName, PartnerAuthError> {
     if trimmed.is_empty() {
         return Err(PartnerAuthError::InvalidHeaderName(name));
     }
-    HeaderName::from_bytes(trimmed.as_bytes()).map_err(|_| PartnerAuthError::InvalidHeaderName(name))
+    HeaderName::from_bytes(trimmed.as_bytes())
+        .map_err(|_| PartnerAuthError::InvalidHeaderName(name))
 }
 
 fn build_header_value(raw: &str) -> Result<HeaderValue, PartnerAuthError> {
@@ -516,6 +520,27 @@ mod tests {
             base.with_merchant_id("   "),
             Err(PartnerAuthError::EmptyMerchantId)
         );
+    }
+
+    #[test]
+    fn tc_1_2_5_rejects_invalid_merchant_id_header_name() {
+        let base = PartnerAuthContext::bearer("valid_tok")
+            .expect("valid bearer")
+            .with_merchant_id("merchant_123")
+            .expect("valid merchant_id");
+
+        assert!(matches!(
+            base.clone().with_merchant_id_header(""),
+            Err(PartnerAuthError::InvalidHeaderName(_))
+        ));
+        assert!(matches!(
+            base.clone().with_merchant_id_header("   "),
+            Err(PartnerAuthError::InvalidHeaderName(_))
+        ));
+        assert!(matches!(
+            base.with_merchant_id_header("bad header name"),
+            Err(PartnerAuthError::InvalidHeaderName(_))
+        ));
     }
 
     #[test]

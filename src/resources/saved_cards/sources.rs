@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! Polymorphic payment source types for headless Paymob payments (`US-4.1.0`, Unit 1).
 //!
-//! Defines [`PaymentSource`] for Paymob's `POST /api/acceptance/payments/pay`
+//! Defines [`PaymentSource`](self::PaymentSource) for Paymob's `POST /api/acceptance/payments/pay`
 //! endpoint, supporting saved card tokens (`TOKEN`), mobile wallets (`WALLET`),
 //! and offline kiosk aggregators (`AGGREGATOR`) with automatic `[REDACTED]`
 //! [`Debug`](std::fmt::Debug) formatting and builder-time validation.
@@ -176,7 +176,7 @@ impl PaymentSource {
 
     /// Validates the payment source invariants for the current variant.
     ///
-    /// Useful when a caller constructs a [`PaymentSource`] directly via struct
+    /// Useful when a caller constructs a [`PaymentSource`](self::PaymentSource) directly via struct
     /// literals or deserialization and wants to verify invariants before dispatch.
     pub fn validate(&self) -> Result<(), PaymobError> {
         match self {

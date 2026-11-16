@@ -12,7 +12,7 @@ use std::str::FromStr;
 
 use reqwest::Method;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;

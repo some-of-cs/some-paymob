@@ -49,8 +49,8 @@ const MODE_PREFIXES: &[(&str, EnvironmentMode)] = &[
 ///
 /// let config = ClientConfig::builder()
 ///     .region(PaymobRegion::Egypt)
-///     .secret_key(SecretKey::from("egy_sk_test_example"))
-///     .public_key(PublicKey::from("egy_pk_test_example"))
+///     .secret_key(SecretKey::new("egy_sk_test_example")?)
+///     .public_key(PublicKey::new("egy_pk_test_example")?)
 ///     .timeout(Duration::from_secs(15))
 ///     .max_retries(2)
 ///     .build()?;
@@ -203,7 +203,7 @@ impl fmt::Debug for ClientConfig {
 ///
 /// let config = ClientConfigBuilder::new()
 ///     .region(PaymobRegion::SaudiArabia)
-///     .secret_key(SecretKey::from("ksa_sk_live_example"))
+///     .secret_key(SecretKey::new("ksa_sk_live_example")?)
 ///     .use_payouts_staging(false)
 ///     .use_legacy_v2_bearer_for_capture(true)
 ///     .build()?;
@@ -522,10 +522,10 @@ mod tests {
     fn tc_1_1_3_builds_valid_test_config_with_defaults() {
         let config = ClientConfig::builder()
             .region(PaymobRegion::Egypt)
-            .secret_key(SecretKey::from("egy_sk_test_626secret"))
-            .public_key(PublicKey::from("egy_pk_test_999public"))
-            .api_key(ApiKey::from("test_api_key"))
-            .hmac_secret(HmacSecret::from("test_hmac_secret"))
+            .secret_key(SecretKey::new("egy_sk_test_626secret").expect("valid secret key"))
+            .public_key(PublicKey::new("egy_pk_test_999public").expect("valid public key"))
+            .api_key(ApiKey::new("test_api_key").expect("valid api key"))
+            .hmac_secret(HmacSecret::new("test_hmac_secret").expect("valid hmac secret"))
             .build()
             .expect("valid test config should build");
 
@@ -541,8 +541,8 @@ mod tests {
     fn tc_1_1_3_builds_valid_live_config_with_custom_options() {
         let config = ClientConfig::builder()
             .region(PaymobRegion::SaudiArabia)
-            .secret_key(SecretKey::from("ksa_sk_live_abc"))
-            .public_key(PublicKey::from("ksa_pk_live_xyz"))
+            .secret_key(SecretKey::new("ksa_sk_live_abc").expect("valid secret key"))
+            .public_key(PublicKey::new("ksa_pk_live_xyz").expect("valid public key"))
             .timeout(Duration::from_secs(60))
             .max_retries(5)
             .use_payouts_staging(true)
@@ -560,10 +560,7 @@ mod tests {
     #[test]
     fn tc_1_1_3_rejects_public_key_in_secret_key_slot() {
         for pk in ["pk_test_12345", "egy_pk_test_12345", "ksa_pk_live_99999"] {
-            let err = ClientConfig::builder()
-                .region(PaymobRegion::Egypt)
-                .secret_key(SecretKey::from(pk))
-                .build()
+            let err = SecretKey::new(pk)
                 .expect_err("pk_* in secret_key must be rejected");
 
             assert!(
@@ -583,8 +580,8 @@ mod tests {
     fn tc_1_1_3_rejects_test_and_live_environment_mismatch() {
         let err = ClientConfig::builder()
             .region(PaymobRegion::Egypt)
-            .secret_key(SecretKey::from("egy_sk_test_626xxx"))
-            .public_key(PublicKey::from("egy_pk_live_999xxx"))
+            .secret_key(SecretKey::new("egy_sk_test_626xxx").expect("valid secret key"))
+            .public_key(PublicKey::new("egy_pk_live_999xxx").expect("valid public key"))
             .build()
             .expect_err("Test secret key + Live public key must fail");
 
@@ -593,7 +590,7 @@ mod tests {
         let err_explicit = ClientConfig::builder()
             .region(PaymobRegion::Uae)
             .environment(EnvironmentMode::Live)
-            .secret_key(SecretKey::from("uae_sk_test_111"))
+            .secret_key(SecretKey::new("uae_sk_test_111").expect("valid secret key"))
             .build()
             .expect_err("Explicit Live + Test secret key must fail");
 
@@ -626,10 +623,7 @@ mod tests {
             }
         ));
 
-        let err_empty_sk = ClientConfig::builder()
-            .region(PaymobRegion::Pakistan)
-            .secret_key(SecretKey::from("   "))
-            .build()
+        let err_empty_sk = SecretKey::new("   ")
             .expect_err("blank secret_key must fail");
         assert!(matches!(
             err_empty_sk,
@@ -644,10 +638,10 @@ mod tests {
     fn tc_1_1_3_debug_redacts_all_credentials_on_config_and_builder() {
         let builder = ClientConfig::builder()
             .region(PaymobRegion::Egypt)
-            .secret_key(SecretKey::from("egy_sk_test_super_secret_value"))
-            .public_key(PublicKey::from("egy_pk_test_super_public_value"))
-            .api_key(ApiKey::from("super_api_key_value"))
-            .hmac_secret(HmacSecret::from("super_hmac_secret_value"));
+            .secret_key(SecretKey::new("egy_sk_test_super_secret_value").expect("valid secret key"))
+            .public_key(PublicKey::new("egy_pk_test_super_public_value").expect("valid public key"))
+            .api_key(ApiKey::new("super_api_key_value").expect("valid api key"))
+            .hmac_secret(HmacSecret::new("super_hmac_secret_value").expect("valid hmac secret"));
 
         let builder_dbg = format!("{builder:?}");
         assert!(builder_dbg.contains("[REDACTED]"));

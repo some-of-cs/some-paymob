@@ -98,17 +98,27 @@ pub struct RegionalEndpoints {
     pub payouts_staging_base_url: Option<String>,
 }
 
+/// Borrowed base URL inputs for [`PaymobRegion::Custom`].
+struct CustomUrlInputs<'a> {
+    accept_base_url: &'a str,
+    checkout_base_url: &'a str,
+    payouts_base_url: &'a str,
+    payouts_staging_base_url: &'a str,
+}
+
 impl PaymobRegion {
     /// Resolves and validates the [`RegionalEndpoints`] for this region.
     ///
     /// Built-in regions always succeed. [`PaymobRegion::Custom`] validates that
-    /// every configured URL is non-empty, parses cleanly, uses `http` or `https`,
-    /// and includes a host.
+    /// every configured URL is non-empty, parses cleanly, uses `https` (or `http`
+    /// only for loopback/local test hosts), includes a host, and omits embedded
+    /// credentials, queries, and fragments.
     ///
     /// # Errors
     ///
     /// Returns [`PaymobError::ValidationError`] if any URL in [`PaymobRegion::Custom`]
-    /// is empty, malformed, lacks a host, or uses a non-HTTP(S) scheme.
+    /// is empty, malformed, lacks a host, uses an unsupported scheme, or contains
+    /// embedded credentials, query parameters, or fragments.
     ///
     /// # Examples
     ///
@@ -163,12 +173,12 @@ impl PaymobRegion {
                 checkout_base_url,
                 payouts_base_url,
                 payouts_staging_base_url,
-            } => resolve_custom_endpoints(
+            } => resolve_custom_endpoints(CustomUrlInputs {
                 accept_base_url,
                 checkout_base_url,
                 payouts_base_url,
                 payouts_staging_base_url,
-            ),
+            }),
         }
     }
 
@@ -323,17 +333,12 @@ pub fn normalize_endpoint_path(path: &str) -> String {
 }
 
 /// Validates and resolves all four base URLs for [`PaymobRegion::Custom`].
-fn resolve_custom_endpoints(
-    accept_base_url: &str,
-    checkout_base_url: &str,
-    payouts_base_url: &str,
-    payouts_staging_base_url: &str,
-) -> Result<RegionalEndpoints, PaymobError> {
-    let accept = validate_custom_url("accept_base_url", accept_base_url)?;
-    let checkout = validate_custom_url("checkout_base_url", checkout_base_url)?;
-    let payouts = validate_custom_url("payouts_base_url", payouts_base_url)?;
+fn resolve_custom_endpoints(inputs: CustomUrlInputs<'_>) -> Result<RegionalEndpoints, PaymobError> {
+    let accept = validate_custom_url("accept_base_url", inputs.accept_base_url)?;
+    let checkout = validate_custom_url("checkout_base_url", inputs.checkout_base_url)?;
+    let payouts = validate_custom_url("payouts_base_url", inputs.payouts_base_url)?;
     let payouts_staging =
-        validate_custom_url("payouts_staging_base_url", payouts_staging_base_url)?;
+        validate_custom_url("payouts_staging_base_url", inputs.payouts_staging_base_url)?;
 
     Ok(RegionalEndpoints {
         accept_base_url: accept,
@@ -343,8 +348,8 @@ fn resolve_custom_endpoints(
     })
 }
 
-/// Validates a single custom URL field for non-emptiness, valid syntax, HTTP(S)
-/// scheme, and host presence, returning the URL without trailing slashes.
+/// Validates a single custom URL field for non-emptiness, valid syntax, host
+/// presence, scheme policy, and absence of credentials, queries, or fragments.
 fn validate_custom_url(field: &'static str, raw: &str) -> Result<String, PaymobError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -357,19 +362,59 @@ fn validate_custom_url(field: &'static str, raw: &str) -> Result<String, PaymobE
         field,
         reason: format!("invalid URL for {field}: {err}"),
     })?;
-    if parsed.scheme() != "https" && parsed.scheme() != "http" {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must use http or https scheme"),
-        });
-    }
-    if parsed.host_str().is_none() {
+    let Some(host) = parsed.host_str() else {
         return Err(PaymobError::ValidationError {
             field,
             reason: format!("{field} must include a host"),
         });
-    }
+    };
+    validate_custom_url_scheme(field, parsed.scheme(), host)?;
+    validate_custom_url_parts(field, &parsed)?;
     Ok(trimmed.trim_end_matches('/').to_string())
+}
+
+/// Enforces `https` for remote hosts and permits `http` only on loopback/local test hosts.
+fn validate_custom_url_scheme(
+    field: &'static str,
+    scheme: &str,
+    host: &str,
+) -> Result<(), PaymobError> {
+    if scheme == "https" {
+        return Ok(());
+    }
+    if scheme == "http" && is_loopback_or_local_host(host) {
+        return Ok(());
+    }
+    Err(PaymobError::ValidationError {
+        field,
+        reason: format!("{field} must use https unless targeting a local/loopback host"),
+    })
+}
+
+/// Rejects embedded credentials (`username`/`password`) and `query`/`fragment` parts.
+fn validate_custom_url_parts(field: &'static str, parsed: &Url) -> Result<(), PaymobError> {
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} must not contain embedded credentials"),
+        });
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} must not contain query or fragment components"),
+        });
+    }
+    Ok(())
+}
+
+/// Returns `true` when `host` is a loopback or `.local` test host permitted for `http://`.
+fn is_loopback_or_local_host(host: &str) -> bool {
+    let lower = host.to_ascii_lowercase();
+    lower == "localhost"
+        || lower == "127.0.0.1"
+        || lower == "[::1]"
+        || lower.ends_with(".local")
 }
 
 /// Joins a base URL with a normalized endpoint path.
@@ -521,16 +566,16 @@ mod tests {
     #[test]
     fn tc_1_1_1_custom_region_valid_and_invalid_urls() {
         let valid = PaymobRegion::Custom {
-            accept_base_url: "https://mock-accept.local/".to_string(),
-            checkout_base_url: "https://mock-accept.local/unifiedcheckout/".to_string(),
+            accept_base_url: "http://localhost:8080/".to_string(),
+            checkout_base_url: "http://[::1]:8080/unifiedcheckout/".to_string(),
             payouts_base_url: "http://127.0.0.1:8080/".to_string(),
-            payouts_staging_base_url: "http://127.0.0.1:8081".to_string(),
+            payouts_staging_base_url: "http://mock-payouts.local".to_string(),
         };
-        let eps = valid.endpoints().expect("valid custom endpoints");
-        assert_eq!(eps.accept_base_url, "https://mock-accept.local");
+        let eps = valid.endpoints().expect("valid local custom endpoints");
+        assert_eq!(eps.accept_base_url, "http://localhost:8080");
         assert_eq!(
             eps.checkout_base_url,
-            "https://mock-accept.local/unifiedcheckout/"
+            "http://[::1]:8080/unifiedcheckout/"
         );
         assert_eq!(
             eps.payouts_base_url.as_deref(),
@@ -538,7 +583,7 @@ mod tests {
         );
         assert_eq!(
             eps.payouts_staging_base_url.as_deref(),
-            Some("http://127.0.0.1:8081")
+            Some("http://mock-payouts.local")
         );
 
         let empty_accept = PaymobRegion::Custom {
@@ -565,6 +610,62 @@ mod tests {
             bad_scheme.endpoints(),
             Err(PaymobError::ValidationError {
                 field: "checkout_base_url",
+                ..
+            })
+        ));
+
+        let remote_http = PaymobRegion::Custom {
+            accept_base_url: "http://api.example.com".to_string(),
+            checkout_base_url: "https://example.com/checkout".to_string(),
+            payouts_base_url: "https://example.com/payouts".to_string(),
+            payouts_staging_base_url: "https://example.com/staging".to_string(),
+        };
+        assert!(matches!(
+            remote_http.endpoints(),
+            Err(PaymobError::ValidationError {
+                field: "accept_base_url",
+                ..
+            })
+        ));
+
+        let embedded_creds = PaymobRegion::Custom {
+            accept_base_url: "https://user:secret@example.com".to_string(),
+            checkout_base_url: "https://example.com/checkout".to_string(),
+            payouts_base_url: "https://example.com/payouts".to_string(),
+            payouts_staging_base_url: "https://example.com/staging".to_string(),
+        };
+        assert!(matches!(
+            embedded_creds.endpoints(),
+            Err(PaymobError::ValidationError {
+                field: "accept_base_url",
+                ..
+            })
+        ));
+
+        let query_in_base = PaymobRegion::Custom {
+            accept_base_url: "https://example.com".to_string(),
+            checkout_base_url: "https://example.com/checkout?token=1".to_string(),
+            payouts_base_url: "https://example.com/payouts".to_string(),
+            payouts_staging_base_url: "https://example.com/staging".to_string(),
+        };
+        assert!(matches!(
+            query_in_base.endpoints(),
+            Err(PaymobError::ValidationError {
+                field: "checkout_base_url",
+                ..
+            })
+        ));
+
+        let fragment_in_base = PaymobRegion::Custom {
+            accept_base_url: "https://example.com".to_string(),
+            checkout_base_url: "https://example.com/checkout".to_string(),
+            payouts_base_url: "https://example.com/payouts#section".to_string(),
+            payouts_staging_base_url: "https://example.com/staging".to_string(),
+        };
+        assert!(matches!(
+            fragment_in_base.endpoints(),
+            Err(PaymobError::ValidationError {
+                field: "payouts_base_url",
                 ..
             })
         ));

@@ -57,6 +57,14 @@ impl MinorUnitAmount {
     /// let cents = MinorUnitAmount::new(15_000);
     /// assert_eq!(cents.as_u64(), 15_000);
     /// ```
+    ///
+    /// Floating-point literals are rejected at compile time:
+    ///
+    /// ```compile_fail
+    /// use some_paymob::core::types::MinorUnitAmount;
+    ///
+    /// let _ = MinorUnitAmount::new(10.50);
+    /// ```
     #[must_use]
     pub const fn new(amount: u64) -> Self {
         Self(amount)

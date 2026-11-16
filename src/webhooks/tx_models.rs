@@ -73,10 +73,14 @@ pub type TransactionObject = TransactionWebhookObj;
 ///
 /// Wraps the event discriminator (`"type"`) and the nested [`TransactionWebhookObj`]
 /// containing the 20 HMAC-signed transaction fields and auxiliary metadata.
+fn default_transaction_event_type() -> String {
+    "TRANSACTION".to_string()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransactionProcessedEvent {
-    /// Webhook event discriminator (typically `"TRANSACTION"`), mapped from JSON `"type"`.
-    #[serde(rename = "type")]
+    /// Webhook event discriminator (defaults to `"TRANSACTION"` when omitted), mapped from JSON `"type"`.
+    #[serde(rename = "type", default = "default_transaction_event_type")]
     pub event_type: String,
     /// Nested Paymob transaction object payload.
     pub obj: TransactionWebhookObj,
@@ -101,10 +105,28 @@ impl TransactionProcessedEvent {
         self.obj.amount_cents()
     }
 
+    /// Returns the transaction amount as a strongly-typed [`MinorUnitAmount`](crate::core::types::MinorUnitAmount).
+    #[must_use]
+    pub const fn amount(&self) -> crate::core::types::MinorUnitAmount {
+        self.obj.amount()
+    }
+
+    /// Returns the net settled amount as a strongly-typed [`MinorUnitAmount`](crate::core::types::MinorUnitAmount).
+    #[must_use]
+    pub fn net_settled_amount(&self) -> crate::core::types::MinorUnitAmount {
+        self.obj.net_settled_amount()
+    }
+
     /// Returns the ISO-4217 currency code slice (`obj.currency`).
     #[must_use]
     pub fn currency(&self) -> &str {
         self.obj.currency()
+    }
+
+    /// Parses the transaction currency into a strongly-typed [`Currency`](crate::core::types::Currency).
+    #[must_use]
+    pub fn parsed_currency(&self) -> crate::core::types::Currency {
+        self.obj.parsed_currency()
     }
 
     /// Returns `true` if the transaction succeeded, is not pending, and has no error flag.
@@ -283,10 +305,28 @@ impl TransactionWebhookObj {
         self.amount_cents
     }
 
+    /// Returns the transaction amount as a strongly-typed [`MinorUnitAmount`](crate::core::types::MinorUnitAmount).
+    #[must_use]
+    pub const fn amount(&self) -> crate::core::types::MinorUnitAmount {
+        crate::core::types::MinorUnitAmount::new(self.amount_cents)
+    }
+
+    /// Returns the net settled amount as a strongly-typed [`MinorUnitAmount`](crate::core::types::MinorUnitAmount).
+    #[must_use]
+    pub fn net_settled_amount(&self) -> crate::core::types::MinorUnitAmount {
+        crate::core::types::MinorUnitAmount::new(self.net_settled_cents())
+    }
+
     /// Returns the three-letter ISO-4217 currency code slice (`currency`).
     #[must_use]
     pub fn currency(&self) -> &str {
         &self.currency
+    }
+
+    /// Parses [`Self::currency`] into a strongly-typed [`Currency`](crate::core::types::Currency).
+    #[must_use]
+    pub fn parsed_currency(&self) -> crate::core::types::Currency {
+        crate::core::types::Currency::from_code(&self.currency)
     }
 
     /// Returns `true` if the transaction succeeded, is not pending, and has no error flag.

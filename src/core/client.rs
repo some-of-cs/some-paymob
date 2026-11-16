@@ -316,6 +316,30 @@ impl PaymobClient {
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
+
+    /// Returns a [`PaymobWebhookEngine`](crate::webhooks::PaymobWebhookEngine) bound to this
+    /// client's configured [`HmacSecret`](crate::core::credentials::HmacSecret).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] (`field: "hmac_secret"`) if `hmac_secret`
+    /// was not configured on [`ClientConfig`].
+    #[cfg(feature = "webhooks")]
+    pub fn webhooks(&self) -> Result<crate::webhooks::PaymobWebhookEngine, PaymobError> {
+        self.inner.config.webhook_engine()
+    }
+
+    /// Alias for [`Self::webhooks`] returning a [`PaymobWebhookEngine`](crate::webhooks::PaymobWebhookEngine)
+    /// bound to this client's configured [`HmacSecret`](crate::core::credentials::HmacSecret).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] (`field: "hmac_secret"`) if `hmac_secret`
+    /// was not configured on [`ClientConfig`].
+    #[cfg(feature = "webhooks")]
+    pub fn webhook_engine(&self) -> Result<crate::webhooks::PaymobWebhookEngine, PaymobError> {
+        self.inner.config.webhook_engine()
+    }
 }
 
 fn has_forbidden_chars_or_authority(path: &str, trimmed: &str) -> bool {

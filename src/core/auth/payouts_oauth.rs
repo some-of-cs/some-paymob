@@ -127,6 +127,23 @@ impl PayoutsCredentials {
     }
 }
 
+impl From<&crate::core::credentials::PayoutsCredentials> for PayoutsCredentials {
+    fn from(creds: &crate::core::credentials::PayoutsCredentials) -> Self {
+        Self {
+            client_id: SecretString::from(creds.client_id().to_owned()),
+            client_secret: SecretString::from(creds.client_secret().to_owned()),
+            username: SecretString::from(creds.username().to_owned()),
+            password: SecretString::from(creds.password().to_owned()),
+        }
+    }
+}
+
+impl From<crate::core::credentials::PayoutsCredentials> for PayoutsCredentials {
+    fn from(creds: crate::core::credentials::PayoutsCredentials) -> Self {
+        Self::from(&creds)
+    }
+}
+
 impl fmt::Debug for PayoutsCredentials {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PayoutsCredentials")
@@ -204,6 +221,20 @@ impl PayoutsOAuthProvider {
             build_default_auth_client()?,
             Arc::new(TokenCache::default()),
         )
+    }
+
+    /// Creates a new [`PayoutsOAuthProvider`] from validated core [`crate::core::credentials::PayoutsCredentials`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PayoutsOAuthError::InvalidBaseUrl`] if `base_url` is not a valid `http`/`https` URL,
+    /// or [`PayoutsOAuthError::Transport`] if building the default HTTP client fails.
+    pub fn from_core_credentials(
+        base_url: impl Into<String>,
+        creds: &crate::core::credentials::PayoutsCredentials,
+    ) -> Result<Self, PayoutsOAuthError> {
+        let base = base_url.into();
+        Self::new(&base, PayoutsCredentials::from(creds))
     }
 
     /// Creates a new [`PayoutsOAuthProvider`] with a caller-supplied HTTP client and [`TokenCache`].

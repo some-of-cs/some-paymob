@@ -8,7 +8,7 @@
 use std::fmt;
 
 use secrecy::{ExposeSecret, SecretString};
-use zeroize::ZeroizeOnDrop;
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::core::error::PaymobError;
 use crate::core::region::PaymobRegion;
@@ -330,7 +330,7 @@ fn non_empty_secret(
     field: &'static str,
     raw: impl Into<String>,
 ) -> Result<SecretString, PaymobError> {
-    let value = raw.into();
+    let value = Zeroizing::new(raw.into());
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(PaymobError::ValidationError {
@@ -371,6 +371,19 @@ fn is_secret_key_prefix(raw: &str) -> bool {
 /// Server-side Paymob secret key (`sk_*` or `<region>_sk_*`) wrapped in [`SecretString`].
 ///
 /// Rejects empty values and any publishable `pk_*` key at construction time.
+///
+/// # Compile-Time Key Role Separation
+///
+/// Passing a [`PublicKey`] where a [`SecretKey`] reference is expected fails at compile time:
+///
+/// ```compile_fail
+/// use some_paymob::core::credentials::{PublicKey, SecretKey};
+///
+/// fn require_secret_key(_key: &SecretKey) {}
+///
+/// let pk = PublicKey::new("egy_pk_test_123").unwrap();
+/// require_secret_key(&pk);
+/// ```
 #[derive(Clone, ZeroizeOnDrop)]
 pub struct SecretKey {
     inner: SecretString,
@@ -567,6 +580,18 @@ impl HmacSecret {
     #[must_use]
     pub fn expose_secret(&self) -> &str {
         self.inner.expose_secret()
+    }
+
+    /// Returns a reference to the underlying [`SecretString`].
+    #[must_use]
+    pub(crate) const fn as_secret_string(&self) -> &SecretString {
+        &self.inner
+    }
+}
+
+impl From<HmacSecret> for SecretString {
+    fn from(secret: HmacSecret) -> Self {
+        secret.inner.clone()
     }
 }
 

@@ -240,6 +240,12 @@ impl PaymobError {
         matches!(self, Self::ValidationError { .. })
     }
 
+    /// Returns `true` if this error is a [`PaymobError::WebhookError`].
+    #[must_use]
+    pub const fn is_webhook_error(&self) -> bool {
+        matches!(self, Self::WebhookError(_))
+    }
+
     /// Returns the `Retry-After` delay in seconds if this is a [`PaymobError::RateLimited`] error.
     #[must_use]
     pub fn retry_after_secs(&self) -> Option<u64> {
@@ -259,6 +265,13 @@ impl PaymobError {
             Self::RateLimited { .. } => Some(429),
             _ => None,
         }
+    }
+}
+
+#[cfg(feature = "webhooks")]
+impl From<crate::webhooks::WebhookError> for PaymobError {
+    fn from(err: crate::webhooks::WebhookError) -> Self {
+        Self::WebhookError(err.to_string())
     }
 }
 
@@ -668,19 +681,31 @@ fn match_sensitive_key(slice: &str) -> Option<usize> {
     })
 }
 
+const fn is_quote_byte(b: u8) -> bool {
+    matches!(b, b'"' | b'\'')
+}
+
+const fn is_kv_delim_byte(b: u8) -> bool {
+    matches!(b, b':' | b'=')
+}
+
+const fn is_horizontal_ws(b: u8) -> bool {
+    matches!(b, b' ' | b'\t')
+}
+
 fn skip_kv_separator(rest: &str) -> Option<usize> {
     let bytes = rest.as_bytes();
-    let mut idx = usize::from(bytes.first().is_some_and(|&b| b == b'"' || b == b'\''));
-    while bytes.get(idx).is_some_and(|&b| b == b' ') {
-        idx += 1;
-    }
-    if !bytes.get(idx).is_some_and(|&b| b == b':' || b == b'=') {
+    let mut idx = usize::from(bytes.first().copied().is_some_and(is_quote_byte));
+    idx += bytes[idx..].iter().take_while(|&&b| b == b' ').count();
+    if !bytes.get(idx).copied().is_some_and(is_kv_delim_byte) {
         return None;
     }
     idx += 1;
-    while bytes.get(idx).is_some_and(|&b| b == b' ' || b == b'\t') {
-        idx += 1;
-    }
+    idx += bytes[idx..]
+        .iter()
+        .copied()
+        .take_while(|&b| is_horizontal_ws(b))
+        .count();
     Some(idx)
 }
 

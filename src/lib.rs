@@ -15,6 +15,13 @@ pub mod prelude;
 #[cfg(feature = "webhooks")]
 pub mod webhooks;
 
+/// Crate-root re-exports of the core Paymob client, configuration, region, error, and money types.
+pub use crate::core::client::PaymobClient;
+pub use crate::core::config::{ClientConfig, ClientConfigBuilder};
+pub use crate::core::error::PaymobError;
+pub use crate::core::region::PaymobRegion;
+pub use crate::core::types::{Currency, MinorUnitAmount};
+
 /// Crate-root re-exports of the core Paymob webhook engine, event, error, and result types.
 #[cfg(feature = "webhooks")]
 pub use webhooks::{PaymobWebhookEngine, WebhookError, WebhookEvent, WebhookResult};

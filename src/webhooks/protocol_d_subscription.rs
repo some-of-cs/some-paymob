@@ -239,7 +239,7 @@ impl fmt::Debug for SubscriptionClientInfo {
 /// };
 /// assert_eq!(data.id, 1264);
 /// ```
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubscriptionData {
     /// Unique Paymob subscription identifier used in `"{trigger_type}for{id}"`.
     pub id: u64,
@@ -303,6 +303,47 @@ pub struct SubscriptionData {
     /// Forward-compatible catch-all for additional Paymob subscription fields.
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+impl SubscriptionData {
+    /// Returns the optional billing amount as a strongly-typed [`MinorUnitAmount`](crate::core::types::MinorUnitAmount).
+    #[must_use]
+    pub const fn amount(&self) -> Option<crate::core::types::MinorUnitAmount> {
+        match self.amount_cents {
+            Some(cents) => Some(crate::core::types::MinorUnitAmount::new(cents)),
+            None => None,
+        }
+    }
+}
+
+impl fmt::Debug for SubscriptionData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted_webhook_url = self.webhook_url.as_ref().map(|_| "[REDACTED]");
+        let redacted_extra = format_args!("<{} extra fields redacted>", self.extra.len());
+        f.debug_struct("SubscriptionData")
+            .field("id", &self.id)
+            .field("plan_id", &self.plan_id)
+            .field("name", &self.name)
+            .field("state", &self.state)
+            .field("amount_cents", &self.amount_cents)
+            .field("frequency", &self.frequency)
+            .field("integration", &self.integration)
+            .field("initial_transaction", &self.initial_transaction)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("starts_at", &self.starts_at)
+            .field("next_billing", &self.next_billing)
+            .field("ends_at", &self.ends_at)
+            .field("resumed_at", &self.resumed_at)
+            .field("suspended_at", &self.suspended_at)
+            .field("reminder_days", &self.reminder_days)
+            .field("retrial_days", &self.retrial_days)
+            .field("reminder_date", &self.reminder_date)
+            .field("webhook_url", &redacted_webhook_url)
+            .field("client_info", &self.client_info)
+            .field("extra", &redacted_extra)
+            .finish()
+    }
 }
 
 /// Verified Protocol D Subscription Lifecycle webhook payload.

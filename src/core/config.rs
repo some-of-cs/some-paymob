@@ -25,6 +25,10 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// Default maximum retry attempts for transient HTTP failures.
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 
+#[cfg(feature = "webhooks")]
+const MISSING_HMAC_SECRET_REASON: &str =
+    "hmac_secret must be configured on ClientConfig to construct PaymobWebhookEngine";
+
 /// Full-name aliases accepted by `PAYMOB_REGION` in addition to 3-letter codes.
 const ENV_REGION_ALIASES: &[(&str, PaymobRegion)] = &[
     ("egypt", PaymobRegion::Egypt),
@@ -187,6 +191,24 @@ impl ClientConfig {
     pub fn use_legacy_v2_bearer_for_capture(&self) -> bool {
         self.use_legacy_v2_bearer_for_capture
     }
+
+    /// Constructs a [`PaymobWebhookEngine`](crate::webhooks::PaymobWebhookEngine) from the
+    /// configured [`HmacSecret`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] (`field: "hmac_secret"`) if `hmac_secret`
+    /// was not configured on this [`ClientConfig`].
+    #[cfg(feature = "webhooks")]
+    pub fn webhook_engine(&self) -> Result<crate::webhooks::PaymobWebhookEngine, PaymobError> {
+        let Some(secret) = self.hmac_secret.as_ref() else {
+            return Err(PaymobError::ValidationError {
+                field: "hmac_secret",
+                reason: MISSING_HMAC_SECRET_REASON.to_owned(),
+            });
+        };
+        Ok(crate::webhooks::PaymobWebhookEngine::from_hmac_secret(secret))
+    }
 }
 
 impl fmt::Debug for ClientConfig {
@@ -304,17 +326,36 @@ impl ClientConfigBuilder {
     where
         F: Fn(&str) -> Option<String>,
     {
-        let region_raw = lookup("PAYMOB_REGION").ok_or_else(|| PaymobError::ValidationError {
-            field: "region",
-            reason: "PAYMOB_REGION environment variable is not set".to_owned(),
-        })?;
-        let mut builder = Self::new().region(parse_region_env(&region_raw)?);
+        let mut builder = Self::new();
+        if let Some(region_raw) = lookup("PAYMOB_REGION") {
+            builder = builder.region(parse_region_env(&region_raw)?);
+        }
         if let Some(env_raw) = lookup("PAYMOB_ENVIRONMENT") {
             builder = builder.environment(parse_mode_env(&env_raw)?);
         }
         builder.apply_env_credentials(&lookup)?;
         builder.apply_env_transport(&lookup)?;
+        builder.ensure_region_present()?;
         Ok(builder)
+    }
+
+    fn ensure_region_present(&mut self) -> Result<(), PaymobError> {
+        if self.region.is_none() {
+            self.region = self.inferred_key_region().cloned();
+        }
+        if self.region.is_none() {
+            return Err(PaymobError::ValidationError {
+                field: "region",
+                reason: "PAYMOB_REGION environment variable is not set".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    fn inferred_key_region(&self) -> Option<&PaymobRegion> {
+        let sk_region = self.secret_key.as_ref().and_then(SecretKey::region);
+        let pk_region = self.public_key.as_ref().and_then(PublicKey::region);
+        sk_region.or(pk_region)
     }
 
     /// Applies optional credential variables from `lookup`.
@@ -404,6 +445,42 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Parses and sets the server-side [`SecretKey`] (`sk_*`) from a raw string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `raw` is empty or starts with `pk_*`.
+    pub fn try_secret_key(self, raw: impl Into<String>) -> Result<Self, PaymobError> {
+        Ok(self.secret_key(SecretKey::new(raw)?))
+    }
+
+    /// Parses and sets the client-side [`PublicKey`] (`pk_*`) from a raw string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `raw` is empty or starts with `sk_*`.
+    pub fn try_public_key(self, raw: impl Into<String>) -> Result<Self, PaymobError> {
+        Ok(self.public_key(PublicKey::new(raw)?))
+    }
+
+    /// Parses and sets the Accept [`ApiKey`] from a raw string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `raw` is empty or whitespace-only.
+    pub fn try_api_key(self, raw: impl Into<String>) -> Result<Self, PaymobError> {
+        Ok(self.api_key(ApiKey::new(raw)?))
+    }
+
+    /// Parses and sets the [`HmacSecret`] from a raw string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `raw` is empty or whitespace-only.
+    pub fn try_hmac_secret(self, raw: impl Into<String>) -> Result<Self, PaymobError> {
+        Ok(self.hmac_secret(HmacSecret::new(raw)?))
+    }
+
     /// Sets the [`PayoutsCredentials`] for Regime 3 OAuth2 authentication.
     #[must_use]
     pub fn payouts_credentials(mut self, credentials: PayoutsCredentials) -> Self {
@@ -452,6 +529,7 @@ impl ClientConfigBuilder {
         let region = self
             .region
             .as_ref()
+            .or_else(|| self.inferred_key_region())
             .ok_or_else(|| PaymobError::ValidationError {
                 field: "region",
                 reason: "region must be specified".to_owned(),

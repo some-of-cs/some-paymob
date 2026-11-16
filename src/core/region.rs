@@ -516,12 +516,12 @@ impl CustomUrlCandidate<'_> {
 }
 
 impl RawEndpointPath<'_> {
-    /// Normalizes the wrapped endpoint path and preserves any `?query` suffix.
+    /// Normalizes the wrapped endpoint path, stripping any `#fragment` and preserving any `?query` suffix.
     fn normalize(&self) -> String {
-        let trimmed = self.0.trim();
-        let (raw_path, query) = match trimmed.split_once('?') {
+        let without_fragment = self.0.trim().split('#').next().unwrap_or("").trim();
+        let (raw_path, query) = match without_fragment.split_once('?') {
             Some((p, q)) => (p, Some(q)),
-            None => (trimmed, None),
+            None => (without_fragment, None),
         };
         let mut clean = RawEndpointPath(raw_path).collapse_slashes();
         if RawEndpointPath(&clean).requires_trailing_slash() {
@@ -571,7 +571,7 @@ fn resolve_custom_endpoints(inputs: CustomUrlInputs<'_>) -> Result<RegionalEndpo
 
 /// Joins a base URL with a normalized endpoint path.
 fn join_base_and_path(req: JoinPathRequest<'_>) -> Result<String, PaymobError> {
-    let trimmed_path = req.path.trim();
+    let trimmed_path = req.path.trim().split('#').next().unwrap_or("").trim();
     if trimmed_path.is_empty() {
         return Err(PaymobError::ValidationError {
             field: "path",

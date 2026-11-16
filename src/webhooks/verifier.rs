@@ -199,12 +199,31 @@ impl PaymobWebhookEngine {
     /// # Ok::<(), WebhookError>(())
     /// ```
     pub fn new(hmac_secret: impl Into<SecretString>) -> WebhookResult<Self> {
-        let secret = hmac_secret.into();
-        validate_secret_non_empty(&secret)?;
+        let secret = normalize_secret_string(hmac_secret.into())?;
         Ok(Self {
             hmac_secret: secret,
             payouts_hmac_secret: None,
         })
+    }
+
+    /// Constructs a [`PaymobWebhookEngine`] directly from a validated [`HmacSecret`](crate::core::credentials::HmacSecret).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use some_paymob::core::credentials::HmacSecret;
+    /// use some_paymob::webhooks::verifier::PaymobWebhookEngine;
+    ///
+    /// let secret = HmacSecret::new("my_secret").unwrap();
+    /// let engine = PaymobWebhookEngine::from_hmac_secret(&secret);
+    /// assert!(engine.payouts_secret().is_none());
+    /// ```
+    #[must_use]
+    pub fn from_hmac_secret(secret: &crate::core::credentials::HmacSecret) -> Self {
+        Self {
+            hmac_secret: secret.as_secret_string().clone(),
+            payouts_hmac_secret: None,
+        }
     }
 
     /// Configures an optional Payouts HMAC secret for Protocol E callbacks.
@@ -222,10 +241,32 @@ impl PaymobWebhookEngine {
     /// # Ok::<(), WebhookError>(())
     /// ```
     pub fn with_payouts_secret(mut self, secret: impl Into<SecretString>) -> WebhookResult<Self> {
-        let secret = secret.into();
-        validate_secret_non_empty(&secret)?;
+        let secret = normalize_secret_string(secret.into())?;
         self.payouts_hmac_secret = Some(secret);
         Ok(self)
+    }
+
+    /// Configures an optional Payouts [`HmacSecret`](crate::core::credentials::HmacSecret) for Protocol E callbacks.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use some_paymob::core::credentials::HmacSecret;
+    /// use some_paymob::webhooks::verifier::PaymobWebhookEngine;
+    ///
+    /// let primary = HmacSecret::new("accept_secret").unwrap();
+    /// let payouts = HmacSecret::new("payout_secret").unwrap();
+    /// let engine = PaymobWebhookEngine::from_hmac_secret(&primary)
+    ///     .with_payouts_hmac_secret(&payouts);
+    /// assert!(engine.payouts_secret().is_some());
+    /// ```
+    #[must_use]
+    pub fn with_payouts_hmac_secret(
+        mut self,
+        secret: &crate::core::credentials::HmacSecret,
+    ) -> Self {
+        self.payouts_hmac_secret = Some(secret.as_secret_string().clone());
+        self
     }
 
     /// Returns a reference to the configured Payouts HMAC secret, if present.
@@ -289,9 +330,9 @@ impl PaymobWebhookEngine {
         concatenated: &str,
         signature_hex: &str,
     ) -> WebhookResult<()> {
-        validate_secret_non_empty(secret)?;
+        let trimmed_secret = validate_secret_non_empty(secret)?;
         let mut decoded = decode_sha512_hex(signature_hex)?;
-        let mut mac = HmacSha512::new_from_slice(secret.expose_secret().as_bytes())
+        let mut mac = HmacSha512::new_from_slice(trimmed_secret.as_bytes())
             .map_err(|_| WebhookError::InvalidSecretKeyLength)?;
         mac.update(concatenated.as_bytes());
         let mut expected = mac.finalize().into_bytes();
@@ -306,11 +347,17 @@ impl PaymobWebhookEngine {
     }
 }
 
-fn validate_secret_non_empty(secret: &SecretString) -> WebhookResult<()> {
-    if secret.expose_secret().trim().is_empty() {
+fn normalize_secret_string(secret: SecretString) -> WebhookResult<SecretString> {
+    let trimmed = validate_secret_non_empty(&secret)?;
+    Ok(SecretString::from(trimmed.to_owned()))
+}
+
+fn validate_secret_non_empty(secret: &SecretString) -> WebhookResult<&str> {
+    let trimmed = secret.expose_secret().trim();
+    if trimmed.is_empty() {
         return Err(WebhookError::InvalidSecretKeyLength);
     }
-    Ok(())
+    Ok(trimmed)
 }
 
 fn decode_sha512_hex(signature_hex: &str) -> WebhookResult<[u8; SHA512_DIGEST_LEN]> {

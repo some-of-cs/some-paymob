@@ -107,9 +107,10 @@ async fn assert_retry_then_succeed(
         .await
         .expect("retry succeeds");
 
-    assert_eq!(resp.status, StatusCode::OK);
-    assert_eq!(resp.body, expected_body.as_bytes());
-    assert_eq!(resp.request_id.get_version_num(), 4);
+    assert_eq!(
+        (resp.status, resp.body.as_slice(), resp.request_id.get_version_num()),
+        (StatusCode::OK, expected_body.as_bytes(), 4)
+    );
 }
 
 async fn assert_response_too_large(
@@ -152,8 +153,10 @@ fn assert_error_mapping_cases(
     for (status, body, retry_after, expected, retryable, expected_status) in cases {
         let actual = PaymobError::from_response(*status, body, *retry_after);
         assert_eq!(&actual, expected);
-        assert_eq!(actual.is_retryable(), *retryable);
-        assert_eq!(actual.status_code(), *expected_status);
+        assert_eq!(
+            (actual.is_retryable(), actual.status_code()),
+            (*retryable, *expected_status)
+        );
     }
 }
 
@@ -299,8 +302,10 @@ fn assert_request_builder_and_redaction() {
             HeaderValue::from_static("Bearer secret_token_123"),
         )
         .with_body(b"{}".to_vec());
-    assert_eq!(req.method(), &Method::POST);
-    assert_eq!(req.url().as_str(), "https://accept.paymob.com/api/auth/tokens");
+    assert_eq!(
+        (req.method(), req.url().as_str()),
+        (&Method::POST, "https://accept.paymob.com/api/auth/tokens")
+    );
     assert_redacted(&format!("{req:?}"), &["secret_token_123"]);
 }
 
@@ -407,18 +412,19 @@ async fn tc_1_3_2_http_client_enforces_bounded_body_and_timeout() {
 }
 
 fn assert_minor_unit_arithmetic(egp: MinorUnitAmount) {
-    assert_eq!(egp.as_u64(), 100_000);
     assert_eq!(
-        MinorUnitAmount::from_major_checked(25, 3).expect("25 OMR"),
-        MinorUnitAmount::new(25_000)
+        (
+            egp.as_u64(),
+            MinorUnitAmount::from_major_checked(25, 3).expect("25 OMR"),
+        ),
+        (100_000, MinorUnitAmount::new(25_000))
     );
     assert_eq!(
-        egp.checked_add(MinorUnitAmount::new(500)).expect("add"),
-        MinorUnitAmount(100_500)
-    );
-    assert_eq!(
-        egp.checked_sub(MinorUnitAmount::new(500)).expect("sub"),
-        MinorUnitAmount(99_500)
+        (
+            egp.checked_add(MinorUnitAmount::new(500)).expect("add"),
+            egp.checked_sub(MinorUnitAmount::new(500)).expect("sub"),
+        ),
+        (MinorUnitAmount(100_500), MinorUnitAmount(99_500))
     );
 }
 
@@ -426,9 +432,10 @@ fn assert_minor_unit_serde(egp: MinorUnitAmount) {
     let json = serde_json::to_string(&egp).expect("serialize integer");
     assert_eq!(json, "100000");
     let roundtrip: MinorUnitAmount = serde_json::from_str(&json).expect("deserialize integer");
-    assert_eq!(roundtrip, egp);
-    assert_eq!(u64::from(roundtrip), 100_000);
-    assert_eq!(roundtrip.to_string(), "100000");
+    assert_eq!(
+        (roundtrip, u64::from(roundtrip), roundtrip.to_string()),
+        (egp, 100_000, "100000".to_string())
+    );
 }
 
 #[test]
@@ -453,19 +460,23 @@ fn tc_1_3_3_money_zero_float_arithmetic_and_serde() {
 
 fn assert_currency_case(raw: &str, expected: Currency, canonical: &str, decimals: u8) {
     let parsed = Currency::from_code(raw);
-    assert_eq!(parsed, expected);
-    assert_eq!(parsed.as_str(), canonical);
-    assert_eq!(parsed.minor_unit_decimals(), decimals);
-    assert_eq!(raw.parse::<Currency>().expect("infallible"), expected);
+    assert_eq!(
+        (&parsed, parsed.as_str(), parsed.minor_unit_decimals()),
+        (&expected, canonical, decimals)
+    );
 
     let serialized = serde_json::to_string(&parsed).expect("serialize currency");
     let deserialized: Currency = serde_json::from_str(&serialized).expect("deserialize");
-    assert_eq!(deserialized, parsed);
+    assert_eq!(
+        (raw.parse::<Currency>().expect("infallible"), deserialized),
+        (expected, parsed)
+    );
 }
 
 fn assert_prefixed_id_validation() {
-    assert!(validate_prefixed_id("pi_abc123", "pi_", "intention_id").is_ok());
-    assert!(validate_prefixed_id("pk_test_xyz", "pk_", "public_key").is_ok());
+    for (id, prefix, field) in [("pi_abc123", "pi_", "intention_id"), ("pk_test_xyz", "pk_", "public_key")] {
+        assert!(validate_prefixed_id(id, prefix, field).is_ok());
+    }
 
     for invalid in ["", "   ", " pi_123", "pi_12 3", "pk_123", "pi_"] {
         assert!(matches!(
@@ -499,32 +510,34 @@ fn tc_1_3_3_currency_lookup_decimals_and_prefixed_id_validation() {
 }
 
 fn assert_paginated_response_bounds(page: &PaginatedResponse<u64>) {
-    assert_eq!(page.count, 42);
-    assert!(!page.is_empty());
-    assert_eq!(page.len(), 3);
+    assert_eq!((page.count, page.len(), page.is_empty()), (42, 3, false));
 }
 
 fn assert_paginated_response_nav(page: &PaginatedResponse<u64>) {
-    assert!(page.has_next());
-    assert!(page.has_previous());
-    assert_eq!(page.next_page_number(), Some(3));
-    assert_eq!(page.previous_page_number(), Some(1));
+    assert_eq!((page.has_next(), page.has_previous()), (true, true));
+    assert_eq!(
+        (page.next_page_number(), page.previous_page_number()),
+        (Some(3), Some(1))
+    );
 }
 
 fn assert_page_query_behavior() {
     let query = PageQuery::new(0).with_page_size(0);
-    assert_eq!(query.page(), 1);
-    assert_eq!(query.page_size(), Some(1));
-    assert_eq!(query.to_query_string(), "?page=1&page_size=1");
     assert_eq!(
-        query.next_page().to_query_pairs(),
-        vec![("page", "2".to_string()), ("page_size", "1".to_string())]
+        (query.page(), query.page_size(), query.to_query_string()),
+        (1, Some(1), "?page=1&page_size=1".to_string())
     );
 
     let roundtrip: PageQuery =
         serde_json::from_str(&serde_json::to_string(&PageQuery::new(3)).expect("serialize"))
             .expect("deserialize");
-    assert_eq!(roundtrip, PageQuery::new(3));
+    assert_eq!(
+        (query.next_page().to_query_pairs(), roundtrip),
+        (
+            vec![("page", "2".to_string()), ("page_size", "1".to_string())],
+            PageQuery::new(3)
+        )
+    );
 }
 
 fn assert_prelude_reexports() {

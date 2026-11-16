@@ -21,3 +21,4 @@ pub mod plans_service;
 pub mod refund;
 
 pub use lifecycle::SubscriptionsService;
+pub use plans_service::SubscriptionPlansService;

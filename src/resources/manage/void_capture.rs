@@ -305,9 +305,9 @@ async fn execute_manage_request(
     client: &PaymobClient,
     request: &HttpRequest,
 ) -> Result<HttpResponse, PaymobError> {
-    let is_loopback_http = request.url.scheme() == "http"
+    let is_loopback_http = request.url().scheme() == "http"
         && matches!(
-            request.url.host_str(),
+            request.url().host_str(),
             Some("127.0.0.1" | "localhost" | "[::1]")
         );
     if !is_loopback_http {

@@ -613,7 +613,7 @@ impl SubscriptionPlansService {
                     .token()
                     .await
                     .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-                Ok(CachedToken::with_default_ttl(jwt, None))
+                Ok::<CachedToken, PaymobError>(CachedToken::with_default_ttl(jwt, None))
             })
             .await?;
         Ok(cached.access_token)

@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use url::Url;
+use zeroize::Zeroizing;
 
 use crate::core::auth::cache::TokenCache;
 
@@ -263,7 +264,8 @@ impl AcceptJwtProvider {
     }
 }
 
-/// Formats an `Authorization: Bearer <auth_token>` [`HeaderValue`] marked as sensitive.
+/// Formats an `Authorization: Bearer <auth_token>` [`HeaderValue`] marked as sensitive,
+/// scrubbing the temporary formatted buffer with [`Zeroizing`].
 ///
 /// # Examples
 ///
@@ -281,8 +283,9 @@ impl AcceptJwtProvider {
 ///
 /// Returns [`AcceptJwtError::InvalidHeaderValue`] if the token contains invalid HTTP header bytes.
 pub fn format_bearer_header(token: &SecretString) -> Result<HeaderValue, AcceptJwtError> {
-    let raw = format!("Bearer {}", token.expose_secret());
-    let mut value = HeaderValue::from_str(&raw).map_err(|_| AcceptJwtError::InvalidHeaderValue)?;
+    let raw = Zeroizing::new(format!("Bearer {}", token.expose_secret()));
+    let mut value =
+        HeaderValue::from_str(raw.as_str()).map_err(|_| AcceptJwtError::InvalidHeaderValue)?;
     value.set_sensitive(true);
     Ok(value)
 }
@@ -340,9 +343,7 @@ pub fn is_incorrect_credentials_401(status: StatusCode, body: &[u8]) -> bool {
     if status != StatusCode::UNAUTHORIZED {
         return false;
     }
-    serde_json::from_slice::<PaymobErrorDetail>(body)
-        .ok()
-        .and_then(|parsed| parsed.detail)
+    parse_error_detail(body)
         .is_some_and(|detail| detail.trim().eq_ignore_ascii_case(INCORRECT_CREDENTIALS_DETAIL))
 }
 
@@ -385,13 +386,17 @@ async fn parse_token_response(response: Response) -> Result<SecretString, Accept
     Ok(SecretString::from(parsed.token))
 }
 
-async fn extract_error_detail(response: Response) -> String {
-    let status = response.status();
-    let bytes = response.bytes().await.unwrap_or_default();
-    serde_json::from_slice::<PaymobErrorDetail>(&bytes)
+fn parse_error_detail(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<PaymobErrorDetail>(body)
         .ok()
         .and_then(|parsed| parsed.detail)
         .filter(|detail| !detail.trim().is_empty())
+}
+
+async fn extract_error_detail(response: Response) -> String {
+    let status = response.status();
+    let bytes = response.bytes().await.unwrap_or_default();
+    parse_error_detail(&bytes)
         .unwrap_or_else(|| status.canonical_reason().unwrap_or("unknown error").to_owned())
 }
 
@@ -404,6 +409,51 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
+
+    const TEST_API_KEY: &str = "my-api-key";
+    const INQUIRY_PATH: &str = "/api/ecommerce/orders/transaction_inquiry";
+
+    fn build_provider(base_url: &str) -> AcceptJwtProvider {
+        AcceptJwtProvider::new(base_url, SecretString::from(TEST_API_KEY)).expect("valid provider")
+    }
+
+    async fn start_single_token_server(status: u16, body: Value) -> (MockServer, AcceptJwtProvider) {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(ACCEPT_AUTH_TOKENS_PATH))
+            .and(body_json(json!({ "api_key": TEST_API_KEY })))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let provider = build_provider(&server.uri());
+        (server, provider)
+    }
+
+    async fn mount_inquiry_mock(
+        server: &MockServer,
+        expected_token: &str,
+        status: u16,
+        body: Value,
+    ) {
+        Mock::given(method("POST"))
+            .and(path(INQUIRY_PATH))
+            .and(body_json(json!({ "auth_token": expected_token })))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    async fn send_inquiry(
+        client: &Client,
+        url: &str,
+        token: &SecretString,
+    ) -> Result<Response, AcceptJwtError> {
+        let mut body = json!({});
+        inject_body_auth_token(&mut body, token)?;
+        Ok(client.post(url).json(&body).send().await?)
+    }
 
     #[test]
     fn tc_1_2_3_new_rejects_empty_and_whitespace_api_key() {
@@ -483,20 +533,8 @@ mod tests {
 
     #[tokio::test]
     async fn tc_1_2_3_token_acquisition_posts_api_key_and_caches_single_flight() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/auth/tokens"))
-            .and(body_json(json!({ "api_key": "my-api-key" })))
-            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-                "token": "jwt-cached-1"
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let provider =
-            AcceptJwtProvider::new(&server.uri(), SecretString::from("my-api-key"))
-                .expect("provider");
+        let (_server, provider) =
+            start_single_token_server(201, json!({ "token": "jwt-cached-1" })).await;
 
         let t1 = provider.token().await.expect("first token");
         let t2 = provider.token().await.expect("cached token");
@@ -506,15 +544,8 @@ mod tests {
 
     #[tokio::test]
     async fn tc_1_2_3_attach_bearer_header_sends_bearer_token() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/auth/tokens"))
-            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-                "token": "jwt-bearer-xyz"
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
+        let (server, provider) =
+            start_single_token_server(201, json!({ "token": "jwt-bearer-xyz" })).await;
 
         Mock::given(method("GET"))
             .and(path("/api/acceptance/transactions/100"))
@@ -524,16 +555,32 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider =
-            AcceptJwtProvider::new(&server.uri(), SecretString::from("my-api-key"))
-                .expect("provider");
         let client = Client::new();
+        let url = format!("{}/api/acceptance/transactions/100", server.uri());
         let req = provider
-            .attach_bearer_header(client.get(format!("{}/api/acceptance/transactions/100", server.uri())))
+            .attach_bearer_header(client.get(url))
             .await
             .expect("header attached");
         let resp = req.send().await.expect("send");
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn tc_1_2_3_attach_body_auth_token_positive_and_negative() {
+        let (_server, provider) =
+            start_single_token_server(201, json!({ "token": "jwt-body-1" })).await;
+
+        let mut body = json!({ "transaction_id": 555 });
+        provider
+            .attach_body_auth_token(&mut body)
+            .await
+            .expect("body token attached");
+        assert_eq!(body["auth_token"], "jwt-body-1");
+        assert_eq!(body["transaction_id"], 555);
+
+        let mut non_obj = json!(["not-an-object"]);
+        let err = provider.attach_body_auth_token(&mut non_obj).await;
+        assert!(matches!(err, Err(AcceptJwtError::InvalidJsonBody)));
     }
 
     #[tokio::test]
@@ -543,7 +590,7 @@ mod tests {
         let auth_calls_clone = Arc::clone(&auth_calls);
 
         Mock::given(method("POST"))
-            .and(path("/api/auth/tokens"))
+            .and(path(ACCEPT_AUTH_TOKENS_PATH))
             .respond_with(move |_req: &wiremock::Request| {
                 let n = auth_calls_clone.fetch_add(1, Ordering::SeqCst);
                 let tok = if n == 0 { "stale-jwt" } else { "fresh-jwt" };
@@ -553,39 +600,24 @@ mod tests {
             .mount(&server)
             .await;
 
-        Mock::given(method("POST"))
-            .and(path("/api/ecommerce/orders/transaction_inquiry"))
-            .and(body_json(json!({ "auth_token": "stale-jwt" })))
-            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
-                "detail": "incorrect credentials"
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
+        mount_inquiry_mock(
+            &server,
+            "stale-jwt",
+            401,
+            json!({ "detail": "incorrect credentials" }),
+        )
+        .await;
+        mount_inquiry_mock(&server, "fresh-jwt", 200, json!({ "id": 999 })).await;
 
-        Mock::given(method("POST"))
-            .and(path("/api/ecommerce/orders/transaction_inquiry"))
-            .and(body_json(json!({ "auth_token": "fresh-jwt" })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 999 })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let provider =
-            AcceptJwtProvider::new(&server.uri(), SecretString::from("my-api-key"))
-                .expect("provider");
+        let provider = build_provider(&server.uri());
         let client = Client::new();
-        let endpoint = format!("{}/api/ecommerce/orders/transaction_inquiry", server.uri());
+        let endpoint = format!("{}{INQUIRY_PATH}", server.uri());
 
         let resp = provider
             .execute_with_retry(|tok| {
                 let client = client.clone();
                 let url = endpoint.clone();
-                async move {
-                    let mut body = json!({});
-                    inject_body_auth_token(&mut body, &tok)?;
-                    Ok(client.post(url).json(&body).send().await?)
-                }
+                async move { send_inquiry(&client, &url, &tok).await }
             })
             .await
             .expect("retry succeeds");
@@ -595,33 +627,67 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tc_1_2_3_fetch_token_rejects_401_and_missing_token() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/auth/tokens"))
-            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
-                "detail": "incorrect credentials"
-            })))
-            .mount(&server)
-            .await;
+    async fn tc_1_2_3_execute_with_retry_returns_non_401_without_eviction() {
+        let (server, provider) =
+            start_single_token_server(201, json!({ "token": "valid-jwt" })).await;
+        mount_inquiry_mock(&server, "valid-jwt", 500, json!({ "detail": "server error" })).await;
 
-        let provider =
-            AcceptJwtProvider::new(&server.uri(), SecretString::from("bad-key"))
-                .expect("provider");
-        let err = provider.token().await.expect_err("must fail on 401");
-        assert!(matches!(err, AcceptJwtError::Cache(_)));
+        let client = Client::new();
+        let endpoint = format!("{}{INQUIRY_PATH}", server.uri());
+        let resp = provider
+            .execute_with_retry(|tok| {
+                let client = client.clone();
+                let url = endpoint.clone();
+                async move { send_inquiry(&client, &url, &tok).await }
+            })
+            .await
+            .expect("non-401 returns response directly");
 
-        let server2 = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/auth/tokens"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "token": "  " })))
-            .mount(&server2)
-            .await;
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
 
-        let provider2 =
-            AcceptJwtProvider::new(&server2.uri(), SecretString::from("key"))
-                .expect("provider2");
-        let err2 = provider2.fetch_fresh_token().await.expect_err("empty token");
-        assert!(matches!(err2, AcceptJwtError::MissingTokenField));
+    #[tokio::test]
+    async fn tc_1_2_3_execute_with_retry_rejects_non_matching_401_without_retry() {
+        let (server, provider) =
+            start_single_token_server(201, json!({ "token": "valid-jwt" })).await;
+        mount_inquiry_mock(&server, "valid-jwt", 401, json!({ "detail": "token revoked" })).await;
+
+        let client = Client::new();
+        let endpoint = format!("{}{INQUIRY_PATH}", server.uri());
+        let err = provider
+            .execute_with_retry(|tok| {
+                let client = client.clone();
+                let url = endpoint.clone();
+                async move { send_inquiry(&client, &url, &tok).await }
+            })
+            .await
+            .expect_err("non-matching 401 must fail without retry");
+
+        assert!(matches!(err, AcceptJwtError::InvalidCredentials));
+    }
+
+    #[tokio::test]
+    async fn tc_1_2_3_fetch_token_rejects_401_missing_token_and_unexpected_status() {
+        let (_s1, p1) =
+            start_single_token_server(401, json!({ "detail": "incorrect credentials" })).await;
+        assert!(matches!(p1.fetch_fresh_token().await, Err(AcceptJwtError::InvalidCredentials)));
+
+        let (_s2, p2) = start_single_token_server(200, json!({ "token": "  " })).await;
+        assert!(matches!(p2.fetch_fresh_token().await, Err(AcceptJwtError::MissingTokenField)));
+
+        let (_s3, p3) =
+            start_single_token_server(503, json!({ "detail": "gateway maintenance" })).await;
+        let err3 = p3.fetch_fresh_token().await.expect_err("503 must error");
+        assert!(matches!(
+            err3,
+            AcceptJwtError::UnexpectedStatus { status: 503, ref detail } if detail == "gateway maintenance"
+        ));
+
+        let (_s4, p4) = start_single_token_server(502, json!({})).await;
+        let err4 = p4.fetch_fresh_token().await.expect_err("502 must error");
+        assert!(matches!(
+            err4,
+            AcceptJwtError::UnexpectedStatus { status: 502, ref detail } if detail == "Bad Gateway"
+        ));
     }
 }

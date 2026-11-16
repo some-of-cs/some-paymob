@@ -12,9 +12,63 @@
 //! URLs before any network request leaves the process.
 
 use serde::{Deserialize, Serialize};
-use url::Url;
+use url::{Host, Url};
 
 use crate::core::error::PaymobError;
+
+/// Static specification for a built-in [`PaymobRegion`].
+struct BuiltinRegionSpec {
+    region: PaymobRegion,
+    country_code: &'static str,
+    accept_base_url: &'static str,
+    checkout_base_url: &'static str,
+    payouts_base_url: Option<&'static str>,
+    payouts_staging_base_url: Option<&'static str>,
+}
+
+/// Static lookup table mapping built-in regions to canonical codes and endpoints.
+const BUILTIN_REGION_SPECS: &[BuiltinRegionSpec] = &[
+    BuiltinRegionSpec {
+        region: PaymobRegion::Egypt,
+        country_code: "EGY",
+        accept_base_url: "https://accept.paymob.com",
+        checkout_base_url: "https://accept.paymob.com/unifiedcheckout/",
+        payouts_base_url: Some("https://payouts.paymobsolutions.com"),
+        payouts_staging_base_url: Some("https://stagingpayouts.paymobsolutions.com"),
+    },
+    BuiltinRegionSpec {
+        region: PaymobRegion::SaudiArabia,
+        country_code: "KSA",
+        accept_base_url: "https://ksa.paymob.com",
+        checkout_base_url: "https://ksa.paymob.com/unifiedcheckout/",
+        payouts_base_url: Some("https://payouts.paymob.sa"),
+        payouts_staging_base_url: Some("https://stagingpayouts.paymob.sa"),
+    },
+    BuiltinRegionSpec {
+        region: PaymobRegion::Uae,
+        country_code: "UAE",
+        accept_base_url: "https://uae.paymob.com",
+        checkout_base_url: "https://uae.paymob.com/unifiedcheckout/",
+        payouts_base_url: Some("https://payouts-uae.paymobsolutions.com"),
+        payouts_staging_base_url: Some("https://stagingpayouts-uae.paymobsolutions.com"),
+    },
+    BuiltinRegionSpec {
+        region: PaymobRegion::Oman,
+        country_code: "OMN",
+        accept_base_url: "https://oman.paymob.com",
+        checkout_base_url: "https://oman.paymob.com/unifiedcheckout/",
+        payouts_base_url: Some("https://oman.paymob.com"),
+        payouts_staging_base_url: Some("https://oman.paymob.com"),
+    },
+    BuiltinRegionSpec {
+        region: PaymobRegion::Pakistan,
+        country_code: "PAK",
+        accept_base_url: "https://pakistan.paymob.com",
+        checkout_base_url: "https://pakistan.paymob.com/unifiedcheckout/",
+        payouts_base_url: None,
+        payouts_staging_base_url: None,
+    },
+];
 
 /// Static lookup table mapping country key prefixes to [`PaymobRegion`].
 const PREFIX_REGION_TABLE: &[(&str, PaymobRegion)] = &[
@@ -140,6 +194,13 @@ struct CustomUrlCandidate<'a>(&'a str);
 struct RawEndpointPath<'a>(&'a str);
 
 impl PaymobRegion {
+    /// Looks up the static specification for built-in regions.
+    fn builtin_spec(&self) -> Option<&'static BuiltinRegionSpec> {
+        BUILTIN_REGION_SPECS
+            .iter()
+            .find(|spec| &spec.region == self)
+    }
+
     /// Resolves and validates the [`RegionalEndpoints`] for this region.
     ///
     /// Built-in regions always succeed. [`PaymobRegion::Custom`] validates that
@@ -166,53 +227,32 @@ impl PaymobRegion {
     /// );
     /// ```
     pub fn endpoints(&self) -> Result<RegionalEndpoints, PaymobError> {
-        match self {
-            Self::Egypt => Ok(RegionalEndpoints {
-                accept_base_url: "https://accept.paymob.com".to_string(),
-                checkout_base_url: "https://accept.paymob.com/unifiedcheckout/".to_string(),
-                payouts_base_url: Some("https://payouts.paymobsolutions.com".to_string()),
-                payouts_staging_base_url: Some(
-                    "https://stagingpayouts.paymobsolutions.com".to_string(),
-                ),
-            }),
-            Self::SaudiArabia => Ok(RegionalEndpoints {
-                accept_base_url: "https://ksa.paymob.com".to_string(),
-                checkout_base_url: "https://ksa.paymob.com/unifiedcheckout/".to_string(),
-                payouts_base_url: Some("https://payouts.paymob.sa".to_string()),
-                payouts_staging_base_url: Some("https://stagingpayouts.paymob.sa".to_string()),
-            }),
-            Self::Uae => Ok(RegionalEndpoints {
-                accept_base_url: "https://uae.paymob.com".to_string(),
-                checkout_base_url: "https://uae.paymob.com/unifiedcheckout/".to_string(),
-                payouts_base_url: Some("https://payouts-uae.paymobsolutions.com".to_string()),
-                payouts_staging_base_url: Some(
-                    "https://stagingpayouts-uae.paymobsolutions.com".to_string(),
-                ),
-            }),
-            Self::Oman => Ok(RegionalEndpoints {
-                accept_base_url: "https://oman.paymob.com".to_string(),
-                checkout_base_url: "https://oman.paymob.com/unifiedcheckout/".to_string(),
-                payouts_base_url: Some("https://oman.paymob.com".to_string()),
-                payouts_staging_base_url: Some("https://oman.paymob.com".to_string()),
-            }),
-            Self::Pakistan => Ok(RegionalEndpoints {
-                accept_base_url: "https://pakistan.paymob.com".to_string(),
-                checkout_base_url: "https://pakistan.paymob.com/unifiedcheckout/".to_string(),
-                payouts_base_url: None,
-                payouts_staging_base_url: None,
-            }),
-            Self::Custom {
+        if let Self::Custom {
+            accept_base_url,
+            checkout_base_url,
+            payouts_base_url,
+            payouts_staging_base_url,
+        } = self
+        {
+            return resolve_custom_endpoints(CustomUrlInputs {
                 accept_base_url,
                 checkout_base_url,
                 payouts_base_url,
                 payouts_staging_base_url,
-            } => resolve_custom_endpoints(CustomUrlInputs {
-                accept_base_url,
-                checkout_base_url,
-                payouts_base_url,
-                payouts_staging_base_url,
-            }),
+            });
         }
+        let spec = self
+            .builtin_spec()
+            .ok_or_else(|| PaymobError::ValidationError {
+                field: "region",
+                reason: "unknown built-in Paymob region".to_string(),
+            })?;
+        Ok(RegionalEndpoints {
+            accept_base_url: spec.accept_base_url.to_string(),
+            checkout_base_url: spec.checkout_base_url.to_string(),
+            payouts_base_url: spec.payouts_base_url.map(str::to_string),
+            payouts_staging_base_url: spec.payouts_staging_base_url.map(str::to_string),
+        })
     }
 
     /// Resolves a full Accept Acquiring URL by normalizing `path` and joining it
@@ -222,6 +262,17 @@ impl PaymobRegion {
     ///
     /// Returns [`PaymobError::ValidationError`] if `self` is an invalid custom
     /// region or if `path` is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use some_paymob::core::region::PaymobRegion;
+    ///
+    /// let url = PaymobRegion::Egypt
+    ///     .resolve_accept_url("v1/intention")
+    ///     .expect("valid accept url");
+    /// assert_eq!(url, "https://accept.paymob.com/v1/intention/");
+    /// ```
     pub fn resolve_accept_url(&self, path: &str) -> Result<String, PaymobError> {
         self.endpoints()?.accept_url(path)
     }
@@ -233,6 +284,20 @@ impl PaymobRegion {
     ///
     /// Returns [`PaymobError::ValidationError`] if `self` is an invalid custom
     /// region or if `path` is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use some_paymob::core::region::PaymobRegion;
+    ///
+    /// let url = PaymobRegion::Egypt
+    ///     .resolve_checkout_url("?publicKey=pk_test&clientSecret=cs_test")
+    ///     .expect("valid checkout url");
+    /// assert_eq!(
+    ///     url,
+    ///     "https://accept.paymob.com/unifiedcheckout/?publicKey=pk_test&clientSecret=cs_test"
+    /// );
+    /// ```
     pub fn resolve_checkout_url(&self, path: &str) -> Result<String, PaymobError> {
         self.endpoints()?.checkout_url(path)
     }
@@ -245,6 +310,17 @@ impl PaymobRegion {
     /// Returns [`PaymobError::ValidationError`] if Payouts is unsupported for
     /// this region (such as [`PaymobRegion::Pakistan`]), if `self` is an invalid
     /// custom region, or if `path` is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use some_paymob::core::region::PaymobRegion;
+    ///
+    /// let url = PaymobRegion::Egypt
+    ///     .resolve_payouts_url("/api/secure/disburse", false)
+    ///     .expect("valid payouts url");
+    /// assert_eq!(url, "https://payouts.paymobsolutions.com/api/secure/disburse/");
+    /// ```
     pub fn resolve_payouts_url(&self, path: &str, staging: bool) -> Result<String, PaymobError> {
         self.endpoints()?.payouts_url(path, staging)
     }
@@ -273,15 +349,17 @@ impl PaymobRegion {
 
     /// Returns the canonical uppercase region code (`"EGY"`, `"KSA"`, `"UAE"`,
     /// `"OMN"`, `"PAK"`, or `"CUSTOM"`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use some_paymob::core::region::PaymobRegion;
+    ///
+    /// assert_eq!(PaymobRegion::Egypt.country_code(), "EGY");
+    /// assert_eq!(PaymobRegion::Pakistan.country_code(), "PAK");
+    /// ```
     pub fn country_code(&self) -> &'static str {
-        match self {
-            Self::Egypt => "EGY",
-            Self::SaudiArabia => "KSA",
-            Self::Uae => "UAE",
-            Self::Oman => "OMN",
-            Self::Pakistan => "PAK",
-            Self::Custom { .. } => "CUSTOM",
-        }
+        self.builtin_spec().map_or("CUSTOM", |spec| spec.country_code)
     }
 }
 
@@ -361,7 +439,7 @@ pub fn normalize_endpoint_path(path: &str) -> String {
     RawEndpointPath(path).normalize()
 }
 
-impl<'a> CustomUrlCandidate<'a> {
+impl CustomUrlCandidate<'_> {
     /// Validates a single custom URL field for non-emptiness, valid syntax, host
     /// presence, scheme policy, and absence of credentials, queries, or fragments.
     fn validate(&self, field: CustomUrlField) -> Result<String, PaymobError> {
@@ -385,16 +463,16 @@ impl<'a> CustomUrlCandidate<'a> {
     /// Enforces host presence, `https` for remote hosts, and `http` only on loopback/local test hosts.
     fn validate_scheme(field: CustomUrlField, parsed: &Url) -> Result<(), PaymobError> {
         let field_name = field.as_str();
-        let Some(host) = parsed.host_str() else {
+        if parsed.host().is_none() {
             return Err(PaymobError::ValidationError {
                 field: field_name,
                 reason: format!("{field_name} must include a host"),
             });
-        };
+        }
         if parsed.scheme() == "https" {
             return Ok(());
         }
-        if parsed.scheme() == "http" && Self(host).is_loopback_or_local() {
+        if parsed.scheme() == "http" && Self::is_loopback_or_local(parsed) {
             return Ok(());
         }
         Err(PaymobError::ValidationError {
@@ -421,17 +499,22 @@ impl<'a> CustomUrlCandidate<'a> {
         Ok(())
     }
 
-    /// Returns `true` when `self.0` is a loopback or `.local` test host permitted for `http://`.
-    fn is_loopback_or_local(&self) -> bool {
-        let lower = self.0.to_ascii_lowercase();
-        lower == "localhost"
-            || lower == "127.0.0.1"
-            || lower == "[::1]"
-            || lower.ends_with(".local")
+    /// Returns `true` when `parsed` targets a loopback IP (`127.0.0.0/8`, `::1`),
+    /// `localhost`, or a `.local` test host permitted for `http://`.
+    fn is_loopback_or_local(parsed: &Url) -> bool {
+        match parsed.host() {
+            Some(Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(Host::Ipv6(ip)) => ip.is_loopback(),
+            Some(Host::Domain(domain)) => {
+                let lower = domain.to_ascii_lowercase();
+                lower == "localhost" || lower.ends_with(".local")
+            }
+            None => false,
+        }
     }
 }
 
-impl<'a> RawEndpointPath<'a> {
+impl RawEndpointPath<'_> {
     /// Normalizes the wrapped endpoint path and preserves any `?query` suffix.
     fn normalize(&self) -> String {
         let trimmed = self.0.trim();
@@ -439,8 +522,8 @@ impl<'a> RawEndpointPath<'a> {
             Some((p, q)) => (p, Some(q)),
             None => (trimmed, None),
         };
-        let mut clean = Self(raw_path).collapse_slashes();
-        if Self(&clean).requires_trailing_slash() {
+        let mut clean = RawEndpointPath(raw_path).collapse_slashes();
+        if RawEndpointPath(&clean).requires_trailing_slash() {
             clean.push('/');
         }
         if let Some(q) = query {
@@ -529,10 +612,15 @@ mod tests {
 
     fn assert_endpoints(case: &BuiltinCase) {
         let eps = case.region.endpoints().expect("builtin region endpoints");
-        assert_eq!(eps.accept_base_url, case.accept);
-        assert_eq!(eps.checkout_base_url, case.checkout);
-        assert_eq!(eps.payouts_base_url.as_deref(), case.payouts);
-        assert_eq!(eps.payouts_staging_base_url.as_deref(), case.staging);
+        assert_eq!(
+            (
+                eps.accept_base_url.as_str(),
+                eps.checkout_base_url.as_str(),
+                eps.payouts_base_url.as_deref(),
+                eps.payouts_staging_base_url.as_deref(),
+            ),
+            (case.accept, case.checkout, case.payouts, case.staging)
+        );
     }
 
     fn assert_custom_rejected(case: &CustomRejectCase) {
@@ -645,20 +733,27 @@ mod tests {
     }
 
     #[test]
-    fn tc_1_1_1_custom_region_accepts_local_http_and_https() {
+    fn tc_1_1_1_custom_region_accepts_local_http_and_loopback_cidr() {
         let valid = PaymobRegion::Custom {
             accept_base_url: "http://localhost:8080/".to_string(),
             checkout_base_url: "http://[::1]:8080/unifiedcheckout/".to_string(),
-            payouts_base_url: "http://127.0.0.1:8080/".to_string(),
+            payouts_base_url: "http://127.0.0.2:8080/".to_string(),
             payouts_staging_base_url: "http://mock-payouts.local".to_string(),
         };
         let eps = valid.endpoints().expect("valid local custom endpoints");
-        assert_eq!(eps.accept_base_url, "http://localhost:8080");
-        assert_eq!(eps.checkout_base_url, "http://[::1]:8080/unifiedcheckout/");
-        assert_eq!(eps.payouts_base_url.as_deref(), Some("http://127.0.0.1:8080"));
         assert_eq!(
-            eps.payouts_staging_base_url.as_deref(),
-            Some("http://mock-payouts.local")
+            (
+                eps.accept_base_url.as_str(),
+                eps.checkout_base_url.as_str(),
+                eps.payouts_base_url.as_deref(),
+                eps.payouts_staging_base_url.as_deref(),
+            ),
+            (
+                "http://localhost:8080",
+                "http://[::1]:8080/unifiedcheckout/",
+                Some("http://127.0.0.2:8080"),
+                Some("http://mock-payouts.local"),
+            )
         );
     }
 
@@ -728,23 +823,27 @@ mod tests {
     }
 
     #[test]
-    fn tc_1_1_1_url_resolution_and_pakistan_payouts_rejection() {
+    fn tc_1_1_1_url_resolution_succeeds_for_egypt() {
         assert_eq!(
-            PaymobRegion::Egypt.resolve_accept_url("v1/intention").unwrap(),
-            "https://accept.paymob.com/v1/intention/"
+            (
+                PaymobRegion::Egypt.resolve_accept_url("v1/intention").unwrap(),
+                PaymobRegion::Egypt
+                    .resolve_checkout_url("?publicKey=pk_test&clientSecret=cs_test")
+                    .unwrap(),
+                PaymobRegion::Egypt
+                    .resolve_payouts_url("/api/secure/disburse", false)
+                    .unwrap(),
+            ),
+            (
+                "https://accept.paymob.com/v1/intention/".to_string(),
+                "https://accept.paymob.com/unifiedcheckout/?publicKey=pk_test&clientSecret=cs_test".to_string(),
+                "https://payouts.paymobsolutions.com/api/secure/disburse/".to_string(),
+            )
         );
-        assert_eq!(
-            PaymobRegion::Egypt
-                .resolve_checkout_url("?publicKey=pk_test&clientSecret=cs_test")
-                .unwrap(),
-            "https://accept.paymob.com/unifiedcheckout/?publicKey=pk_test&clientSecret=cs_test"
-        );
-        assert_eq!(
-            PaymobRegion::Egypt
-                .resolve_payouts_url("/api/secure/disburse", false)
-                .unwrap(),
-            "https://payouts.paymobsolutions.com/api/secure/disburse/"
-        );
+    }
+
+    #[test]
+    fn tc_1_1_1_pakistan_payouts_and_empty_path_rejected() {
         assert!(matches!(
             PaymobRegion::Pakistan.resolve_payouts_url("/api/secure/disburse/", false),
             Err(PaymobError::ValidationError { field: "region", .. })
@@ -756,10 +855,19 @@ mod tests {
     }
 
     #[test]
-    fn tc_1_1_1_prefix_lookup_and_country_codes() {
+    fn tc_1_1_1_pakistan_staging_payouts_rejected() {
+        assert!(matches!(
+            PaymobRegion::Pakistan.resolve_payouts_url("/api/secure/disburse/", true),
+            Err(PaymobError::ValidationError { field: "region", .. })
+        ));
+    }
+
+    #[test]
+    fn tc_1_1_1_prefix_lookup_resolves_all_supported_codes() {
         let prefixes = [
             ("egy", Some(PaymobRegion::Egypt)),
             (" KSA ", Some(PaymobRegion::SaudiArabia)),
+            ("sau", Some(PaymobRegion::SaudiArabia)),
             ("are", Some(PaymobRegion::Uae)),
             ("omn", Some(PaymobRegion::Oman)),
             ("pak", Some(PaymobRegion::Pakistan)),
@@ -768,12 +876,23 @@ mod tests {
         for (prefix, expected) in prefixes {
             assert_eq!(PaymobRegion::from_key_prefix(prefix), expected);
         }
+    }
+
+    #[test]
+    fn tc_1_1_1_country_codes_cover_builtin_and_custom() {
+        let custom = PaymobRegion::Custom {
+            accept_base_url: "https://accept.example.com".to_string(),
+            checkout_base_url: "https://checkout.example.com".to_string(),
+            payouts_base_url: "https://payouts.example.com".to_string(),
+            payouts_staging_base_url: "https://staging.example.com".to_string(),
+        };
         let codes = [
             (PaymobRegion::Egypt, "EGY"),
             (PaymobRegion::SaudiArabia, "KSA"),
             (PaymobRegion::Uae, "UAE"),
             (PaymobRegion::Oman, "OMN"),
             (PaymobRegion::Pakistan, "PAK"),
+            (custom, "CUSTOM"),
         ];
         for (region, code) in codes {
             assert_eq!(region.country_code(), code);

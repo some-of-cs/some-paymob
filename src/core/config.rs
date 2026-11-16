@@ -1,10 +1,11 @@
 //! Client configuration and builder for `some-paymob` (`US-1.1.0/unit-3`).
 //!
 //! Provides [`ClientConfig`] and [`ClientConfigBuilder`] with deterministic
-//! key-prefix environment parity validation (`Test` vs `Live`), strict
-//! rejection of publishable keys (`pk_*`) in the secret key slot, configurable
-//! timeouts and retry limits, Payouts staging and legacy-v2 capture `Bearer`
-//! toggles, and `[REDACTED]` [`fmt::Debug`] formatting.
+//! key-prefix region and environment parity validation (`Test` vs `Live`),
+//! strict rejection of publishable keys (`pk_*`) in the secret key slot,
+//! configurable timeouts and retry limits, Payouts staging and legacy-v2 capture
+//! `Bearer` toggles, environment-variable loading via [`ClientConfig::from_env`],
+//! and `[REDACTED]` [`fmt::Debug`] formatting.
 
 #![forbid(unsafe_code)]
 
@@ -24,20 +25,21 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// Default maximum retry attempts for transient HTTP failures.
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 
-const REGION_PREFIXES: &[&str] = &["egy_", "ksa_", "uae_", "omn_", "pak_"];
-
-const MODE_PREFIXES: &[(&str, EnvironmentMode)] = &[
-    ("sk_test_", EnvironmentMode::Test),
-    ("pk_test_", EnvironmentMode::Test),
-    ("sk_live_", EnvironmentMode::Live),
-    ("pk_live_", EnvironmentMode::Live),
+/// Full-name aliases accepted by `PAYMOB_REGION` in addition to 3-letter codes.
+const ENV_REGION_ALIASES: &[(&str, PaymobRegion)] = &[
+    ("egypt", PaymobRegion::Egypt),
+    ("saudi", PaymobRegion::SaudiArabia),
+    ("saudi_arabia", PaymobRegion::SaudiArabia),
+    ("saudi-arabia", PaymobRegion::SaudiArabia),
+    ("oman", PaymobRegion::Oman),
+    ("pakistan", PaymobRegion::Pakistan),
 ];
 
 /// Immutable configuration for [`crate::core::client::PaymobClient`].
 ///
-/// Construct instances via [`ClientConfig::builder()`]. All credential fields
-/// are redacted (`"[REDACTED]"`) in [`fmt::Debug`] output to prevent secret
-/// leakage in logs or panic traces.
+/// Construct instances via [`ClientConfig::builder()`] or [`ClientConfig::from_env()`].
+/// All credential fields are redacted (`"[REDACTED]"`) in [`fmt::Debug`] output
+/// to prevent secret leakage in logs or panic traces.
 ///
 /// # Examples
 ///
@@ -84,6 +86,33 @@ impl ClientConfig {
     #[must_use]
     pub fn builder() -> ClientConfigBuilder {
         ClientConfigBuilder::new()
+    }
+
+    /// Loads and validates [`ClientConfig`] from `PAYMOB_*` environment variables.
+    ///
+    /// Reads `PAYMOB_REGION` (required) plus optional `PAYMOB_ENVIRONMENT`,
+    /// `PAYMOB_SECRET_KEY`, `PAYMOB_PUBLIC_KEY`, `PAYMOB_API_KEY`,
+    /// `PAYMOB_HMAC_SECRET`, `PAYMOB_TIMEOUT_SECS`, `PAYMOB_MAX_RETRIES`,
+    /// `PAYMOB_USE_PAYOUTS_STAGING`, and `PAYMOB_USE_LEGACY_V2_BEARER`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `PAYMOB_REGION` is missing or
+    /// any configured variable is empty or malformed, or
+    /// [`PaymobError::EnvironmentMismatch`] if key prefixes conflict with
+    /// `PAYMOB_ENVIRONMENT`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use some_paymob::core::config::ClientConfig;
+    ///
+    /// let config = ClientConfig::from_env()?;
+    /// println!("configured region: {}", config.region().country_code());
+    /// # Ok::<(), some_paymob::core::error::PaymobError>(())
+    /// ```
+    pub fn from_env() -> Result<Self, PaymobError> {
+        ClientConfigBuilder::from_env()?.build()
     }
 
     /// Returns the configured [`PaymobRegion`] for dual-host routing.
@@ -162,37 +191,32 @@ impl ClientConfig {
 
 impl fmt::Debug for ClientConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ClientConfig")
-            .field("region", &self.region)
-            .field("environment", &self.environment)
-            .field("secret_key", &redact_option(&self.secret_key))
-            .field("public_key", &redact_option(&self.public_key))
-            .field("api_key", &redact_option(&self.api_key))
-            .field("hmac_secret", &redact_option(&self.hmac_secret))
-            .field(
-                "payouts_credentials",
-                &redact_option(&self.payouts_credentials),
-            )
-            .field(
-                "partner_credentials",
-                &redact_option(&self.partner_credentials),
-            )
-            .field("timeout", &self.timeout)
-            .field("max_retries", &self.max_retries)
-            .field("use_payouts_staging", &self.use_payouts_staging)
-            .field(
-                "use_legacy_v2_bearer_for_capture",
-                &self.use_legacy_v2_bearer_for_capture,
-            )
-            .finish()
+        fmt_config_fields(
+            f,
+            &ConfigDebugView {
+                type_name: "ClientConfig",
+                region: &self.region,
+                environment: &self.environment,
+                secret_key: &self.secret_key,
+                public_key: &self.public_key,
+                api_key: &self.api_key,
+                hmac_secret: &self.hmac_secret,
+                payouts_credentials: &self.payouts_credentials,
+                partner_credentials: &self.partner_credentials,
+                timeout: self.timeout,
+                max_retries: self.max_retries,
+                use_payouts_staging: self.use_payouts_staging,
+                use_legacy_v2_bearer_for_capture: self.use_legacy_v2_bearer_for_capture,
+            },
+        )
     }
 }
 
 /// Ergonomic builder for constructing a validated [`ClientConfig`].
 ///
 /// Validates credential prefix isolation (`pk_*` rejected in `secret_key`),
-/// `Test` vs `Live` environment parity across keys, and non-zero request
-/// timeouts before returning [`ClientConfig`].
+/// `PaymobRegion` parity across keys, `Test` vs `Live` environment parity, and
+/// non-zero request timeouts before returning [`ClientConfig`].
 ///
 /// # Examples
 ///
@@ -252,6 +276,86 @@ impl ClientConfigBuilder {
             use_payouts_staging: false,
             use_legacy_v2_bearer_for_capture: false,
         }
+    }
+
+    /// Populates a [`ClientConfigBuilder`] from `PAYMOB_*` environment variables.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `PAYMOB_REGION` is missing or
+    /// any set variable is empty or cannot be parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use some_paymob::core::config::ClientConfigBuilder;
+    ///
+    /// let builder = ClientConfigBuilder::from_env()?;
+    /// let config = builder.build()?;
+    /// assert!(config.timeout().as_secs() > 0);
+    /// # Ok::<(), some_paymob::core::error::PaymobError>(())
+    /// ```
+    pub fn from_env() -> Result<Self, PaymobError> {
+        Self::from_env_with(|key| std::env::var(key).ok())
+    }
+
+    /// Populates a [`ClientConfigBuilder`] using a custom environment lookup closure.
+    fn from_env_with<F>(lookup: F) -> Result<Self, PaymobError>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let region_raw = lookup("PAYMOB_REGION").ok_or_else(|| PaymobError::ValidationError {
+            field: "region",
+            reason: "PAYMOB_REGION environment variable is not set".to_owned(),
+        })?;
+        let mut builder = Self::new().region(parse_region_env(&region_raw)?);
+        if let Some(env_raw) = lookup("PAYMOB_ENVIRONMENT") {
+            builder = builder.environment(parse_mode_env(&env_raw)?);
+        }
+        builder.apply_env_credentials(&lookup)?;
+        builder.apply_env_transport(&lookup)?;
+        Ok(builder)
+    }
+
+    /// Applies optional credential variables from `lookup`.
+    fn apply_env_credentials<F>(&mut self, lookup: &F) -> Result<(), PaymobError>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        if let Some(val) = lookup("PAYMOB_SECRET_KEY") {
+            self.secret_key = Some(SecretKey::new(val)?);
+        }
+        if let Some(val) = lookup("PAYMOB_PUBLIC_KEY") {
+            self.public_key = Some(PublicKey::new(val)?);
+        }
+        if let Some(val) = lookup("PAYMOB_API_KEY") {
+            self.api_key = Some(ApiKey::new(val)?);
+        }
+        if let Some(val) = lookup("PAYMOB_HMAC_SECRET") {
+            self.hmac_secret = Some(HmacSecret::new(val)?);
+        }
+        Ok(())
+    }
+
+    /// Applies optional timeout, retry, and feature-toggle variables from `lookup`.
+    fn apply_env_transport<F>(&mut self, lookup: &F) -> Result<(), PaymobError>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        if let Some(val) = lookup("PAYMOB_TIMEOUT_SECS") {
+            self.timeout = parse_timeout_env(&val)?;
+        }
+        if let Some(val) = lookup("PAYMOB_MAX_RETRIES") {
+            self.max_retries = parse_retries_env(&val)?;
+        }
+        if let Some(val) = lookup("PAYMOB_USE_PAYOUTS_STAGING") {
+            self.use_payouts_staging = parse_bool_env("use_payouts_staging", &val)?;
+        }
+        if let Some(val) = lookup("PAYMOB_USE_LEGACY_V2_BEARER") {
+            self.use_legacy_v2_bearer_for_capture =
+                parse_bool_env("use_legacy_v2_bearer_for_capture", &val)?;
+        }
+        Ok(())
     }
 
     /// Sets the target [`PaymobRegion`] for Accept and Payouts routing.
@@ -343,29 +447,40 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Validates all builder invariants and constructs a [`ClientConfig`].
-    ///
-    /// # Errors
-    ///
-    /// - [`PaymobError::ValidationError`] if `region` is unset, `timeout` is
-    ///   zero, `secret_key` or `public_key` is empty, or a `pk_*` publishable
-    ///   key was passed into `secret_key`.
-    /// - [`PaymobError::EnvironmentMismatch`] if `Test` and `Live` credentials
-    ///   (or explicit `environment`) are mixed.
-    pub fn build(self) -> Result<ClientConfig, PaymobError> {
-        let region = self.region.ok_or_else(|| PaymobError::ValidationError {
-            field: "region",
-            reason: "region must be specified".to_owned(),
-        })?;
+    /// Validates builder invariants before constructing [`ClientConfig`].
+    fn validate_builder_invariants(&self) -> Result<(PaymobRegion, EnvironmentMode), PaymobError> {
+        let region = self
+            .region
+            .as_ref()
+            .ok_or_else(|| PaymobError::ValidationError {
+                field: "region",
+                reason: "region must be specified".to_owned(),
+            })?;
         if self.timeout.is_zero() {
             return Err(PaymobError::ValidationError {
                 field: "timeout",
                 reason: "timeout must be greater than zero".to_owned(),
             });
         }
-        let sk_mode = validate_secret_key(self.secret_key.as_ref())?;
-        let pk_mode = validate_public_key(self.public_key.as_ref())?;
+        let sk_region = self.secret_key.as_ref().and_then(SecretKey::region);
+        let pk_region = self.public_key.as_ref().and_then(PublicKey::region);
+        resolve_region_parity(region, sk_region, pk_region)?;
+        let sk_mode = self.secret_key.as_ref().map(SecretKey::mode);
+        let pk_mode = self.public_key.as_ref().map(PublicKey::mode);
         let environment = resolve_environment(self.environment, sk_mode, pk_mode)?;
+        Ok((region.clone(), environment))
+    }
+
+    /// Validates all builder invariants and constructs a [`ClientConfig`].
+    ///
+    /// # Errors
+    ///
+    /// - [`PaymobError::ValidationError`] if `region` is unset, `timeout` is
+    ///   zero, or key region prefixes conflict with the configured `region`.
+    /// - [`PaymobError::EnvironmentMismatch`] if `Test` and `Live` credentials
+    ///   (or explicit `environment`) are mixed.
+    pub fn build(self) -> Result<ClientConfig, PaymobError> {
+        let (region, environment) = self.validate_builder_invariants()?;
         Ok(ClientConfig {
             region,
             environment,
@@ -385,30 +500,66 @@ impl ClientConfigBuilder {
 
 impl fmt::Debug for ClientConfigBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ClientConfigBuilder")
-            .field("region", &self.region)
-            .field("environment", &self.environment)
-            .field("secret_key", &redact_option(&self.secret_key))
-            .field("public_key", &redact_option(&self.public_key))
-            .field("api_key", &redact_option(&self.api_key))
-            .field("hmac_secret", &redact_option(&self.hmac_secret))
-            .field(
-                "payouts_credentials",
-                &redact_option(&self.payouts_credentials),
-            )
-            .field(
-                "partner_credentials",
-                &redact_option(&self.partner_credentials),
-            )
-            .field("timeout", &self.timeout)
-            .field("max_retries", &self.max_retries)
-            .field("use_payouts_staging", &self.use_payouts_staging)
-            .field(
-                "use_legacy_v2_bearer_for_capture",
-                &self.use_legacy_v2_bearer_for_capture,
-            )
-            .finish()
+        fmt_config_fields(
+            f,
+            &ConfigDebugView {
+                type_name: "ClientConfigBuilder",
+                region: &self.region,
+                environment: &self.environment,
+                secret_key: &self.secret_key,
+                public_key: &self.public_key,
+                api_key: &self.api_key,
+                hmac_secret: &self.hmac_secret,
+                payouts_credentials: &self.payouts_credentials,
+                partner_credentials: &self.partner_credentials,
+                timeout: self.timeout,
+                max_retries: self.max_retries,
+                use_payouts_staging: self.use_payouts_staging,
+                use_legacy_v2_bearer_for_capture: self.use_legacy_v2_bearer_for_capture,
+            },
+        )
     }
+}
+
+/// Borrowed view of config fields shared by [`ClientConfig`] and [`ClientConfigBuilder`] `Debug`.
+struct ConfigDebugView<'a, R, E> {
+    type_name: &'static str,
+    region: &'a R,
+    environment: &'a E,
+    secret_key: &'a Option<SecretKey>,
+    public_key: &'a Option<PublicKey>,
+    api_key: &'a Option<ApiKey>,
+    hmac_secret: &'a Option<HmacSecret>,
+    payouts_credentials: &'a Option<PayoutsCredentials>,
+    partner_credentials: &'a Option<PartnerCredentials>,
+    timeout: Duration,
+    max_retries: u32,
+    use_payouts_staging: bool,
+    use_legacy_v2_bearer_for_capture: bool,
+}
+
+/// Shared [`fmt::Debug`] formatter redacting all optional credential fields.
+fn fmt_config_fields<R: fmt::Debug, E: fmt::Debug>(
+    f: &mut fmt::Formatter<'_>,
+    view: &ConfigDebugView<'_, R, E>,
+) -> fmt::Result {
+    f.debug_struct(view.type_name)
+        .field("region", view.region)
+        .field("environment", view.environment)
+        .field("secret_key", &redact_option(view.secret_key))
+        .field("public_key", &redact_option(view.public_key))
+        .field("api_key", &redact_option(view.api_key))
+        .field("hmac_secret", &redact_option(view.hmac_secret))
+        .field("payouts_credentials", &redact_option(view.payouts_credentials))
+        .field("partner_credentials", &redact_option(view.partner_credentials))
+        .field("timeout", &view.timeout)
+        .field("max_retries", &view.max_retries)
+        .field("use_payouts_staging", &view.use_payouts_staging)
+        .field(
+            "use_legacy_v2_bearer_for_capture",
+            &view.use_legacy_v2_bearer_for_capture,
+        )
+        .finish()
 }
 
 fn redact_option<T>(opt: &Option<T>) -> &'static str {
@@ -419,65 +570,106 @@ fn redact_option<T>(opt: &Option<T>) -> &'static str {
     }
 }
 
-fn strip_region_prefix(raw: &str) -> &str {
-    for prefix in REGION_PREFIXES {
-        if let Some(rest) = raw.strip_prefix(prefix) {
-            return rest;
+fn parse_region_env(raw: &str) -> Result<PaymobRegion, PaymobError> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Err(PaymobError::ValidationError {
+            field: "region",
+            reason: "PAYMOB_REGION must not be empty".to_owned(),
+        });
+    }
+    PaymobRegion::from_key_prefix(&normalized)
+        .or_else(|| {
+            ENV_REGION_ALIASES
+                .iter()
+                .find(|(alias, _)| *alias == normalized)
+                .map(|(_, region)| region.clone())
+        })
+        .ok_or_else(|| PaymobError::ValidationError {
+            field: "region",
+            reason: format!("unrecognized PAYMOB_REGION value: {raw}"),
+        })
+}
+
+fn parse_mode_env(raw: &str) -> Result<EnvironmentMode, PaymobError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "test" => Ok(EnvironmentMode::Test),
+        "live" => Ok(EnvironmentMode::Live),
+        _ => Err(PaymobError::ValidationError {
+            field: "environment",
+            reason: format!("invalid PAYMOB_ENVIRONMENT value: {raw}"),
+        }),
+    }
+}
+
+fn parse_timeout_env(raw: &str) -> Result<Duration, PaymobError> {
+    let secs = raw
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| PaymobError::ValidationError {
+            field: "timeout",
+            reason: format!("invalid PAYMOB_TIMEOUT_SECS value: {raw}"),
+        })?;
+    if secs == 0 {
+        return Err(PaymobError::ValidationError {
+            field: "timeout",
+            reason: "PAYMOB_TIMEOUT_SECS must be greater than zero".to_owned(),
+        });
+    }
+    Ok(Duration::from_secs(secs))
+}
+
+fn parse_retries_env(raw: &str) -> Result<u32, PaymobError> {
+    raw.trim()
+        .parse::<u32>()
+        .map_err(|_| PaymobError::ValidationError {
+            field: "max_retries",
+            reason: format!("invalid PAYMOB_MAX_RETRIES value: {raw}"),
+        })
+}
+
+fn parse_bool_env(field: &'static str, raw: &str) -> Result<bool, PaymobError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(PaymobError::ValidationError {
+            field,
+            reason: format!("invalid boolean environment value for {field}: {raw}"),
+        }),
+    }
+}
+
+fn check_region_pair(
+    left: Option<&PaymobRegion>,
+    right: Option<&PaymobRegion>,
+    context: &str,
+) -> Result<(), PaymobError> {
+    if let (Some(lhs), Some(rhs)) = (left, right) {
+        if lhs != rhs {
+            return Err(PaymobError::ValidationError {
+                field: "region",
+                reason: format!("{context}: {} vs {}", lhs.country_code(), rhs.country_code()),
+            });
         }
     }
-    raw
+    Ok(())
 }
 
-fn is_public_key_raw(raw: &str) -> bool {
-    strip_region_prefix(raw).starts_with("pk_")
-}
-
-fn infer_key_environment(raw: &str) -> Option<EnvironmentMode> {
-    let normalized = strip_region_prefix(raw);
-    for (prefix, mode) in MODE_PREFIXES {
-        if normalized.starts_with(prefix) {
-            return Some(*mode);
-        }
+fn resolve_region_parity(
+    configured: &PaymobRegion,
+    sk_region: Option<&PaymobRegion>,
+    pk_region: Option<&PaymobRegion>,
+) -> Result<(), PaymobError> {
+    check_region_pair(sk_region, pk_region, "secret_key and public_key region mismatch")?;
+    if matches!(configured, PaymobRegion::Custom { .. }) {
+        return Ok(());
     }
-    None
-}
-
-fn validate_secret_key(
-    secret_key: Option<&SecretKey>,
-) -> Result<Option<EnvironmentMode>, PaymobError> {
-    let Some(key) = secret_key else {
-        return Ok(None);
-    };
-    let raw = key.expose_secret();
-    if raw.trim().is_empty() {
-        return Err(PaymobError::ValidationError {
-            field: "secret_key",
-            reason: "secret_key must not be empty".to_owned(),
-        });
-    }
-    if is_public_key_raw(raw) {
-        return Err(PaymobError::ValidationError {
-            field: "secret_key",
-            reason: "public key (pk_*) cannot be used in secret_key slot".to_owned(),
-        });
-    }
-    Ok(infer_key_environment(raw))
-}
-
-fn validate_public_key(
-    public_key: Option<&PublicKey>,
-) -> Result<Option<EnvironmentMode>, PaymobError> {
-    let Some(key) = public_key else {
-        return Ok(None);
-    };
-    let raw = key.expose_secret();
-    if raw.trim().is_empty() {
-        return Err(PaymobError::ValidationError {
-            field: "public_key",
-            reason: "public_key must not be empty".to_owned(),
-        });
-    }
-    Ok(infer_key_environment(raw))
+    let key_region = sk_region.or(pk_region);
+    check_region_pair(
+        Some(configured),
+        key_region,
+        "configured region and key prefix region mismatch",
+    )
 }
 
 fn check_mode_pair(
@@ -517,6 +709,7 @@ fn resolve_environment(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn tc_1_1_3_builds_valid_test_config_with_defaults() {
@@ -529,12 +722,11 @@ mod tests {
             .build()
             .expect("valid test config should build");
 
-        assert_eq!(config.region(), &PaymobRegion::Egypt);
-        assert_eq!(config.environment(), EnvironmentMode::Test);
-        assert_eq!(config.timeout(), Duration::from_secs(30));
-        assert_eq!(config.max_retries(), 3);
-        assert!(!config.use_payouts_staging());
-        assert!(!config.use_legacy_v2_bearer_for_capture());
+        assert_eq!(
+            (config.region(), config.environment(), config.timeout(), config.max_retries()),
+            (&PaymobRegion::Egypt, EnvironmentMode::Test, Duration::from_secs(30), 3)
+        );
+        assert!(!config.use_payouts_staging() && !config.use_legacy_v2_bearer_for_capture());
     }
 
     #[test]
@@ -550,30 +742,34 @@ mod tests {
             .build()
             .expect("valid live config should build");
 
-        assert_eq!(config.environment(), EnvironmentMode::Live);
-        assert_eq!(config.timeout(), Duration::from_secs(60));
-        assert_eq!(config.max_retries(), 5);
-        assert!(config.use_payouts_staging());
-        assert!(config.use_legacy_v2_bearer_for_capture());
+        assert_eq!(
+            (config.environment(), config.timeout(), config.max_retries()),
+            (EnvironmentMode::Live, Duration::from_secs(60), 5)
+        );
+        assert!(config.use_payouts_staging() && config.use_legacy_v2_bearer_for_capture());
     }
 
     #[test]
-    fn tc_1_1_3_rejects_public_key_in_secret_key_slot() {
-        for pk in ["pk_test_12345", "egy_pk_test_12345", "ksa_pk_live_99999"] {
-            let err = SecretKey::new(pk)
-                .expect_err("pk_* in secret_key must be rejected");
+    fn tc_1_1_3_rejects_region_parity_mismatch() {
+        let err = ClientConfig::builder()
+            .region(PaymobRegion::Egypt)
+            .secret_key(SecretKey::new("ksa_sk_test_123").expect("valid secret key"))
+            .build()
+            .expect_err("Egypt region with KSA key must fail");
+        assert!(matches!(err, PaymobError::ValidationError { field: "region", .. }));
 
-            assert!(
-                matches!(
-                    err,
-                    PaymobError::ValidationError {
-                        field: "secret_key",
-                        ..
-                    }
-                ),
-                "unexpected error for {pk}: {err:?}"
-            );
-        }
+        let pair_err = ClientConfig::builder()
+            .region(PaymobRegion::Custom {
+                accept_base_url: "https://accept.example.com".to_owned(),
+                checkout_base_url: "https://checkout.example.com".to_owned(),
+                payouts_base_url: "https://payouts.example.com".to_owned(),
+                payouts_staging_base_url: "https://staging.example.com".to_owned(),
+            })
+            .secret_key(SecretKey::new("egy_sk_test_1").expect("valid sk"))
+            .public_key(PublicKey::new("uae_pk_test_1").expect("valid pk"))
+            .build()
+            .expect_err("EGY secret + UAE public must fail");
+        assert!(matches!(pair_err, PaymobError::ValidationError { field: "region", .. }));
     }
 
     #[test]
@@ -584,7 +780,6 @@ mod tests {
             .public_key(PublicKey::new("egy_pk_live_999xxx").expect("valid public key"))
             .build()
             .expect_err("Test secret key + Live public key must fail");
-
         assert!(matches!(err, PaymobError::EnvironmentMismatch(_)));
 
         let err_explicit = ClientConfig::builder()
@@ -593,21 +788,17 @@ mod tests {
             .secret_key(SecretKey::new("uae_sk_test_111").expect("valid secret key"))
             .build()
             .expect_err("Explicit Live + Test secret key must fail");
-
         assert!(matches!(err_explicit, PaymobError::EnvironmentMismatch(_)));
     }
 
     #[test]
-    fn tc_1_1_3_rejects_missing_region_and_zero_timeout_and_empty_keys() {
+    fn tc_1_1_3_rejects_missing_region_and_zero_timeout() {
         let err_region = ClientConfig::builder()
             .build()
             .expect_err("missing region must fail");
         assert!(matches!(
             err_region,
-            PaymobError::ValidationError {
-                field: "region",
-                ..
-            }
+            PaymobError::ValidationError { field: "region", .. }
         ));
 
         let err_timeout = ClientConfig::builder()
@@ -617,45 +808,107 @@ mod tests {
             .expect_err("zero timeout must fail");
         assert!(matches!(
             err_timeout,
-            PaymobError::ValidationError {
-                field: "timeout",
-                ..
-            }
-        ));
-
-        let err_empty_sk = SecretKey::new("   ")
-            .expect_err("blank secret_key must fail");
-        assert!(matches!(
-            err_empty_sk,
-            PaymobError::ValidationError {
-                field: "secret_key",
-                ..
-            }
+            PaymobError::ValidationError { field: "timeout", .. }
         ));
     }
 
     #[test]
-    fn tc_1_1_3_debug_redacts_all_credentials_on_config_and_builder() {
+    fn tc_1_1_3_debug_redacts_all_credentials_including_payouts_and_partner() {
         let builder = ClientConfig::builder()
             .region(PaymobRegion::Egypt)
             .secret_key(SecretKey::new("egy_sk_test_super_secret_value").expect("valid secret key"))
             .public_key(PublicKey::new("egy_pk_test_super_public_value").expect("valid public key"))
             .api_key(ApiKey::new("super_api_key_value").expect("valid api key"))
-            .hmac_secret(HmacSecret::new("super_hmac_secret_value").expect("valid hmac secret"));
+            .hmac_secret(HmacSecret::new("super_hmac_secret_value").expect("valid hmac secret"))
+            .payouts_credentials(
+                PayoutsCredentials::new("cid_leak_check", "csec_leak_check", "usr_leak", "pwd_leak")
+                    .expect("valid payouts"),
+            )
+            .partner_credentials(
+                PartnerCredentials::with_bearer_token("partner_api_leak", "partner_tok_leak")
+                    .expect("valid partner"),
+            );
 
         let builder_dbg = format!("{builder:?}");
-        assert!(builder_dbg.contains("[REDACTED]"));
-        assert!(!builder_dbg.contains("super_secret_value"));
-        assert!(!builder_dbg.contains("super_public_value"));
-        assert!(!builder_dbg.contains("super_api_key_value"));
-        assert!(!builder_dbg.contains("super_hmac_secret_value"));
-
         let config = builder.build().expect("valid config should build");
         let config_dbg = format!("{config:?}");
-        assert!(config_dbg.contains("[REDACTED]"));
-        assert!(!config_dbg.contains("super_secret_value"));
-        assert!(!config_dbg.contains("super_public_value"));
-        assert!(!config_dbg.contains("super_api_key_value"));
-        assert!(!config_dbg.contains("super_hmac_secret_value"));
+
+        for leaked in [
+            "super_secret_value",
+            "super_public_value",
+            "super_api_key_value",
+            "super_hmac_secret_value",
+            "csec_leak_check",
+            "partner_tok_leak",
+        ] {
+            assert!(!builder_dbg.contains(leaked) && !config_dbg.contains(leaked));
+        }
+        assert!(builder_dbg.contains("[REDACTED]") && config_dbg.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn tc_1_1_3_from_env_loads_valid_configuration() {
+        let map: HashMap<&str, &str> = HashMap::from([
+            ("PAYMOB_REGION", "ksa"),
+            ("PAYMOB_ENVIRONMENT", "live"),
+            ("PAYMOB_SECRET_KEY", "ksa_sk_live_env_secret"),
+            ("PAYMOB_TIMEOUT_SECS", "45"),
+            ("PAYMOB_MAX_RETRIES", "4"),
+            ("PAYMOB_USE_PAYOUTS_STAGING", "true"),
+        ]);
+        let cfg = ClientConfigBuilder::from_env_with(|k| map.get(k).map(|v| (*v).to_owned()))
+            .expect("valid env builder")
+            .build()
+            .expect("valid env config");
+        assert_eq!(
+            (cfg.region(), cfg.environment(), cfg.timeout(), cfg.max_retries()),
+            (&PaymobRegion::SaudiArabia, EnvironmentMode::Live, Duration::from_secs(45), 4)
+        );
+        assert!(cfg.use_payouts_staging());
+    }
+
+    #[test]
+    fn tc_1_1_3_from_env_rejects_missing_or_empty_region() {
+        let missing = ClientConfigBuilder::from_env_with(|_| None);
+        assert!(matches!(
+            missing,
+            Err(PaymobError::ValidationError { field: "region", .. })
+        ));
+
+        let empty = ClientConfigBuilder::from_env_with(|k| {
+            (k == "PAYMOB_REGION").then(|| "   ".to_owned())
+        });
+        assert!(matches!(
+            empty,
+            Err(PaymobError::ValidationError { field: "region", .. })
+        ));
+    }
+
+    #[test]
+    fn tc_1_1_3_from_env_rejects_invalid_env_values() {
+        let cases: &[(&str, &str, &str)] = &[
+            ("PAYMOB_REGION", "mars", "region"),
+            ("PAYMOB_ENVIRONMENT", "staging", "environment"),
+            ("PAYMOB_TIMEOUT_SECS", "0", "timeout"),
+            ("PAYMOB_TIMEOUT_SECS", "abc", "timeout"),
+            ("PAYMOB_MAX_RETRIES", "nope", "max_retries"),
+            ("PAYMOB_USE_PAYOUTS_STAGING", "maybe", "use_payouts_staging"),
+            ("PAYMOB_SECRET_KEY", "pk_test_wrong", "secret_key"),
+        ];
+        for (var, val, expected_field) in cases {
+            let err = ClientConfigBuilder::from_env_with(|k| {
+                if k == "PAYMOB_REGION" && *var != "PAYMOB_REGION" {
+                    Some("egy".to_owned())
+                } else if k == *var {
+                    Some((*val).to_owned())
+                } else {
+                    None
+                }
+            })
+            .expect_err("invalid env var must fail");
+            assert!(
+                matches!(err, PaymobError::ValidationError { field, .. } if field == *expected_field)
+            );
+        }
     }
 }

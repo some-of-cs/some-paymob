@@ -59,7 +59,7 @@ Feature: US-1.1.0 — Multi-Region Dual-Host Router, Credential Newtypes & Clien
 | `TC-1.1.1` | `AC-1` | `unit-1` | Unit + Doc-Test | Validate `PaymobRegion` (`Egypt`, `SaudiArabia`, `Uae`, `Oman`, `Pakistan`, `Custom`), `RegionalEndpoints` resolver (Accept Acquiring, Unified Checkout, Payouts Prod, Payouts Staging), and endpoint trailing-slash policy normalizer (`/v1/intention/` vs `/api/secure/disburse/`) in `src/core/region.rs` (positive, boundary, and malformed inputs) | 100% deterministic assertion pass; $\ge 90\%$ line & $\ge 85\%$ branch coverage |
 | `TC-1.1.2` | `AC-2` | `unit-2` | Security / Negative | Validate `SecretKey`, `PublicKey`, `ApiKey`, `HmacSecret`, `PayoutsCredentials`, and `PartnerCredentials` newtypes wrapping `secrecy::SecretString` with `ZeroizeOnDrop`, `[REDACTED]` `Debug` impls, `EnvironmentMode` (`Test` | `Live`), and static lookup table prefix parser (`CC <= 3`) in `src/core/credentials.rs` (positive, boundary, and malformed inputs) | 100% deterministic assertion pass; $\ge 90\%$ line & $\ge 85\%$ branch coverage |
 | `TC-1.1.3` | `AC-3` | `unit-3` | Unit + Doc-Test | Validate `ClientConfig` and `ClientConfigBuilder` validating key-prefix environment parity, rejecting `pk_*` in `secret_key`, configuring timeouts/retries, and exposing the legacy-v2 capture `Bearer` auth toggle in `src/core/config.rs` (positive, boundary, and malformed inputs) | 100% deterministic assertion pass; $\ge 90\%$ line & $\ge 85\%$ branch coverage |
-| `TC-1.1.4` | `AC-3` | `unit-4` | Unit + Doc-Test | Validate `PaymobClient` (`Arc<PaymobCore>`), cheap `Clone`, compile-time `Send + Sync` assertions, regional URL builders, and feature-gated service accessor methods in `src/core/client.rs` (positive, boundary, and malformed inputs) | 100% deterministic assertion pass; $\ge 90\%$ line & $\ge 85\%$ branch coverage |
+| `TC-1.1.4` | `AC-3` | `unit-4` | Unit + Doc-Test | Validate `PaymobClient` (`Arc<PaymobCore>`), cheap `Clone`, compile-time `Send + Sync` assertions, `HttpClient` transport wiring (`http()`), and regional URL builders (`accept_url`, `checkout_url`, `payouts_url`) in `src/core/client.rs` (feature-gated service accessors are wired in downstream service modules) (positive, boundary, and malformed inputs) | 100% deterministic assertion pass; $\ge 90\%$ line & $\ge 85\%$ branch coverage |
 | `TC-1.1.5` | `AC-4` | `unit-1..4` | Security / Property | Verify `[REDACTED]` `Debug` output, zero `f32`/`f64` floats, and `CC <= 6` across all units | 0 secret leaks in logs/panics; 0 Clippy warnings; all doctests pass |
 
 ---
@@ -89,6 +89,7 @@ pub enum PaymobRegion {
         accept_base_url: String,
         checkout_base_url: String,
         payouts_base_url: String,
+        payouts_staging_base_url: String,
     },
 }
 
@@ -175,7 +176,7 @@ some-paymob/
   - **Public Contract / Exports**: Public types, builders, and methods defined in `src/core/config.rs` re-exported via parent `mod.rs`
   - **Unit Verification & Target Complexity**: Colocated `#[cfg(test)] mod tests` + runnable rustdoc examples (`TC-1.1.3`), Max Cyclomatic Complexity $CC \le 6$ (cap $\le 10$, nesting $\le 2$)
 - **`unit-4` (`feat/us-1.1.0/unit-4-paymob-client`)**:
-  - **Deliverable Scope**: `PaymobClient` (`Arc<PaymobCore>`), cheap `Clone`, compile-time `Send + Sync` assertions, regional URL builders, and feature-gated service accessor methods
+  - **Deliverable Scope**: `PaymobClient` (`Arc<PaymobCore>`), cheap `Clone`, compile-time `Send + Sync` assertions, `HttpClient` transport wiring (`http()`), and regional URL builders (`accept_url`, `checkout_url`, `payouts_url`)
   - **Owned Files**: `src/core/client.rs`
   - **Public Contract / Exports**: Public types, builders, and methods defined in `src/core/client.rs` re-exported via parent `mod.rs`
   - **Unit Verification & Target Complexity**: Colocated `#[cfg(test)] mod tests` + runnable rustdoc examples (`TC-1.1.4`), Max Cyclomatic Complexity $CC \le 6$ (cap $\le 10$, nesting $\le 2$)

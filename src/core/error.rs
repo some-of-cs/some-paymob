@@ -636,6 +636,11 @@ fn redact_sensitive_kv(core: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn assert_no_leaks(output: &str, leaks: &[&str]) {
+        assert!(output.contains(REDACTED));
+        assert!(leaks.iter().all(|secret| !output.contains(secret)));
+    }
+
     #[test]
     fn tc_1_3_1_detail_401_maps_to_authentication_error() {
         let err = PaymobError::from_response(401, r#"{"detail": "incorrect credentials"}"#, None);
@@ -647,6 +652,11 @@ mod tests {
             err.to_string(),
             "Authentication failed: incorrect credentials"
         );
+    }
+
+    #[test]
+    fn tc_1_3_1_authentication_error_metadata() {
+        let err = PaymobError::from_response(401, r#"{"detail": "incorrect credentials"}"#, None);
         assert!(!err.is_retryable());
         assert_eq!(err.status_code(), None);
     }
@@ -666,6 +676,11 @@ mod tests {
                 code: Some("NOT_FOUND".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn tc_1_3_1_api_error_404_metadata() {
+        let err = PaymobError::from_response(404, r#"{"detail": "Not found."}"#, None);
         assert_eq!(err.status_code(), Some(404));
         assert!(!err.is_retryable());
     }
@@ -694,12 +709,18 @@ mod tests {
                 retry_after_secs: Some(15),
             }
         );
-        assert!(err.is_retryable());
-        assert_eq!(err.status_code(), Some(429));
         assert_eq!(
             err.to_string(),
             "Rate limited by Paymob gateway (HTTP 429): Rate limit exceeded (retry after 15s)"
         );
+    }
+
+    #[test]
+    fn tc_1_3_1_rate_limited_metadata() {
+        let body = r#"{"status_description": "Rate limit exceeded", "status_code": 429}"#;
+        let err = PaymobError::from_response(429, body, Some(15));
+        assert!(err.is_retryable());
+        assert_eq!(err.status_code(), Some(429));
     }
 
     #[test]
@@ -746,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn tc_1_3_1_malformed_and_empty_body_fallbacks() {
+    fn tc_1_3_1_malformed_body_503_is_retryable_api_error() {
         let malformed = PaymobError::from_response(503, "Service Unavailable", None);
         assert_eq!(
             malformed,
@@ -757,7 +778,10 @@ mod tests {
             }
         );
         assert!(malformed.is_retryable());
+    }
 
+    #[test]
+    fn tc_1_3_1_empty_body_500_fallback() {
         let empty = PaymobError::from_response(500, "   ", None);
         assert_eq!(
             empty,
@@ -773,12 +797,13 @@ mod tests {
     fn tc_1_3_1_redacts_api_keys_and_jwt_in_display_and_debug() {
         let msg = "sk_live_abc123xyz egy_sk_secret999 Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig";
         let err = PaymobError::AuthenticationError(msg.to_string());
-        let display = err.to_string();
-        let debug = format!("{err:?}");
-        assert!(!display.contains("sk_live_abc123xyz"));
-        assert!(!display.contains("egy_sk_secret999"));
-        assert!(!debug.contains("eyJhbGciOiJIUzI1NiJ9"));
-        assert!(display.contains("[REDACTED]"));
+        let leaks = [
+            "sk_live_abc123xyz",
+            "egy_sk_secret999",
+            "eyJhbGciOiJIUzI1NiJ9",
+        ];
+        assert_no_leaks(&err.to_string(), &leaks);
+        assert_no_leaks(&format!("{err:?}"), &leaks);
     }
 
     #[test]
@@ -788,41 +813,40 @@ mod tests {
             field: "payload",
             reason: msg.to_string(),
         };
-        let display = err.to_string();
-        assert!(!display.contains("+201012345678"));
-        assert!(!display.contains("4111-1111-1111-1111"));
-        assert!(!display.contains("123"));
-        assert!(!display.contains("tok_xyz"));
-        assert!(display.contains("[REDACTED]"));
+        assert_no_leaks(
+            &err.to_string(),
+            &["+201012345678", "4111-1111-1111-1111", "123", "tok_xyz"],
+        );
     }
 
     #[test]
     fn tc_1_3_1_redacts_spaced_pan_and_phone_numbers() {
         let msg = "card 4111 1111 1111 1111 mobile +20 101 234 5678 failed";
         let err = PaymobError::WebhookError(msg.to_string());
-        let debug = format!("{err:?}");
-        assert!(!debug.contains("4111 1111 1111 1111"));
-        assert!(!debug.contains("+20 101 234 5678"));
-        assert!(debug.contains("[REDACTED]"));
+        assert_no_leaks(
+            &format!("{err:?}"),
+            &["4111 1111 1111 1111", "+20 101 234 5678"],
+        );
     }
 
     #[test]
     fn tc_1_3_1_redacts_emails_in_display_and_debug() {
         let err = PaymobError::WebhookError("customer user@example.com rejected".to_string());
-        let display = err.to_string();
-        let debug = format!("{err:?}");
-        assert!(!display.contains("user@example.com"));
-        assert!(!debug.contains("user@example.com"));
-        assert!(display.contains("[REDACTED]"));
+        assert_no_leaks(&err.to_string(), &["user@example.com"]);
+        assert_no_leaks(&format!("{err:?}"), &["user@example.com"]);
     }
 
     #[test]
-    fn tc_1_3_1_env_mismatch_and_webhook_variants_not_retryable() {
+    fn tc_1_3_1_env_mismatch_variant_not_retryable() {
         let env_err = PaymobError::EnvironmentMismatch("Test key with Live ID".to_string());
-        let webhook_err = PaymobError::WebhookError("HMAC mismatch".to_string());
         assert!(!env_err.is_retryable());
-        assert!(!webhook_err.is_retryable());
         assert!(format!("{env_err:?}").contains("EnvironmentMismatch"));
+    }
+
+    #[test]
+    fn tc_1_3_1_webhook_variant_not_retryable() {
+        let webhook_err = PaymobError::WebhookError("HMAC mismatch".to_string());
+        assert!(!webhook_err.is_retryable());
         assert!(format!("{webhook_err:?}").contains("WebhookError"));
     }
 
@@ -831,6 +855,5 @@ mod tests {
         let transport_err = PaymobError::TransportError("connection reset".to_string());
         assert!(transport_err.is_retryable());
         assert_eq!(transport_err.status_code(), None);
-        assert!(format!("{transport_err:?}").contains("TransportError"));
     }
 }

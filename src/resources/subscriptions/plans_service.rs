@@ -10,10 +10,11 @@ use reqwest::Method;
 use reqwest::header::AUTHORIZATION;
 use secrecy::SecretString;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
+use super::plan_models::SubscriptionPlan;
+use super::plan_params::{CreateSubscriptionPlanParams, UpdateSubscriptionPlanParams};
 use crate::core::auth::{
     AcceptJwtProvider, CachedToken, format_bearer_header, is_incorrect_credentials_401,
 };
@@ -23,377 +24,6 @@ use crate::core::http::{HttpClient, HttpRequest, HttpResponse};
 use crate::core::pagination::PaginatedResponse;
 
 const SUBSCRIPTION_PLANS_PATH: &str = "/api/acceptance/subscription-plans";
-const MAX_PLAN_NAME_LEN: usize = 200;
-
-/// Allowed Paymob subscription billing frequencies in days.
-///
-/// Paymob rejects any frequency outside `{7, 15, 30, 60, 90, 180, 360}` with
-/// HTTP 400 (`"\"5\" is not a valid choice."`).
-///
-/// # Examples
-///
-/// ```
-/// use some_paymob::resources::subscriptions::plans_service::PlanFrequency;
-///
-/// assert_eq!(PlanFrequency::try_from(30).unwrap(), PlanFrequency::Days30);
-/// assert!(PlanFrequency::try_from(5).is_err());
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(into = "u16", try_from = "u16")]
-#[repr(u16)]
-pub enum PlanFrequency {
-    /// Weekly billing every 7 days.
-    Days7 = 7,
-    /// Bi-weekly billing every 15 days.
-    Days15 = 15,
-    /// Monthly billing every 30 days.
-    Days30 = 30,
-    /// Bi-monthly billing every 60 days.
-    Days60 = 60,
-    /// Quarterly billing every 90 days.
-    Days90 = 90,
-    /// Semi-annual billing every 180 days.
-    Days180 = 180,
-    /// Annual billing every 360 days.
-    Days360 = 360,
-}
-
-const ALLOWED_FREQUENCIES: &[(u16, PlanFrequency)] = &[
-    (7, PlanFrequency::Days7),
-    (15, PlanFrequency::Days15),
-    (30, PlanFrequency::Days30),
-    (60, PlanFrequency::Days60),
-    (90, PlanFrequency::Days90),
-    (180, PlanFrequency::Days180),
-    (360, PlanFrequency::Days360),
-];
-
-impl From<PlanFrequency> for u16 {
-    fn from(value: PlanFrequency) -> Self {
-        value as u16
-    }
-}
-
-impl TryFrom<u16> for PlanFrequency {
-    type Error = PaymobError;
-
-    fn try_from(days: u16) -> Result<Self, Self::Error> {
-        ALLOWED_FREQUENCIES
-            .iter()
-            .find(|(code, _)| *code == days)
-            .map(|(_, variant)| *variant)
-            .ok_or_else(|| PaymobError::ValidationError {
-                field: "frequency",
-                reason: format!(
-                    "unsupported plan frequency '{days}'; expected one of 7, 15, 30, 60, 90, 180, or 360 days"
-                ),
-            })
-    }
-}
-
-/// Paymob subscription plan classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PlanType {
-    /// Recurring rent/subscription plan (`"rent"`).
-    Rent,
-}
-
-/// Subscription plan record returned by Paymob's `/api/acceptance/subscription-plans` API.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SubscriptionPlan {
-    /// Unique Paymob subscription plan identifier.
-    pub id: u64,
-    /// Merchant-facing subscription plan name.
-    pub name: String,
-    /// Billing interval in days (`7 | 15 | 30 | 60 | 90 | 180 | 360`).
-    pub frequency: PlanFrequency,
-    /// Optional MIGS MOTO integration identifier bound to this plan.
-    #[serde(default)]
-    pub integration: Option<u64>,
-    /// Optional recurring charge amount in integer minor units (e.g., piastres/halalas).
-    #[serde(default)]
-    pub amount_cents: Option<u64>,
-    /// Optional platform fee in integer minor units.
-    #[serde(default)]
-    pub fee: Option<u64>,
-    /// Whether the plan is currently active (`true`) or suspended (`false`).
-    #[serde(default)]
-    pub is_active: bool,
-    /// Optional webhook callback URL for plan lifecycle notifications.
-    #[serde(default)]
-    pub webhook_url: Option<String>,
-    /// Optional number of days before renewal to send a reminder.
-    #[serde(default)]
-    pub reminder_days: Option<u16>,
-    /// Optional number of days to retry failed recurring charges.
-    #[serde(default)]
-    pub retrial_days: Option<u16>,
-    /// Optional plan type classification.
-    #[serde(default)]
-    pub plan_type: Option<PlanType>,
-    /// Optional maximum number of deductions before automatic completion.
-    #[serde(default)]
-    pub number_of_deductions: Option<u32>,
-    /// Whether each renewal uses the initial transaction amount.
-    #[serde(default)]
-    pub use_transaction_amount: Option<bool>,
-    /// Optional ISO-8601 creation timestamp.
-    #[serde(default)]
-    pub created_at: Option<String>,
-    /// Optional ISO-8601 last-update timestamp.
-    #[serde(default)]
-    pub updated_at: Option<String>,
-}
-
-/// Request payload for `POST /api/acceptance/subscription-plans`.
-///
-/// Enforces `1 <= name.chars().count() <= 200`, a validated [`PlanFrequency`],
-/// and a non-zero MIGS MOTO `integration` ID before network dispatch.
-///
-/// # Examples
-///
-/// ```
-/// use some_paymob::resources::subscriptions::plans_service::{
-///     CreateSubscriptionPlanParams, PlanFrequency,
-/// };
-///
-/// let params = CreateSubscriptionPlanParams::new("Pro Monthly", PlanFrequency::Days30, 4_111_111)
-///     .with_amount_cents(15_000)
-///     .with_is_active(true);
-/// assert!(params.validate().is_ok());
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct CreateSubscriptionPlanParams {
-    /// Billing interval in days (`7 | 15 | 30 | 60 | 90 | 180 | 360`).
-    pub frequency: PlanFrequency,
-    /// Human-readable plan name (`1..=200` UTF-8 characters).
-    pub name: String,
-    /// MIGS MOTO integration ID configured for recurring billing.
-    pub integration: u64,
-    /// Optional webhook notification URL.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub webhook_url: Option<String>,
-    /// Optional reminder lead time in days.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reminder_days: Option<u16>,
-    /// Optional retrial window in days.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub retrial_days: Option<u16>,
-    /// Optional plan type (`"rent"`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub plan_type: Option<PlanType>,
-    /// Optional maximum deduction count.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub number_of_deductions: Option<u32>,
-    /// Optional recurring amount in integer minor units (`u64`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub amount_cents: Option<u64>,
-    /// Optional flag to reuse the initial transaction amount.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub use_transaction_amount: Option<bool>,
-    /// Optional initial active state.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_active: Option<bool>,
-    /// Optional fee in integer minor units (`u64`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fee: Option<u64>,
-}
-
-impl CreateSubscriptionPlanParams {
-    /// Creates a new [`CreateSubscriptionPlanParams`] with required fields.
-    #[must_use]
-    pub fn new(name: impl Into<String>, frequency: PlanFrequency, integration: u64) -> Self {
-        Self {
-            frequency,
-            name: name.into(),
-            integration,
-            webhook_url: None,
-            reminder_days: None,
-            retrial_days: None,
-            plan_type: None,
-            number_of_deductions: None,
-            amount_cents: None,
-            use_transaction_amount: None,
-            is_active: None,
-            fee: None,
-        }
-    }
-
-    /// Sets `webhook_url` on the plan creation payload.
-    #[must_use]
-    pub fn with_webhook_url(mut self, webhook_url: impl Into<String>) -> Self {
-        self.webhook_url = Some(webhook_url.into());
-        self
-    }
-
-    /// Sets `reminder_days` on the plan creation payload.
-    #[must_use]
-    pub const fn with_reminder_days(mut self, reminder_days: u16) -> Self {
-        self.reminder_days = Some(reminder_days);
-        self
-    }
-
-    /// Sets `retrial_days` on the plan creation payload.
-    #[must_use]
-    pub const fn with_retrial_days(mut self, retrial_days: u16) -> Self {
-        self.retrial_days = Some(retrial_days);
-        self
-    }
-
-    /// Sets `plan_type` on the plan creation payload.
-    #[must_use]
-    pub const fn with_plan_type(mut self, plan_type: PlanType) -> Self {
-        self.plan_type = Some(plan_type);
-        self
-    }
-
-    /// Sets `number_of_deductions` on the plan creation payload.
-    #[must_use]
-    pub const fn with_number_of_deductions(mut self, number_of_deductions: u32) -> Self {
-        self.number_of_deductions = Some(number_of_deductions);
-        self
-    }
-
-    /// Sets `amount_cents` (integer minor units) on the plan creation payload.
-    #[must_use]
-    pub const fn with_amount_cents(mut self, amount_cents: u64) -> Self {
-        self.amount_cents = Some(amount_cents);
-        self
-    }
-
-    /// Sets `use_transaction_amount` on the plan creation payload.
-    #[must_use]
-    pub const fn with_use_transaction_amount(mut self, use_transaction_amount: bool) -> Self {
-        self.use_transaction_amount = Some(use_transaction_amount);
-        self
-    }
-
-    /// Sets `is_active` on the plan creation payload.
-    #[must_use]
-    pub const fn with_is_active(mut self, is_active: bool) -> Self {
-        self.is_active = Some(is_active);
-        self
-    }
-
-    /// Sets `fee` (integer minor units) on the plan creation payload.
-    #[must_use]
-    pub const fn with_fee(mut self, fee: u64) -> Self {
-        self.fee = Some(fee);
-        self
-    }
-
-    /// Validates all domain invariants before dispatching the HTTP request.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PaymobError::ValidationError`] if `name` is empty/whitespace or
-    /// exceeds 200 UTF-8 characters, or if `integration` is `0`.
-    pub fn validate(&self) -> Result<(), PaymobError> {
-        validate_plan_name(&self.name)?;
-        validate_integration_id(self.integration)
-    }
-}
-
-/// Request payload for `PUT /api/acceptance/subscription-plans/{id}`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct UpdateSubscriptionPlanParams {
-    /// Updated billing frequency.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub frequency: Option<PlanFrequency>,
-    /// Updated plan name (`1..=200` UTF-8 characters when provided).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    /// Updated MIGS MOTO integration ID (`> 0` when provided).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub integration: Option<u64>,
-    /// Updated webhook URL.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub webhook_url: Option<String>,
-    /// Updated reminder lead time in days.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reminder_days: Option<u16>,
-    /// Updated retrial window in days.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub retrial_days: Option<u16>,
-    /// Updated plan type.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub plan_type: Option<PlanType>,
-    /// Updated maximum deduction count.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub number_of_deductions: Option<u32>,
-    /// Updated recurring amount in integer minor units (`u64`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub amount_cents: Option<u64>,
-    /// Updated flag to reuse initial transaction amount.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub use_transaction_amount: Option<bool>,
-    /// Updated active status.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_active: Option<bool>,
-    /// Updated fee in integer minor units (`u64`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fee: Option<u64>,
-}
-
-impl UpdateSubscriptionPlanParams {
-    /// Creates an empty [`UpdateSubscriptionPlanParams`] builder.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Sets an updated `name`.
-    #[must_use]
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
-        self.name = Some(name.into());
-        self
-    }
-
-    /// Sets an updated `frequency`.
-    #[must_use]
-    pub const fn with_frequency(mut self, frequency: PlanFrequency) -> Self {
-        self.frequency = Some(frequency);
-        self
-    }
-
-    /// Sets an updated `integration` ID.
-    #[must_use]
-    pub const fn with_integration(mut self, integration: u64) -> Self {
-        self.integration = Some(integration);
-        self
-    }
-
-    /// Sets an updated `amount_cents` in integer minor units.
-    #[must_use]
-    pub const fn with_amount_cents(mut self, amount_cents: u64) -> Self {
-        self.amount_cents = Some(amount_cents);
-        self
-    }
-
-    /// Sets an updated `is_active` flag.
-    #[must_use]
-    pub const fn with_is_active(mut self, is_active: bool) -> Self {
-        self.is_active = Some(is_active);
-        self
-    }
-
-    /// Validates all populated fields before network dispatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PaymobError::ValidationError`] if a provided `name` is empty or
-    /// exceeds 200 UTF-8 characters, or if a provided `integration` is `0`.
-    pub fn validate(&self) -> Result<(), PaymobError> {
-        if let Some(name) = &self.name {
-            validate_plan_name(name)?;
-        }
-        if let Some(integration) = self.integration {
-            validate_integration_id(integration)?;
-        }
-        Ok(())
-    }
-}
 
 /// Service handle for Paymob subscription plan CRUD and lifecycle operations.
 ///
@@ -409,9 +39,9 @@ impl UpdateSubscriptionPlanParams {
 /// use some_paymob::core::config::ClientConfig;
 /// use some_paymob::core::credentials::ApiKey;
 /// use some_paymob::core::region::PaymobRegion;
-/// use some_paymob::resources::subscriptions::plans_service::{
-///     CreateSubscriptionPlanParams, PlanFrequency, SubscriptionPlansService,
-/// };
+/// use some_paymob::resources::subscriptions::plan_models::PlanFrequency;
+/// use some_paymob::resources::subscriptions::plan_params::CreateSubscriptionPlanParams;
+/// use some_paymob::resources::subscriptions::plans_service::SubscriptionPlansService;
 ///
 /// # async fn example() -> Result<(), some_paymob::core::error::PaymobError> {
 /// let config = ClientConfig::builder()
@@ -421,8 +51,12 @@ impl UpdateSubscriptionPlanParams {
 /// let client = PaymobClient::new(config)?;
 /// let service = SubscriptionPlansService::new(client);
 ///
-/// let params = CreateSubscriptionPlanParams::new("Pro Monthly", PlanFrequency::Days30, 4_111_111)
-///     .with_amount_cents(15_000);
+/// let params = CreateSubscriptionPlanParams::builder()
+///     .name("Pro Monthly")
+///     .frequency(PlanFrequency::Days30)
+///     .integration(4_111_111)
+///     .amount_cents(15_000)
+///     .build()?;
 /// let _plan = service.create(&params).await?;
 /// # Ok(())
 /// # }
@@ -630,27 +264,6 @@ fn validate_plan_id(plan_id: u64) -> Result<(), PaymobError> {
     Ok(())
 }
 
-fn validate_integration_id(integration: u64) -> Result<(), PaymobError> {
-    if integration == 0 {
-        return Err(PaymobError::ValidationError {
-            field: "integration",
-            reason: "MIGS MOTO integration id must be greater than zero".to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_plan_name(name: &str) -> Result<(), PaymobError> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() || name.chars().count() > MAX_PLAN_NAME_LEN {
-        return Err(PaymobError::ValidationError {
-            field: "name",
-            reason: format!("plan name must be between 1 and {MAX_PLAN_NAME_LEN} UTF-8 characters"),
-        });
-    }
-    Ok(())
-}
-
 fn validate_page(page: Option<u32>) -> Result<(), PaymobError> {
     if matches!(page, Some(0)) {
         return Err(PaymobError::ValidationError {
@@ -683,11 +296,13 @@ mod tests {
     use wiremock::matchers::{body_json, header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    use super::super::plan_models::{PlanFrequency, PlanType};
     use super::*;
     use crate::core::config::ClientConfig;
     use crate::core::credentials::ApiKey;
     use crate::core::http::HttpClientConfig;
     use crate::core::region::PaymobRegion;
+    use crate::core::types::MinorUnitAmount;
 
     fn mock_client(base_url: &str, with_api_key: bool) -> PaymobClient {
         let region = PaymobRegion::Custom {
@@ -755,11 +370,15 @@ mod tests {
             .await;
 
         let service = mock_service(&server.uri(), true);
-        let params =
-            CreateSubscriptionPlanParams::new("Pro Monthly", PlanFrequency::Days30, 4_111_111)
-                .with_amount_cents(15_000)
-                .with_is_active(true)
-                .with_plan_type(PlanType::Rent);
+        let params = CreateSubscriptionPlanParams::builder()
+            .name("Pro Monthly")
+            .frequency(PlanFrequency::Days30)
+            .integration(4_111_111)
+            .amount_cents(15_000)
+            .is_active(true)
+            .plan_type(PlanType::Rent.as_str())
+            .build()
+            .expect("valid create params");
 
         let plan = service
             .create(&params)
@@ -768,7 +387,7 @@ mod tests {
         assert_eq!(plan.id, 101);
         assert_eq!(plan.name, "Pro Monthly");
         assert_eq!(plan.frequency, PlanFrequency::Days30);
-        assert_eq!(plan.amount_cents, Some(15_000));
+        assert_eq!(plan.amount_cents, Some(MinorUnitAmount::new(15_000)));
         assert!(plan.is_active);
     }
 
@@ -788,10 +407,12 @@ mod tests {
             .await;
 
         let service = mock_service(&server.uri(), true);
-        let params = UpdateSubscriptionPlanParams::new()
-            .with_name("Pro Annual")
-            .with_frequency(PlanFrequency::Days360)
-            .with_amount_cents(120_000);
+        let params = UpdateSubscriptionPlanParams::builder()
+            .name("Pro Annual")
+            .frequency(PlanFrequency::Days360)
+            .amount_cents(120_000)
+            .build()
+            .expect("valid update params");
 
         let plan = service
             .update(42, &params)
@@ -892,28 +513,48 @@ mod tests {
 
         assert!(PlanFrequency::try_from(5).is_err());
 
-        let empty_name = CreateSubscriptionPlanParams::new("  ", PlanFrequency::Days30, 4_111_111);
-        assert!(service.create(&empty_name).await.is_err());
-
-        let long_name =
-            CreateSubscriptionPlanParams::new("a".repeat(201), PlanFrequency::Days30, 4_111_111);
-        assert!(service.create(&long_name).await.is_err());
-
-        let zero_integration = CreateSubscriptionPlanParams::new("Valid", PlanFrequency::Days7, 0);
-        assert!(service.create(&zero_integration).await.is_err());
-
         assert!(
-            service
-                .update(0, &UpdateSubscriptionPlanParams::new())
-                .await
+            CreateSubscriptionPlanParams::builder()
+                .name("  ")
+                .frequency(PlanFrequency::Days30)
+                .integration(4_111_111)
+                .build()
                 .is_err()
         );
+
+        assert!(
+            CreateSubscriptionPlanParams::builder()
+                .name("a".repeat(201))
+                .frequency(PlanFrequency::Days30)
+                .integration(4_111_111)
+                .build()
+                .is_err()
+        );
+
+        assert!(
+            CreateSubscriptionPlanParams::builder()
+                .name("Valid")
+                .frequency(PlanFrequency::Days7)
+                .integration(0)
+                .build()
+                .is_err()
+        );
+
+        let valid_update = UpdateSubscriptionPlanParams::builder()
+            .name("Valid")
+            .build()
+            .expect("valid update");
+        assert!(service.update(0, &valid_update).await.is_err());
         assert!(service.list(Some(0)).await.is_err());
         assert!(service.suspend(0).await.is_err());
         assert!(service.resume(0).await.is_err());
 
-        let valid_params =
-            CreateSubscriptionPlanParams::new("Valid", PlanFrequency::Days30, 4_111_111);
+        let valid_params = CreateSubscriptionPlanParams::builder()
+            .name("Valid")
+            .frequency(PlanFrequency::Days30)
+            .integration(4_111_111)
+            .build()
+            .expect("valid params");
         let missing_auth = service.create(&valid_params).await;
         assert!(matches!(
             missing_auth,
@@ -969,5 +610,13 @@ mod tests {
             .await
             .expect("retry after 401 should succeed");
         assert!(!suspended.is_active);
+    }
+
+    #[test]
+    fn tc_4_2_4_debug_redacts_api_key_and_never_leaks_secret() {
+        let service = mock_service("https://accept.paymob.com", true);
+        let debug_output = format!("{service:?}");
+        assert!(debug_output.contains("[REDACTED]"));
+        assert!(!debug_output.contains("test_api_key_secret"));
     }
 }

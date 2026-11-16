@@ -808,18 +808,6 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/api/acceptance/subscription-plans"))
-            .and(header("authorization", "Bearer jwt_list_123"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "count": 2,
-                "next": "https://accept.paymob.com/api/acceptance/subscription-plans?page=2",
-                "previous": null,
-                "results": [sample_plan_json(1, "Starter", true)]
-            })))
-            .mount(&server)
-            .await;
-
-        Mock::given(method("GET"))
-            .and(path("/api/acceptance/subscription-plans"))
             .and(query_param("page", "2"))
             .and(header("authorization", "Bearer jwt_list_123"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -828,6 +816,20 @@ mod tests {
                 "previous": "https://accept.paymob.com/api/acceptance/subscription-plans?page=1",
                 "results": [sample_plan_json(2, "Enterprise", true)]
             })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/acceptance/subscription-plans"))
+            .and(header("authorization", "Bearer jwt_list_123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "count": 2,
+                "next": "https://accept.paymob.com/api/acceptance/subscription-plans?page=2",
+                "previous": null,
+                "results": [sample_plan_json(1, "Starter", true)]
+            })))
+            .expect(1)
             .mount(&server)
             .await;
 
@@ -839,6 +841,10 @@ mod tests {
         assert_eq!(page2.count, 2);
         assert_eq!(page2.results.len(), 1);
         assert_eq!(page2.results[0].id, 2);
+
+        let page1 = service.list(None).await.expect("list default page should succeed");
+        assert_eq!(page1.results.len(), 1);
+        assert_eq!(page1.results[0].id, 1);
     }
 
     #[tokio::test]

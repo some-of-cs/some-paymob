@@ -66,6 +66,7 @@ pub const KNOWN_SUBSCRIPTION_TRIGGERS: &[(&str, SubscriptionTriggerType)] = &[
 ///
 /// let trigger = SubscriptionTriggerType::from_wire("suspended");
 /// assert_eq!(trigger, SubscriptionTriggerType::Suspended);
+/// assert!(trigger.is_known());
 /// assert_eq!(trigger.as_wire(), "suspended");
 ///
 /// let misspelled = SubscriptionTriggerType::from_wire("add_secondry_card");
@@ -122,6 +123,7 @@ impl SubscriptionTriggerType {
     ///     SubscriptionTriggerType::Unknown("future_event".to_owned()),
     /// );
     /// ```
+    #[must_use]
     pub fn from_wire(wire: &str) -> Self {
         if let Some((_, variant)) = KNOWN_SUBSCRIPTION_TRIGGERS
             .iter()
@@ -146,6 +148,7 @@ impl SubscriptionTriggerType {
     ///     "Failed Overdue Transaction",
     /// );
     /// ```
+    #[must_use]
     pub fn as_wire(&self) -> &str {
         if let Self::Unknown(raw) = self {
             return raw.as_str();
@@ -154,6 +157,12 @@ impl SubscriptionTriggerType {
             .iter()
             .find(|(_, variant)| variant == self)
             .map_or("", |(wire, _)| *wire)
+    }
+
+    /// Returns `true` if this trigger matches one of Paymob's 12 documented triggers.
+    #[must_use]
+    pub const fn is_known(&self) -> bool {
+        !matches!(self, Self::Unknown(_))
     }
 }
 
@@ -358,6 +367,7 @@ impl SubscriptionWebhookEvent {
     /// };
     /// assert_eq!(event.canonical_message(), "Subscription Createdfor99");
     /// ```
+    #[must_use]
     pub fn canonical_message(&self) -> String {
         canonical_subscription_message(&self.trigger_type, self.subscription_data.id)
     }
@@ -390,6 +400,7 @@ impl fmt::Debug for SubscriptionWebhookEvent {
 ///     "suspendedfor1264",
 /// );
 /// ```
+#[must_use]
 pub fn canonical_subscription_message(
     trigger_type: &SubscriptionTriggerType,
     subscription_id: u64,
@@ -401,14 +412,17 @@ impl super::verifier::PaymobWebhookEngine {
     /// Verifies a Protocol D Subscription Lifecycle webhook payload in constant time.
     ///
     /// Parses `raw_body` into [`SubscriptionWebhookEvent`], requires a non-empty
-    /// `hmac` field in the JSON body (returning [`super::verifier::WebhookError::MissingBodyHmac`]
-    /// if absent or blank), constructs `"{trigger_type}for{subscription_data.id}"`,
-    /// and verifies the `HMAC-SHA512` signature via [`Self::verify_concatenated_str`].
+    /// `paymob_request_id` (returning [`super::verifier::WebhookError::MissingRequiredField`]
+    /// if blank) and a non-empty `hmac` field in the JSON body (returning
+    /// [`super::verifier::WebhookError::MissingBodyHmac`] if absent or blank),
+    /// constructs `"{trigger_type}for{subscription_data.id}"`, and verifies the
+    /// `HMAC-SHA512` signature via [`Self::verify_concatenated_str`].
     ///
     /// # Errors
     ///
     /// - [`super::verifier::WebhookError::InvalidJsonPayload`] if `raw_body` is not valid JSON
     ///   matching [`SubscriptionWebhookEvent`].
+    /// - [`super::verifier::WebhookError::MissingRequiredField`] if `paymob_request_id` is empty.
     /// - [`super::verifier::WebhookError::MissingBodyHmac`] if `body.hmac` is `None` or empty.
     /// - [`super::verifier::WebhookError::MalformedSignatureHex`] if `body.hmac` is not valid
     ///   128-character hex.
@@ -436,9 +450,13 @@ impl super::verifier::PaymobWebhookEngine {
     pub fn verify_subscription(
         &self,
         raw_body: &str,
-    ) -> Result<SubscriptionWebhookEvent, super::verifier::WebhookError> {
-        let event: SubscriptionWebhookEvent = serde_json::from_str(raw_body)
-            .map_err(|err| super::verifier::WebhookError::InvalidJsonPayload(err.to_string()))?;
+    ) -> super::verifier::WebhookResult<SubscriptionWebhookEvent> {
+        let event: SubscriptionWebhookEvent = super::verifier::parse_webhook_json_str(raw_body)?;
+        if event.paymob_request_id.trim().is_empty() {
+            return Err(super::verifier::WebhookError::MissingRequiredField(
+                "paymob_request_id".into(),
+            ));
+        }
         let hmac_hex = event
             .hmac
             .as_deref()
@@ -448,6 +466,23 @@ impl super::verifier::PaymobWebhookEngine {
         let canonical = event.canonical_message();
         self.verify_concatenated_str(&canonical, hmac_hex)?;
         Ok(event)
+    }
+
+    /// Verifies a Protocol D Subscription Lifecycle webhook from raw request bytes.
+    ///
+    /// Validates that `raw_body` is valid UTF-8 before delegating to
+    /// [`Self::verify_subscription`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`super::verifier::WebhookError::InvalidJsonPayload`] if `raw_body` is not
+    /// valid UTF-8, or any error returned by [`Self::verify_subscription`].
+    pub fn verify_subscription_bytes(
+        &self,
+        raw_body: &[u8],
+    ) -> super::verifier::WebhookResult<SubscriptionWebhookEvent> {
+        let raw_str = super::verifier::decode_webhook_utf8(raw_body)?;
+        self.verify_subscription(raw_str)
     }
 }
 
@@ -504,31 +539,36 @@ mod tests {
         assert_eq!(KNOWN_SUBSCRIPTION_TRIGGERS.len(), 12);
         for (wire, expected_variant) in KNOWN_SUBSCRIPTION_TRIGGERS {
             let parsed = SubscriptionTriggerType::from_wire(wire);
-            assert_eq!(&parsed, expected_variant);
-            assert_eq!(parsed.as_wire(), *wire);
-            assert_eq!(parsed.to_string(), *wire);
+            assert_eq!((&parsed, parsed.is_known()), (expected_variant, true));
+            assert_eq!((parsed.as_wire(), parsed.to_string().as_str()), (*wire, *wire));
 
             let serialized = serde_json::to_string(&parsed).expect("serialize trigger");
             assert_eq!(serialized, format!("\"{wire}\""));
             let deserialized: SubscriptionTriggerType =
                 serde_json::from_str(&serialized).expect("deserialize trigger");
-            assert_eq!(deserialized, *expected_variant);
+            assert_eq!(&deserialized, expected_variant);
         }
     }
 
     #[test]
-    fn test_unknown_trigger_type_preserved() {
+    fn test_unknown_trigger_type_preserved_and_verified() {
+        let secret = "paymob_test_hmac_secret";
+        let engine = PaymobWebhookEngine::new(secret).expect("valid test secret");
         let trigger = SubscriptionTriggerType::from_wire("custom_future_trigger");
-        assert_eq!(
-            trigger,
-            SubscriptionTriggerType::Unknown("custom_future_trigger".to_owned())
-        );
+        assert!(!trigger.is_known());
         assert_eq!(trigger.as_wire(), "custom_future_trigger");
-        assert_eq!(trigger.to_string(), "custom_future_trigger");
+
+        let sig = sign_hmac_sha512(secret, "custom_future_triggerfor1264");
+        let body = format!(
+            "{{\"paymob_request_id\":\"req-9\",\"subscription_data\":{{\"id\":1264}},\
+             \"trigger_type\":\"custom_future_trigger\",\"hmac\":\"{sig}\"}}"
+        );
+        let verified = engine.verify_subscription(&body).expect("unknown trigger must verify");
+        assert_eq!(verified.trigger_type, trigger);
     }
 
     #[test]
-    fn test_official_test_vector_suspendedfor1264_and_redaction() {
+    fn test_official_test_vector_suspendedfor1264_fields() {
         let event: SubscriptionWebhookEvent =
             serde_json::from_str(OFFICIAL_SAMPLE_JSON).expect("parse official sample");
 
@@ -536,23 +576,26 @@ mod tests {
         assert_eq!(event.subscription_data.id, 1264);
         assert_eq!(event.subscription_data.plan_id, Some(1186));
         assert_eq!(event.subscription_data.amount_cents, Some(330));
-        assert_eq!(
-            event.paymob_request_id,
-            "df9e4ecf-12e0-4925-b258-65423f32bc98"
-        );
-        assert_eq!(event.hmac.as_deref(), Some(OFFICIAL_SAMPLE_HMAC));
+        assert_eq!(event.paymob_request_id, "df9e4ecf-12e0-4925-b258-65423f32bc98");
         assert_eq!(event.canonical_message(), "suspendedfor1264");
-
-        let debug_str = format!("{event:?}");
-        assert!(debug_str.contains("[REDACTED]"));
-        assert!(!debug_str.contains(OFFICIAL_SAMPLE_HMAC));
-        assert!(!debug_str.contains("test@test.com"));
-        assert!(!debug_str.contains("mo ay"));
-        assert!(!debug_str.contains("01010101010"));
     }
 
     #[test]
-    fn test_verify_subscription_all_12_triggers_and_vector_shape() {
+    fn test_official_test_vector_debug_redaction_and_none_client_info() {
+        let event: SubscriptionWebhookEvent =
+            serde_json::from_str(OFFICIAL_SAMPLE_JSON).expect("parse official sample");
+        let debug_str = format!("{event:?}");
+        assert!(debug_str.contains("[REDACTED]"));
+        assert!(!debug_str.contains(OFFICIAL_SAMPLE_HMAC));
+        assert!(!debug_str.contains("test@test.com") && !debug_str.contains("mo ay"));
+        assert!(!debug_str.contains("01010101010"));
+
+        let empty_info = SubscriptionClientInfo::default();
+        assert!(format!("{empty_info:?}").contains("email: None"));
+    }
+
+    #[test]
+    fn test_verify_subscription_all_12_triggers_and_bytes() {
         let secret = "paymob_test_hmac_secret";
         let engine = PaymobWebhookEngine::new(secret).expect("valid test secret");
 
@@ -560,66 +603,68 @@ mod tests {
             let canonical = format!("{wire}for1264");
             let sig = sign_hmac_sha512(secret, &canonical);
             let body = format!(
-                r#"{{
-                    "paymob_request_id": "req-1264",
-                    "subscription_data": {{ "id": 1264 }},
-                    "trigger_type": "{wire}",
-                    "hmac": "{sig}"
-                }}"#
+                "{{\"paymob_request_id\":\"req-1264\",\"subscription_data\":{{\"id\":1264}},\
+                 \"trigger_type\":\"{wire}\",\"hmac\":\"{sig}\"}}"
             );
             let verified = engine
-                .verify_subscription(&body)
+                .verify_subscription_bytes(body.as_bytes())
                 .expect("valid signature must verify");
             assert_eq!(&verified.trigger_type, expected_variant);
-            assert_eq!(verified.subscription_data.id, 1264);
             assert_eq!(verified.canonical_message(), canonical);
         }
     }
 
     #[test]
-    fn test_verify_subscription_negative_cases() {
+    fn test_verify_subscription_rejects_missing_or_blank_hmac_and_request_id() {
         let engine =
             PaymobWebhookEngine::new("paymob_test_hmac_secret").expect("valid test secret");
+        let missing_hmac = "{\"paymob_request_id\":\"req-1\",\
+            \"subscription_data\":{\"id\":1264},\"trigger_type\":\"suspended\"}";
+        let blank_hmac = "{\"paymob_request_id\":\"req-1\",\
+            \"subscription_data\":{\"id\":1264},\"trigger_type\":\"suspended\",\"hmac\":\"   \"}";
+        let blank_req_id = "{\"paymob_request_id\":\"  \",\
+            \"subscription_data\":{\"id\":1264},\"trigger_type\":\"suspended\",\"hmac\":\"dd5b\"}";
+
+        assert_eq!(
+            engine.verify_subscription(missing_hmac),
+            Err(WebhookError::MissingBodyHmac)
+        );
+        assert_eq!(
+            engine.verify_subscription(blank_hmac),
+            Err(WebhookError::MissingBodyHmac)
+        );
+        assert_eq!(
+            engine.verify_subscription(blank_req_id),
+            Err(WebhookError::MissingRequiredField("paymob_request_id".into()))
+        );
+    }
+
+    #[test]
+    fn test_verify_subscription_rejects_tampered_fields_and_invalid_inputs() {
+        let secret = "paymob_test_hmac_secret";
+        let engine = PaymobWebhookEngine::new(secret).expect("valid test secret");
+        let sig = sign_hmac_sha512(secret, "suspendedfor1264");
+        let tampered_id = format!(
+            "{{\"paymob_request_id\":\"req-1\",\"subscription_data\":{{\"id\":9999}},\
+             \"trigger_type\":\"suspended\",\"hmac\":\"{sig}\"}}"
+        );
+        let bad_hex = "{\"paymob_request_id\":\"req-1\",\"subscription_data\":{\"id\":1264},\
+            \"trigger_type\":\"suspended\",\"hmac\":\"not-valid-hex\"}";
 
         assert_eq!(
             engine.verify_subscription(OFFICIAL_SAMPLE_JSON),
             Err(WebhookError::SignatureMismatch)
         );
-
-        let missing_hmac = r#"{
-            "paymob_request_id": "req-1",
-            "subscription_data": { "id": 1264 },
-            "trigger_type": "suspended"
-        }"#;
         assert_eq!(
-            engine.verify_subscription(missing_hmac),
-            Err(WebhookError::MissingBodyHmac)
+            engine.verify_subscription(&tampered_id),
+            Err(WebhookError::SignatureMismatch)
         );
-
-        let blank_hmac = r#"{
-            "paymob_request_id": "req-1",
-            "subscription_data": { "id": 1264 },
-            "trigger_type": "suspended",
-            "hmac": "   "
-        }"#;
-        assert_eq!(
-            engine.verify_subscription(blank_hmac),
-            Err(WebhookError::MissingBodyHmac)
-        );
-
-        let bad_hex = r#"{
-            "paymob_request_id": "req-1",
-            "subscription_data": { "id": 1264 },
-            "trigger_type": "suspended",
-            "hmac": "not-valid-hex"
-        }"#;
         assert_eq!(
             engine.verify_subscription(bad_hex),
             Err(WebhookError::MalformedSignatureHex)
         );
-
         assert!(matches!(
-            engine.verify_subscription("{not_json"),
+            engine.verify_subscription_bytes(&[0xff, 0xfe]),
             Err(WebhookError::InvalidJsonPayload(_))
         ));
     }

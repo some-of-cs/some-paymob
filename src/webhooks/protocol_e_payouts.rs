@@ -42,12 +42,10 @@
 //! assert_eq!(topup.status, TopupStatus::Approved);
 //! ```
 
-use hmac::{Hmac, Mac};
-use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Serialize};
-use sha2::Sha512;
 use std::fmt;
-use subtle::ConstantTimeEq;
+
+use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
 
 /// Supported Paymob Payouts disbursement rail issuers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,37 +128,20 @@ fn verify_optional_payouts_hmac(
     payouts_secret: Option<&SecretString>,
     raw_body: &str,
     signature_hex: Option<&str>,
-) -> Result<(), super::verifier::WebhookError> {
+) -> super::verifier::WebhookResult<()> {
     match (payouts_secret, signature_hex) {
         (None, None) => Ok(()),
         (None, Some(_)) => Err(super::verifier::WebhookError::SignatureMismatch),
         (Some(_), None) => Err(super::verifier::WebhookError::MissingQueryHmac),
-        (Some(secret), Some(sig_hex)) => verify_hmac_sha512(
-            secret.expose_secret().as_bytes(),
-            raw_body.as_bytes(),
-            sig_hex,
-        ),
-    }
-}
-
-/// Computes `HMAC-SHA512(key, payload)` and compares against `signature_hex`
-/// in constant time using [`subtle::ConstantTimeEq`].
-fn verify_hmac_sha512(
-    key: &[u8],
-    payload: &[u8],
-    signature_hex: &str,
-) -> Result<(), super::verifier::WebhookError> {
-    let provided = hex::decode(signature_hex)
-        .map_err(|_| super::verifier::WebhookError::MalformedSignatureHex)?;
-    let mut mac = Hmac::<Sha512>::new_from_slice(key)
-        .map_err(|_| super::verifier::WebhookError::InvalidSecretKeyLength)?;
-    mac.update(payload);
-    let expected = mac.finalize().into_bytes();
-
-    if bool::from(expected.as_slice().ct_eq(provided.as_slice())) {
-        Ok(())
-    } else {
-        Err(super::verifier::WebhookError::SignatureMismatch)
+        (Some(secret), Some(sig_hex)) => {
+            let trimmed = sig_hex.trim();
+            if trimmed.is_empty() {
+                return Err(super::verifier::WebhookError::MissingQueryHmac);
+            }
+            super::verifier::PaymobWebhookEngine::verify_concatenated_with_secret(
+                secret, raw_body, trimmed,
+            )
+        }
     }
 }
 
@@ -169,49 +150,95 @@ impl super::verifier::PaymobWebhookEngine {
     /// webhook callback (`DisbursementCallback`).
     ///
     /// Fails closed if `signature_hex` is supplied without a configured
-    /// `payouts_secret()`, or if `payouts_secret()` is configured while
-    /// `signature_hex` is `None`.
+    /// `payouts_secret()`, if `payouts_secret()` is configured while
+    /// `signature_hex` is `None` or blank, or if `transaction_id` is empty.
     ///
     /// # Errors
     ///
     /// Returns [`super::verifier::WebhookError`] if HMAC verification fails,
-    /// the signature configuration is inconsistent, or `raw_body` is invalid JSON.
+    /// the signature configuration is inconsistent, `raw_body` is invalid JSON,
+    /// or `transaction_id` is empty.
     pub fn verify_payout_disbursement(
         &self,
         raw_body: &str,
         signature_hex: Option<&str>,
-    ) -> Result<DisbursementCallback, super::verifier::WebhookError> {
+    ) -> super::verifier::WebhookResult<DisbursementCallback> {
         verify_optional_payouts_hmac(self.payouts_secret(), raw_body, signature_hex)?;
-        serde_json::from_str(raw_body)
-            .map_err(|err| super::verifier::WebhookError::InvalidJsonPayload(err.to_string()))
+        let cb: DisbursementCallback = super::verifier::parse_webhook_json_str(raw_body)?;
+        if cb.transaction_id.trim().is_empty() {
+            return Err(super::verifier::WebhookError::MissingRequiredField(
+                "transaction_id".into(),
+            ));
+        }
+        Ok(cb)
+    }
+
+    /// Verifies (when configured) and deserializes a Protocol E disbursement
+    /// webhook callback from raw request bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`super::verifier::WebhookError::InvalidJsonPayload`] if `raw_body` is not
+    /// valid UTF-8, or any error returned by [`Self::verify_payout_disbursement`].
+    pub fn verify_payout_disbursement_bytes(
+        &self,
+        raw_body: &[u8],
+        signature_hex: Option<&str>,
+    ) -> super::verifier::WebhookResult<DisbursementCallback> {
+        let raw_str = super::verifier::decode_webhook_utf8(raw_body)?;
+        self.verify_payout_disbursement(raw_str, signature_hex)
     }
 
     /// Verifies (when configured) and deserializes a Protocol E top-up
     /// webhook callback (`TopupCallback`).
     ///
     /// Fails closed if `signature_hex` is supplied without a configured
-    /// `payouts_secret()`, or if `payouts_secret()` is configured while
-    /// `signature_hex` is `None`.
+    /// `payouts_secret()`, if `payouts_secret()` is configured while
+    /// `signature_hex` is `None` or blank, or if `topup_id` is empty.
     ///
     /// # Errors
     ///
     /// Returns [`super::verifier::WebhookError`] if HMAC verification fails,
-    /// the signature configuration is inconsistent, or `raw_body` is invalid JSON.
+    /// the signature configuration is inconsistent, `raw_body` is invalid JSON,
+    /// or `topup_id` is empty.
     pub fn verify_payout_topup(
         &self,
         raw_body: &str,
         signature_hex: Option<&str>,
-    ) -> Result<TopupCallback, super::verifier::WebhookError> {
+    ) -> super::verifier::WebhookResult<TopupCallback> {
         verify_optional_payouts_hmac(self.payouts_secret(), raw_body, signature_hex)?;
-        serde_json::from_str(raw_body)
-            .map_err(|err| super::verifier::WebhookError::InvalidJsonPayload(err.to_string()))
+        let cb: TopupCallback = super::verifier::parse_webhook_json_str(raw_body)?;
+        if cb.topup_id.trim().is_empty() {
+            return Err(super::verifier::WebhookError::MissingRequiredField(
+                "topup_id".into(),
+            ));
+        }
+        Ok(cb)
+    }
+
+    /// Verifies (when configured) and deserializes a Protocol E top-up
+    /// webhook callback from raw request bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`super::verifier::WebhookError::InvalidJsonPayload`] if `raw_body` is not
+    /// valid UTF-8, or any error returned by [`Self::verify_payout_topup`].
+    pub fn verify_payout_topup_bytes(
+        &self,
+        raw_body: &[u8],
+        signature_hex: Option<&str>,
+    ) -> super::verifier::WebhookResult<TopupCallback> {
+        let raw_str = super::verifier::decode_webhook_utf8(raw_body)?;
+        self.verify_payout_topup(raw_str, signature_hex)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::webhooks::verifier::WebhookError;
+    use crate::webhooks::verifier::{PaymobWebhookEngine, WebhookError};
+    use hmac::{Hmac, Mac};
+    use sha2::Sha512;
 
     fn compute_test_hmac_hex(secret: &str, payload: &str) -> String {
         let mut mac =
@@ -251,8 +278,7 @@ mod tests {
         let rendered = format!("{cb:?}");
         assert!(rendered.contains("Some(\"[REDACTED]\")"));
         assert!(!rendered.contains("EG380019000500000000263180002"));
-        assert!(rendered.contains("tx_100"));
-        assert!(rendered.contains("InstantBank"));
+        assert!(rendered.contains("tx_100") && rendered.contains("InstantBank"));
     }
 
     #[test]
@@ -281,8 +307,7 @@ mod tests {
         }"#;
         let approved: TopupCallback =
             serde_json::from_str(approved_json).expect("valid approved topup");
-        assert_eq!(approved.status, TopupStatus::Approved);
-        assert_eq!(approved.amount_cents, 500_000);
+        assert_eq!((approved.status, approved.amount_cents), (TopupStatus::Approved, 500_000));
 
         let rejected_json = r#"{
             "topup_id": "top_2",
@@ -292,28 +317,30 @@ mod tests {
         }"#;
         let rejected: TopupCallback =
             serde_json::from_str(rejected_json).expect("valid rejected topup");
-        assert_eq!(rejected.status, TopupStatus::Rejected);
-        assert_eq!(rejected.amount_cents, 0);
+        assert_eq!((rejected.status, rejected.amount_cents), (TopupStatus::Rejected, 0));
     }
 
     #[test]
-    fn optional_payouts_hmac_accepts_unconfigured_without_signature() {
+    fn optional_payouts_hmac_handles_unconfigured_and_missing_states() {
         assert_eq!(verify_optional_payouts_hmac(None, "{}", None), Ok(()));
-    }
+        assert_eq!(
+            verify_optional_payouts_hmac(None, "{}", Some("")),
+            Err(WebhookError::SignatureMismatch)
+        );
+        assert_eq!(
+            verify_optional_payouts_hmac(None, "{}", Some("deadbeef")),
+            Err(WebhookError::SignatureMismatch)
+        );
 
-    #[test]
-    fn optional_payouts_hmac_fails_closed_when_signature_without_secret() {
-        let err = verify_optional_payouts_hmac(None, "{}", Some("deadbeef"))
-            .expect_err("must fail closed");
-        assert_eq!(err, WebhookError::SignatureMismatch);
-    }
-
-    #[test]
-    fn optional_payouts_hmac_fails_closed_when_secret_without_signature() {
         let secret = SecretString::from("payouts_secret_123".to_owned());
-        let err =
-            verify_optional_payouts_hmac(Some(&secret), "{}", None).expect_err("must fail closed");
-        assert_eq!(err, WebhookError::MissingQueryHmac);
+        assert_eq!(
+            verify_optional_payouts_hmac(Some(&secret), "{}", None),
+            Err(WebhookError::MissingQueryHmac)
+        );
+        assert_eq!(
+            verify_optional_payouts_hmac(Some(&secret), "{}", Some("   ")),
+            Err(WebhookError::MissingQueryHmac)
+        );
     }
 
     #[test]
@@ -335,10 +362,39 @@ mod tests {
             verify_optional_payouts_hmac(Some(&secret), tampered_body, Some(&valid_sig)),
             Err(WebhookError::SignatureMismatch)
         );
-
         assert_eq!(
             verify_optional_payouts_hmac(Some(&secret), body, Some("not-valid-hex!")),
             Err(WebhookError::MalformedSignatureHex)
         );
+    }
+
+    #[test]
+    fn verify_payout_methods_reject_empty_ids_and_unknown_enums() {
+        let engine = PaymobWebhookEngine::new("accept_secret").expect("engine");
+        let empty_tx = "{\"transaction_id\":\"  \",\"issuer\":\"bank_wallet\",\
+            \"amount_cents\":100,\"currency\":\"EGP\",\"status\":\"ok\"}";
+        let empty_topup = "{\"topup_id\":\"\",\"amount_cents\":100,\
+            \"currency\":\"EGP\",\"status\":\"Approved\"}";
+        let bad_issuer = "{\"transaction_id\":\"tx_1\",\"issuer\":\"crypto\",\
+            \"amount_cents\":100,\"currency\":\"EGP\",\"status\":\"ok\"}";
+        let bad_status = "{\"topup_id\":\"top_1\",\"amount_cents\":100,\
+            \"currency\":\"EGP\",\"status\":\"Pending\"}";
+
+        assert_eq!(
+            engine.verify_payout_disbursement(empty_tx, None),
+            Err(WebhookError::MissingRequiredField("transaction_id".into()))
+        );
+        assert_eq!(
+            engine.verify_payout_topup(empty_topup, None),
+            Err(WebhookError::MissingRequiredField("topup_id".into()))
+        );
+        assert!(matches!(
+            engine.verify_payout_disbursement_bytes(bad_issuer.as_bytes(), None),
+            Err(WebhookError::InvalidJsonPayload(_))
+        ));
+        assert!(matches!(
+            engine.verify_payout_topup_bytes(bad_status.as_bytes(), None),
+            Err(WebhookError::InvalidJsonPayload(_))
+        ));
     }
 }

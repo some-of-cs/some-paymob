@@ -8,10 +8,14 @@ use hmac::{Hmac, Mac};
 use secrecy::{ExposeSecret, SecretString};
 use sha2::Sha512;
 use subtle::ConstantTimeEq;
+use zeroize::Zeroize;
 
 type HmacSha512 = Hmac<Sha512>;
 
 const SHA512_DIGEST_LEN: usize = 64;
+
+/// Convenient result alias for Paymob webhook verification and parsing operations.
+pub type WebhookResult<T> = Result<T, WebhookError>;
 
 /// Errors returned during Paymob webhook signature verification and payload parsing.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
@@ -28,7 +32,7 @@ pub enum WebhookError {
     #[error("webhook HMAC-SHA512 signature mismatch")]
     SignatureMismatch,
 
-    /// The `hmac` query parameter was missing from a GET redirect callback.
+    /// The `hmac` query parameter was missing from a GET redirect or POST callback.
     #[error("missing `hmac` query parameter in webhook request")]
     MissingQueryHmac,
 
@@ -43,6 +47,103 @@ pub enum WebhookError {
     /// The webhook payload could not be parsed as valid JSON.
     #[error("invalid webhook JSON payload: {0}")]
     InvalidJsonPayload(String),
+
+    /// Webhook event was already processed according to the idempotency store.
+    #[error(
+        "duplicate webhook delivery rejected: key={idempotency_key}, correlation_id={correlation_id}"
+    )]
+    DuplicateWebhookDelivery {
+        /// Protocol-specific primary idempotency key.
+        idempotency_key: String,
+        /// Protocol-specific secondary correlation identifier.
+        correlation_id: String,
+    },
+}
+
+impl WebhookError {
+    /// Returns `true` if the error represents a missing, malformed, or mismatched HMAC signature.
+    #[must_use]
+    pub const fn is_signature_error(&self) -> bool {
+        matches!(
+            self,
+            Self::MalformedSignatureHex
+                | Self::SignatureMismatch
+                | Self::MissingQueryHmac
+                | Self::MissingBodyHmac
+        )
+    }
+
+    /// Returns `true` if the error represents a malformed JSON body or missing required field.
+    #[must_use]
+    pub const fn is_malformed_payload(&self) -> bool {
+        matches!(
+            self,
+            Self::MissingRequiredField(_) | Self::InvalidJsonPayload(_)
+        )
+    }
+
+    /// Returns `true` if the error is caused by an invalid local HMAC secret key configuration.
+    #[must_use]
+    pub const fn is_configuration_error(&self) -> bool {
+        matches!(self, Self::InvalidSecretKeyLength)
+    }
+
+    /// Returns `true` if the webhook delivery was rejected as a replay or duplicate.
+    #[must_use]
+    pub const fn is_replay_or_duplicate(&self) -> bool {
+        matches!(self, Self::DuplicateWebhookDelivery { .. })
+    }
+
+    /// Returns the recommended HTTP status code for the webhook endpoint response.
+    ///
+    /// - `401 Unauthorized` for signature errors (`MalformedSignatureHex`, `SignatureMismatch`,
+    ///   `MissingQueryHmac`, `MissingBodyHmac`).
+    /// - `400 Bad Request` for malformed payloads (`MissingRequiredField`, `InvalidJsonPayload`).
+    /// - `409 Conflict` for duplicate deliveries (`DuplicateWebhookDelivery`).
+    /// - `500 Internal Server Error` for local configuration errors (`InvalidSecretKeyLength`).
+    #[must_use]
+    pub const fn suggested_http_status_code(&self) -> u16 {
+        if self.is_signature_error() {
+            401
+        } else if self.is_malformed_payload() {
+            400
+        } else if self.is_replay_or_duplicate() {
+            409
+        } else {
+            500
+        }
+    }
+
+    /// Returns `true` if the webhook sender should retry delivery (only on configuration errors).
+    #[must_use]
+    pub const fn is_retryable(&self) -> bool {
+        self.is_configuration_error()
+    }
+
+    /// Converts a [`serde_json::Error`] into [`WebhookError::InvalidJsonPayload`] while
+    /// redacting any quoted string literals as `"[REDACTED]"` to prevent PAN/token leakage.
+    #[must_use]
+    pub fn from_serde_error(err: &serde_json::Error) -> Self {
+        Self::InvalidJsonPayload(redact_quoted_literals(&err.to_string()))
+    }
+}
+
+impl From<serde_json::Error> for WebhookError {
+    fn from(err: serde_json::Error) -> Self {
+        Self::from_serde_error(&err)
+    }
+}
+
+fn redact_quoted_literals(input: &str) -> String {
+    if !input.contains('"') {
+        return input.to_owned();
+    }
+    let mut out = String::with_capacity(input.len());
+    for (idx, part) in input.split('"').enumerate() {
+        let piece = if idx % 2 == 0 { part } else { "\"[REDACTED]\"" };
+        out.push_str(piece);
+    }
+    out
 }
 
 /// Constant-time HMAC-SHA512 webhook verification engine for Paymob callbacks.
@@ -82,7 +183,7 @@ impl fmt::Debug for PaymobWebhookEngine {
 impl PaymobWebhookEngine {
     /// Creates a new [`PaymobWebhookEngine`] with the primary Accept HMAC secret.
     ///
-    /// Rejects empty secrets with [`WebhookError::InvalidSecretKeyLength`].
+    /// Rejects empty or whitespace-only secrets with [`WebhookError::InvalidSecretKeyLength`].
     ///
     /// # Examples
     ///
@@ -97,11 +198,9 @@ impl PaymobWebhookEngine {
     /// assert!(engine.payouts_secret().is_none());
     /// # Ok::<(), WebhookError>(())
     /// ```
-    pub fn new(hmac_secret: impl Into<SecretString>) -> Result<Self, WebhookError> {
+    pub fn new(hmac_secret: impl Into<SecretString>) -> WebhookResult<Self> {
         let secret = hmac_secret.into();
-        if secret.expose_secret().is_empty() {
-            return Err(WebhookError::InvalidSecretKeyLength);
-        }
+        validate_secret_non_empty(&secret)?;
         Ok(Self {
             hmac_secret: secret,
             payouts_hmac_secret: None,
@@ -110,7 +209,7 @@ impl PaymobWebhookEngine {
 
     /// Configures an optional Payouts HMAC secret for Protocol E callbacks.
     ///
-    /// Rejects empty secrets with [`WebhookError::InvalidSecretKeyLength`].
+    /// Rejects empty or whitespace-only secrets with [`WebhookError::InvalidSecretKeyLength`].
     ///
     /// # Examples
     ///
@@ -122,19 +221,15 @@ impl PaymobWebhookEngine {
     /// assert!(engine.payouts_secret().is_some());
     /// # Ok::<(), WebhookError>(())
     /// ```
-    pub fn with_payouts_secret(
-        mut self,
-        secret: impl Into<SecretString>,
-    ) -> Result<Self, WebhookError> {
+    pub fn with_payouts_secret(mut self, secret: impl Into<SecretString>) -> WebhookResult<Self> {
         let secret = secret.into();
-        if secret.expose_secret().is_empty() {
-            return Err(WebhookError::InvalidSecretKeyLength);
-        }
+        validate_secret_non_empty(&secret)?;
         self.payouts_hmac_secret = Some(secret);
         Ok(self)
     }
 
     /// Returns a reference to the configured Payouts HMAC secret, if present.
+    #[must_use]
     pub fn payouts_secret(&self) -> Option<&SecretString> {
         self.payouts_hmac_secret.as_ref()
     }
@@ -163,14 +258,14 @@ impl PaymobWebhookEngine {
         &self,
         concatenated: &str,
         signature_hex: &str,
-    ) -> Result<(), WebhookError> {
+    ) -> WebhookResult<()> {
         Self::verify_concatenated_with_secret(&self.hmac_secret, concatenated, signature_hex)
     }
 
     /// Verifies a pre-concatenated Paymob webhook string against a hex-encoded
     /// HMAC-SHA512 signature using an explicit [`SecretString`].
     ///
-    /// Rejects empty secrets with [`WebhookError::InvalidSecretKeyLength`],
+    /// Rejects empty or whitespace-only secrets with [`WebhookError::InvalidSecretKeyLength`],
     /// non-hex or non-64-byte signatures with [`WebhookError::MalformedSignatureHex`],
     /// and mismatched digests with [`WebhookError::SignatureMismatch`].
     ///
@@ -193,16 +288,17 @@ impl PaymobWebhookEngine {
         secret: &SecretString,
         concatenated: &str,
         signature_hex: &str,
-    ) -> Result<(), WebhookError> {
-        if secret.expose_secret().is_empty() {
-            return Err(WebhookError::InvalidSecretKeyLength);
-        }
-        let decoded = decode_sha512_hex(signature_hex)?;
+    ) -> WebhookResult<()> {
+        validate_secret_non_empty(secret)?;
+        let mut decoded = decode_sha512_hex(signature_hex)?;
         let mut mac = HmacSha512::new_from_slice(secret.expose_secret().as_bytes())
             .map_err(|_| WebhookError::InvalidSecretKeyLength)?;
         mac.update(concatenated.as_bytes());
-        let expected = mac.finalize().into_bytes();
-        if bool::from(expected.as_slice().ct_eq(&decoded)) {
+        let mut expected = mac.finalize().into_bytes();
+        let matched = bool::from(expected.as_slice().ct_eq(&decoded));
+        expected.as_mut_slice().zeroize();
+        decoded.zeroize();
+        if matched {
             Ok(())
         } else {
             Err(WebhookError::SignatureMismatch)
@@ -210,11 +306,48 @@ impl PaymobWebhookEngine {
     }
 }
 
-fn decode_sha512_hex(signature_hex: &str) -> Result<[u8; SHA512_DIGEST_LEN], WebhookError> {
-    let decoded = hex::decode(signature_hex).map_err(|_| WebhookError::MalformedSignatureHex)?;
-    decoded
-        .try_into()
-        .map_err(|_| WebhookError::MalformedSignatureHex)
+fn validate_secret_non_empty(secret: &SecretString) -> WebhookResult<()> {
+    if secret.expose_secret().trim().is_empty() {
+        return Err(WebhookError::InvalidSecretKeyLength);
+    }
+    Ok(())
+}
+
+fn decode_sha512_hex(signature_hex: &str) -> WebhookResult<[u8; SHA512_DIGEST_LEN]> {
+    let trimmed = signature_hex.trim();
+    if trimmed.len() != SHA512_DIGEST_LEN * 2 {
+        return Err(WebhookError::MalformedSignatureHex);
+    }
+    let mut decoded = [0u8; SHA512_DIGEST_LEN];
+    hex::decode_to_slice(trimmed, &mut decoded).map_err(|_| WebhookError::MalformedSignatureHex)?;
+    Ok(decoded)
+}
+
+pub(crate) fn require_non_empty_query_hmac(query_hmac: Option<&str>) -> WebhookResult<&str> {
+    query_hmac
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or(WebhookError::MissingQueryHmac)
+}
+
+pub(crate) fn parse_webhook_json_str<T: serde::de::DeserializeOwned>(
+    raw_body: &str,
+) -> WebhookResult<T> {
+    serde_json::from_str(raw_body).map_err(|err| WebhookError::from_serde_error(&err))
+}
+
+#[allow(dead_code)]
+pub(crate) fn parse_webhook_json_slice<T: serde::de::DeserializeOwned>(
+    raw_bytes: &[u8],
+) -> WebhookResult<T> {
+    let raw_str = decode_webhook_utf8(raw_bytes)?;
+    parse_webhook_json_str(raw_str)
+}
+
+pub(crate) fn decode_webhook_utf8(raw_bytes: &[u8]) -> WebhookResult<&str> {
+    std::str::from_utf8(raw_bytes).map_err(|_| {
+        WebhookError::InvalidJsonPayload("webhook body is not valid UTF-8".to_owned())
+    })
 }
 
 #[cfg(test)]
@@ -232,9 +365,13 @@ mod tests {
     const EMPTY_PAYLOAD_SIG: &str = "c22f4d78d2482f5f97a72f2f8f4bcf95bfa075e2510833f9e17baae34c7e13824335a4d32d27c1c87aafd630e9bf1fcf37ab24465f76ee49f0ef22a7b8a41996";
 
     #[test]
-    fn new_rejects_empty_secret() {
+    fn new_rejects_empty_and_whitespace_secret() {
         assert_eq!(
             PaymobWebhookEngine::new("").unwrap_err(),
+            WebhookError::InvalidSecretKeyLength
+        );
+        assert_eq!(
+            PaymobWebhookEngine::new("   \t\n ").unwrap_err(),
             WebhookError::InvalidSecretKeyLength
         );
     }
@@ -243,13 +380,10 @@ mod tests {
     fn with_payouts_secret_handles_valid_and_empty_secrets() {
         let engine = PaymobWebhookEngine::new(VEC_1_SECRET).expect("valid primary secret");
         assert!(engine.payouts_secret().is_none());
-
-        let err = engine
-            .clone()
-            .with_payouts_secret("")
-            .expect_err("empty payouts secret must fail");
-        assert_eq!(err, WebhookError::InvalidSecretKeyLength);
-
+        assert_eq!(
+            engine.clone().with_payouts_secret("  \t ").unwrap_err(),
+            WebhookError::InvalidSecretKeyLength
+        );
         let configured = engine
             .with_payouts_secret(VEC_2_SECRET)
             .expect("valid payouts secret");
@@ -272,25 +406,27 @@ mod tests {
     }
 
     #[test]
-    fn verify_concatenated_str_positive_lowercase_and_uppercase() {
+    fn verify_concatenated_str_positive_lowercase_uppercase_and_padded() {
         let engine = PaymobWebhookEngine::new(VEC_1_SECRET).expect("valid secret");
-        assert_eq!(
-            engine.verify_concatenated_str(VEC_1_PAYLOAD, VEC_1_SIG),
-            Ok(())
-        );
+        assert_eq!(engine.verify_concatenated_str(VEC_1_PAYLOAD, VEC_1_SIG), Ok(()));
         assert_eq!(
             engine.verify_concatenated_str(VEC_1_PAYLOAD, &VEC_1_SIG.to_ascii_uppercase()),
             Ok(())
         );
+        let padded = format!("  \t{VEC_1_SIG}\n ");
+        assert_eq!(engine.verify_concatenated_str(VEC_1_PAYLOAD, &padded), Ok(()));
     }
 
     #[test]
-    fn verify_concatenated_str_boundary_empty_payload() {
+    fn verify_concatenated_str_boundary_empty_and_multibyte_utf8() {
         let engine = PaymobWebhookEngine::new(VEC_1_SECRET).expect("valid secret");
-        assert_eq!(
-            engine.verify_concatenated_str("", EMPTY_PAYLOAD_SIG),
-            Ok(())
-        );
+        assert_eq!(engine.verify_concatenated_str("", EMPTY_PAYLOAD_SIG), Ok(()));
+
+        let rocket_payload = "🚀".repeat(32);
+        let mut mac = HmacSha512::new_from_slice(VEC_1_SECRET.as_bytes()).expect("valid key");
+        mac.update(rocket_payload.as_bytes());
+        let rocket_sig = hex::encode(mac.finalize().into_bytes());
+        assert_eq!(engine.verify_concatenated_str(&rocket_payload, &rocket_sig), Ok(()));
     }
 
     #[test]
@@ -300,8 +436,7 @@ mod tests {
             PaymobWebhookEngine::verify_concatenated_with_secret(&secret, VEC_2_PAYLOAD, VEC_2_SIG),
             Ok(())
         );
-
-        let empty = SecretString::from("");
+        let empty = SecretString::from("   ");
         assert_eq!(
             PaymobWebhookEngine::verify_concatenated_with_secret(&empty, VEC_2_PAYLOAD, VEC_2_SIG),
             Err(WebhookError::InvalidSecretKeyLength)
@@ -309,62 +444,64 @@ mod tests {
     }
 
     #[test]
-    fn verify_rejects_malformed_hex() {
+    fn verify_rejects_malformed_and_boundary_length_hex() {
         let engine = PaymobWebhookEngine::new(VEC_1_SECRET).expect("valid secret");
         let non_hex = "z".repeat(128);
+        let len_127 = "a".repeat(127);
+        let len_129 = "a".repeat(129);
         assert_eq!(
             engine.verify_concatenated_str(VEC_1_PAYLOAD, &non_hex),
             Err(WebhookError::MalformedSignatureHex)
         );
         assert_eq!(
-            engine.verify_concatenated_str(VEC_1_PAYLOAD, "abc"),
+            engine.verify_concatenated_str(VEC_1_PAYLOAD, &len_127),
+            Err(WebhookError::MalformedSignatureHex)
+        );
+        assert_eq!(
+            engine.verify_concatenated_str(VEC_1_PAYLOAD, &len_129),
             Err(WebhookError::MalformedSignatureHex)
         );
     }
 
     #[test]
-    fn verify_rejects_wrong_length_hex() {
+    fn verify_rejects_single_bit_flips_at_digest_boundaries() {
         let engine = PaymobWebhookEngine::new(VEC_1_SECRET).expect("valid secret");
-        let too_short = "aa".repeat(63);
-        let too_long = "aa".repeat(65);
-        assert_eq!(
-            engine.verify_concatenated_str(VEC_1_PAYLOAD, &too_short),
-            Err(WebhookError::MalformedSignatureHex)
-        );
-        assert_eq!(
-            engine.verify_concatenated_str(VEC_1_PAYLOAD, &too_long),
-            Err(WebhookError::MalformedSignatureHex)
-        );
-        assert_eq!(
-            engine.verify_concatenated_str(VEC_1_PAYLOAD, ""),
-            Err(WebhookError::MalformedSignatureHex)
-        );
+        let base_bytes = hex::decode(VEC_1_SIG).expect("valid hex");
+        for idx in [0_usize, 31, 63] {
+            let mut flipped = base_bytes.clone();
+            flipped[idx] ^= 0x01;
+            let flipped_hex = hex::encode(flipped);
+            assert_eq!(
+                engine.verify_concatenated_str(VEC_1_PAYLOAD, &flipped_hex),
+                Err(WebhookError::SignatureMismatch)
+            );
+        }
     }
 
     #[test]
-    fn verify_rejects_tampered_payload_and_wrong_signature() {
-        let engine = PaymobWebhookEngine::new(VEC_1_SECRET).expect("valid secret");
-        assert_eq!(
-            engine.verify_concatenated_str("100020003001", VEC_1_SIG),
-            Err(WebhookError::SignatureMismatch)
-        );
+    fn webhook_error_classification_and_http_status_codes() {
+        let sig = WebhookError::SignatureMismatch;
+        let bad = WebhookError::MissingRequiredField("id".into());
+        let dup = WebhookError::DuplicateWebhookDelivery {
+            idempotency_key: "1".into(),
+            correlation_id: "2".into(),
+        };
+        let cfg = WebhookError::InvalidSecretKeyLength;
 
-        let mut altered = VEC_1_SIG.to_string();
-        altered.pop();
-        altered.push('0');
-        assert_eq!(
-            engine.verify_concatenated_str(VEC_1_PAYLOAD, &altered),
-            Err(WebhookError::SignatureMismatch)
-        );
+        assert_eq!((sig.is_signature_error(), sig.suggested_http_status_code()), (true, 401));
+        assert_eq!((bad.is_malformed_payload(), bad.suggested_http_status_code()), (true, 400));
+        assert_eq!((dup.is_replay_or_duplicate(), dup.suggested_http_status_code()), (true, 409));
+        assert_eq!((cfg.is_configuration_error(), cfg.suggested_http_status_code()), (true, 500));
+        assert!(cfg.is_retryable() && !sig.is_retryable());
     }
 
     #[test]
-    fn error_variants_display_cleanly() {
-        let missing = WebhookError::MissingRequiredField("obj.id".to_string());
-        let invalid = WebhookError::InvalidJsonPayload("eof".to_string());
-        assert!(missing.to_string().contains("obj.id"));
-        assert!(invalid.to_string().contains("eof"));
-        assert!(!WebhookError::MissingQueryHmac.to_string().is_empty());
-        assert!(!WebhookError::MissingBodyHmac.to_string().is_empty());
+    fn from_serde_error_redacts_sensitive_quoted_literals() {
+        let bad_json = r#"{"id": "4111-2222-3333-4444"}"#;
+        let serde_err = serde_json::from_str::<u64>(bad_json).unwrap_err();
+        let webhook_err = WebhookError::from(serde_err);
+        let msg = webhook_err.to_string();
+        assert!(msg.contains("[REDACTED]"));
+        assert!(!msg.contains("4111-2222-3333-4444"));
     }
 }

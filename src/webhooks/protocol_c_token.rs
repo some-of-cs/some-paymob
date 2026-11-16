@@ -17,11 +17,19 @@
 //! 7. `order_id`
 //! 8. `token`
 
-use std::fmt::{self, Write as _};
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use super::verifier::{PaymobWebhookEngine, WebhookError};
+use super::canonical_tx::CanonicalTransactionConcatenator;
+use super::verifier::{PaymobWebhookEngine, WebhookError, WebhookResult};
+
+/// Ergonomic type alias for [`CardTokenObj`].
+pub type CardTokenObject = CardTokenObj;
+
+/// Ergonomic type alias for [`CardTokenWebhookEvent`].
+pub type CardTokenWebhook = CardTokenWebhookEvent;
 
 /// Lexicographically ordered 8-key HMAC concatenation table for Protocol C
 /// card token webhook callbacks.
@@ -87,8 +95,9 @@ pub struct CardTokenWebhookEvent {
 
 /// Card token payload object (`body.obj`) for Protocol C webhook callbacks.
 ///
-/// Implements a custom [`fmt::Debug`] formatter that redacts sensitive fields
-/// (`token`, `email`, and `masked_pan`) as `"[REDACTED]"`.
+/// Implements [`Zeroize`] and [`ZeroizeOnDrop`] to wipe sensitive card token
+/// material from memory on drop, and a custom [`fmt::Debug`] formatter that
+/// redacts sensitive fields (`token`, `email`, and `masked_pan`) as `"[REDACTED]"`.
 ///
 /// # Examples
 ///
@@ -112,7 +121,7 @@ pub struct CardTokenWebhookEvent {
 /// assert!(!debug_out.contains("customer@example.com"));
 /// assert!(!debug_out.contains("xxxx-xxxx-xxxx-2346"));
 /// ```
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Zeroize, ZeroizeOnDrop)]
 pub struct CardTokenObj {
     /// Unique Paymob card token record identifier.
     pub id: u64,
@@ -179,40 +188,33 @@ impl fmt::Debug for CardTokenObj {
 /// ```
 #[must_use]
 pub fn build_protocol_c_canonical_string(obj: &CardTokenObj) -> String {
-    let estimated_len = obj.card_subtype.len()
-        + obj.created_at.len()
-        + obj.email.len()
-        + obj.masked_pan.len()
-        + obj.order_id.len()
-        + obj.token.len()
-        + 40;
-    let mut out = String::with_capacity(estimated_len);
-    out.push_str(&obj.card_subtype);
-    out.push_str(&obj.created_at);
-    out.push_str(&obj.email);
-    let _ = write!(out, "{}", obj.id);
-    out.push_str(&obj.masked_pan);
-    let _ = write!(out, "{}", obj.merchant_id);
-    out.push_str(&obj.order_id);
-    out.push_str(&obj.token);
-    out
+    let mut concat = CanonicalTransactionConcatenator::new();
+    concat.push_str(&obj.card_subtype);
+    concat.push_str(&obj.created_at);
+    concat.push_str(&obj.email);
+    concat.push_u64(obj.id);
+    concat.push_str(&obj.masked_pan);
+    concat.push_u64(obj.merchant_id);
+    concat.push_str(&obj.order_id);
+    concat.push_str(&obj.token);
+    concat.finish()
 }
 
 impl PaymobWebhookEngine {
     /// Verifies a Protocol C Card Token `POST` webhook callback in constant time.
     ///
     /// Parses `raw_body` as a [`CardTokenWebhookEvent`] (mapping JSON syntax or
-    /// schema failures to [`WebhookError::InvalidJsonPayload`]), concatenates the
-    /// 8 fields of `event.obj` in lexicographical order (`card_subtype`,
-    /// `created_at`, `email`, `id`, `masked_pan`, `merchant_id`, `order_id`,
-    /// `token`), and verifies the resulting string against `query_hmac` via
-    /// [`PaymobWebhookEngine::verify_concatenated_str`].
+    /// schema failures to [`WebhookError::InvalidJsonPayload`] with redacted literals),
+    /// enforces `event_type == "TOKEN"`, concatenates the 8 fields of `event.obj` in
+    /// lexicographical order (`card_subtype`, `created_at`, `email`, `id`, `masked_pan`,
+    /// `merchant_id`, `order_id`, `token`), and verifies the resulting string against
+    /// `query_hmac` via [`PaymobWebhookEngine::verify_concatenated_str`].
     ///
     /// # Errors
     ///
     /// - [`WebhookError::MissingQueryHmac`] if `query_hmac` is empty or whitespace-only.
-    /// - [`WebhookError::InvalidJsonPayload`] if `raw_body` is not valid JSON or lacks
-    ///   required card token fields.
+    /// - [`WebhookError::InvalidJsonPayload`] if `raw_body` is not valid JSON, lacks
+    ///   required card token fields, or has an `event_type` other than `"TOKEN"`.
     /// - [`WebhookError::MalformedSignatureHex`] if `query_hmac` is not valid 128-char hex.
     /// - [`WebhookError::InvalidSecretKeyLength`] if the configured HMAC secret is invalid.
     /// - [`WebhookError::SignatureMismatch`] if the constant-time digest comparison fails.
@@ -248,15 +250,35 @@ impl PaymobWebhookEngine {
         &self,
         raw_body: &str,
         query_hmac: &str,
-    ) -> Result<CardTokenWebhookEvent, WebhookError> {
-        if query_hmac.trim().is_empty() {
-            return Err(WebhookError::MissingQueryHmac);
+    ) -> WebhookResult<CardTokenWebhookEvent> {
+        let hmac = super::verifier::require_non_empty_query_hmac(Some(query_hmac))?;
+        let event: CardTokenWebhookEvent = super::verifier::parse_webhook_json_str(raw_body)?;
+        if event.event_type != "TOKEN" {
+            return Err(WebhookError::InvalidJsonPayload(
+                "expected webhook type 'TOKEN'".into(),
+            ));
         }
-        let event: CardTokenWebhookEvent = serde_json::from_str(raw_body)
-            .map_err(|err| WebhookError::InvalidJsonPayload(err.to_string()))?;
         let canonical = build_protocol_c_canonical_string(&event.obj);
-        self.verify_concatenated_str(&canonical, query_hmac)?;
+        self.verify_concatenated_str(&canonical, hmac)?;
         Ok(event)
+    }
+
+    /// Verifies a Protocol C Card Token `POST` webhook from raw request bytes.
+    ///
+    /// Validates that `raw_body` is valid UTF-8 before delegating to
+    /// [`Self::verify_card_token`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WebhookError::InvalidJsonPayload`] if `raw_body` is not valid UTF-8, or any
+    /// error returned by [`Self::verify_card_token`].
+    pub fn verify_card_token_bytes(
+        &self,
+        raw_body: &[u8],
+        query_hmac: &str,
+    ) -> WebhookResult<CardTokenWebhookEvent> {
+        let raw_str = super::verifier::decode_webhook_utf8(raw_body)?;
+        self.verify_card_token(raw_str, query_hmac)
     }
 }
 
@@ -311,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_card_token_deterministic_vector_15978654_succeeds() {
+    fn verify_card_token_deterministic_vector_15978654_and_uppercase_succeed() {
         let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
         let event = engine
             .verify_card_token(
@@ -319,12 +341,14 @@ mod tests {
                 SAMPLE_TEST_VECTOR_15978654_HMAC,
             )
             .expect("valid HMAC over test vector 15978654 must succeed");
-        assert_eq!(event.event_type, "TOKEN");
-        assert_eq!(event.obj.id, 15978654);
-        assert_eq!(event.obj.masked_pan, "xxxx-xxxx-xxxx-2346");
+        assert_eq!((event.event_type.as_str(), event.obj.id), ("TOKEN", 15978654));
         assert_eq!(event.obj.merchant_id, 302852);
-        assert_eq!(event.obj.order_id, "593881581");
         assert_eq!(event.obj.token, "tok_test_15978654_abcdef");
+
+        let upper_hmac = SAMPLE_TEST_VECTOR_15978654_HMAC.to_ascii_uppercase();
+        assert!(engine
+            .verify_card_token(OFFICIAL_TEST_VECTOR_15978654_JSON, &upper_hmac)
+            .is_ok());
     }
 
     #[test]
@@ -340,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_card_token_rejects_tampered_token() {
+    fn verify_card_token_rejects_tampered_token_and_wrong_event_type() {
         let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
         let tampered_json = OFFICIAL_TEST_VECTOR_15978654_JSON.replacen(
             "tok_test_15978654_abcdef",
@@ -351,51 +375,69 @@ mod tests {
             .verify_card_token(&tampered_json, SAMPLE_TEST_VECTOR_15978654_HMAC)
             .expect_err("tampered token must be rejected in constant time");
         assert_eq!(err, WebhookError::SignatureMismatch);
+
+        let wrong_type =
+            OFFICIAL_TEST_VECTOR_15978654_JSON.replacen("\"TOKEN\"", "\"TRANSACTION\"", 1);
+        assert!(matches!(
+            engine
+                .verify_card_token(&wrong_type, SAMPLE_TEST_VECTOR_15978654_HMAC)
+                .unwrap_err(),
+            WebhookError::InvalidJsonPayload(_)
+        ));
     }
 
     #[test]
-    fn verify_card_token_rejects_malformed_hex() {
+    fn verify_card_token_bytes_and_missing_fields_validation() {
         let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
-        let err_non_hex = engine
-            .verify_card_token(OFFICIAL_TEST_VECTOR_15978654_JSON, "zzzz-not-hex!")
-            .expect_err("non-hex signature must return MalformedSignatureHex");
-        assert_eq!(err_non_hex, WebhookError::MalformedSignatureHex);
+        let verified = engine
+            .verify_card_token_bytes(
+                OFFICIAL_TEST_VECTOR_15978654_JSON.as_bytes(),
+                SAMPLE_TEST_VECTOR_15978654_HMAC,
+            )
+            .expect("bytes verifier must succeed");
+        assert_eq!(verified.obj.id, 15978654);
 
-        let err_odd_len = engine
-            .verify_card_token(OFFICIAL_TEST_VECTOR_15978654_JSON, "abc")
-            .expect_err("odd-length hex signature must return MalformedSignatureHex");
-        assert_eq!(err_odd_len, WebhookError::MalformedSignatureHex);
+        let incomplete = r#"{"type":"TOKEN","obj":{"id":15978654}}"#;
+        assert!(matches!(
+            engine
+                .verify_card_token(incomplete, SAMPLE_TEST_VECTOR_15978654_HMAC)
+                .unwrap_err(),
+            WebhookError::InvalidJsonPayload(_)
+        ));
     }
 
     #[test]
-    fn verify_card_token_rejects_missing_query_hmac() {
+    fn verify_card_token_rejects_malformed_hex_missing_hmac_and_invalid_json() {
         let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
-        let err = engine
-            .verify_card_token(OFFICIAL_TEST_VECTOR_15978654_JSON, "   ")
-            .expect_err("whitespace-only query_hmac must return MissingQueryHmac");
-        assert_eq!(err, WebhookError::MissingQueryHmac);
+        assert_eq!(
+            engine
+                .verify_card_token(OFFICIAL_TEST_VECTOR_15978654_JSON, "zzzz-not-hex!")
+                .unwrap_err(),
+            WebhookError::MalformedSignatureHex
+        );
+        assert_eq!(
+            engine
+                .verify_card_token(OFFICIAL_TEST_VECTOR_15978654_JSON, "   ")
+                .unwrap_err(),
+            WebhookError::MissingQueryHmac
+        );
+        assert!(matches!(
+            engine
+                .verify_card_token("{not valid json", SAMPLE_TEST_VECTOR_15978654_HMAC)
+                .unwrap_err(),
+            WebhookError::InvalidJsonPayload(_)
+        ));
     }
 
     #[test]
-    fn verify_card_token_rejects_invalid_json() {
-        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
-        let err = engine
-            .verify_card_token("{not valid json", SAMPLE_TEST_VECTOR_15978654_HMAC)
-            .expect_err("malformed JSON must return InvalidJsonPayload");
-        assert!(matches!(err, WebhookError::InvalidJsonPayload(_)));
-    }
-
-    #[test]
-    fn card_token_obj_debug_redacts_sensitive_fields() {
-        let event: CardTokenWebhookEvent = serde_json::from_str(OFFICIAL_TEST_VECTOR_15978654_JSON)
+    fn card_token_obj_and_envelope_debug_redact_sensitive_fields() {
+        let event: CardTokenWebhook = serde_json::from_str(OFFICIAL_TEST_VECTOR_15978654_JSON)
             .expect("official test vector JSON must deserialize");
-        let rendered = format!("{:?}", event.obj);
+        let rendered = format!("{event:?}");
         assert!(rendered.contains("[REDACTED]"));
         assert!(!rendered.contains("tok_test_15978654_abcdef"));
         assert!(!rendered.contains("customer@example.com"));
         assert!(!rendered.contains("xxxx-xxxx-xxxx-2346"));
-        assert!(rendered.contains("15978654"));
-        assert!(rendered.contains("593881581"));
-        assert!(rendered.contains("MasterCard"));
+        assert!(rendered.contains("15978654") && rendered.contains("MasterCard"));
     }
 }

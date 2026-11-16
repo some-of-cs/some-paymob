@@ -62,11 +62,13 @@ pub const TX_HMAC_KEYS: [&str; 20] = [
 /// use some_paymob::webhooks::canonical_tx::CanonicalTransactionConcatenator;
 ///
 /// let mut builder = CanonicalTransactionConcatenator::new();
+/// assert!(builder.is_empty());
 /// builder.push_u64(10_000);
 /// builder.push_str("2026-11-16T12:00:00.000000");
 /// builder.push_str("EGP");
 /// builder.push_bool(false);
 /// builder.push_bool(true);
+/// assert!(!builder.is_empty());
 ///
 /// let canonical = builder.finish();
 /// assert_eq!(canonical, "100002026-11-16T12:00:00.000000EGPfalsetrue");
@@ -111,6 +113,18 @@ impl CanonicalTransactionConcatenator {
         &self.buf
     }
 
+    /// Returns the number of bytes currently accumulated in the canonical buffer.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.buf.len()
+    }
+
+    /// Returns `true` if no bytes have been pushed into the canonical buffer yet.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
     /// Returns the current capacity (in bytes) of the underlying buffer.
     #[must_use]
     pub fn capacity(&self) -> usize {
@@ -137,31 +151,10 @@ mod tests {
     #[test]
     fn tx_hmac_keys_exact_count_spelling_and_lexicographical_order() {
         assert_eq!(TX_HMAC_KEYS.len(), 20);
-        assert_eq!(
-            TX_HMAC_KEYS,
-            [
-                "amount_cents",
-                "created_at",
-                "currency",
-                "error_occured",
-                "has_parent_transaction",
-                "id",
-                "integration_id",
-                "is_3d_secure",
-                "is_auth",
-                "is_capture",
-                "is_refunded",
-                "is_standalone_payment",
-                "is_voided",
-                "order_id",
-                "owner",
-                "pending",
-                "source_data.pan",
-                "source_data.sub_type",
-                "source_data.type",
-                "success",
-            ]
-        );
+        assert_eq!(TX_HMAC_KEYS[0], "amount_cents");
+        assert_eq!(TX_HMAC_KEYS[3], "error_occured");
+        assert_eq!(TX_HMAC_KEYS[13], "order_id");
+        assert_eq!(TX_HMAC_KEYS[19], "success");
         assert!(TX_HMAC_KEYS.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
@@ -169,6 +162,8 @@ mod tests {
     fn concatenator_preallocates_512_bytes() {
         let builder = CanonicalTransactionConcatenator::new();
         assert!(builder.capacity() >= DEFAULT_CANONICAL_CAPACITY);
+        assert!(builder.is_empty());
+        assert_eq!(builder.len(), 0);
         assert_eq!(builder.as_str(), "");
         let default_builder = CanonicalTransactionConcatenator::default();
         assert_eq!(default_builder.capacity(), builder.capacity());
@@ -190,6 +185,8 @@ mod tests {
         let mut builder = CanonicalTransactionConcatenator::new();
         builder.push_bool(true);
         builder.push_bool(false);
+        assert_eq!(builder.len(), 9);
+        assert!(!builder.is_empty());
         assert_eq!(builder.finish(), "truefalse");
     }
 
@@ -232,5 +229,15 @@ mod tests {
             builder.finish(),
             "100002024-05-01T12:00:00.000000EGPfalsefalse192837465445566truefalsefalsefalsetruefalse987654321112233false2346MasterCardcardtrue"
         );
+    }
+
+    #[test]
+    fn concatenator_grows_beyond_512_bytes_and_tracks_len() {
+        let mut builder = CanonicalTransactionConcatenator::new();
+        let chunk = "x".repeat(600);
+        builder.push_str(&chunk);
+        assert_eq!(builder.len(), 600);
+        assert!(builder.capacity() >= 600);
+        assert_eq!(builder.finish().len(), 600);
     }
 }

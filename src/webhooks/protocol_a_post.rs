@@ -32,7 +32,7 @@
 
 use super::canonical_tx::CanonicalTransactionConcatenator;
 use super::tx_models::{TransactionProcessedEvent, TransactionWebhookObj};
-use super::verifier::{PaymobWebhookEngine, WebhookError};
+use super::verifier::{PaymobWebhookEngine, WebhookError, WebhookResult};
 
 /// Builds the canonical 20-key concatenation string for a Protocol A
 /// [`TransactionWebhookObj`] payload.
@@ -110,7 +110,8 @@ impl PaymobWebhookEngine {
     /// Verifies a Protocol A Transaction Processed `POST` webhook callback in constant time.
     ///
     /// Parses `raw_body` as a [`TransactionProcessedEvent`] (mapping JSON syntax or schema
-    /// failures to [`WebhookError::InvalidJsonPayload`]), concatenates the 20 lexicographical
+    /// failures to [`WebhookError::InvalidJsonPayload`] with redacted string literals),
+    /// enforces `event_type == "TRANSACTION"`, concatenates the 20 lexicographical
     /// fields from `body.obj` via [`CanonicalTransactionConcatenator`], and verifies the
     /// resulting string against `query_hmac` using `HMAC-SHA512` and
     /// [`subtle::ConstantTimeEq`](subtle::ConstantTimeEq).
@@ -118,8 +119,8 @@ impl PaymobWebhookEngine {
     /// # Errors
     ///
     /// - [`WebhookError::MissingQueryHmac`] if `query_hmac` is empty or whitespace-only.
-    /// - [`WebhookError::InvalidJsonPayload`] if `raw_body` is not valid JSON or lacks required
-    ///   transaction fields.
+    /// - [`WebhookError::InvalidJsonPayload`] if `raw_body` is not valid JSON, lacks required
+    ///   transaction fields, or has an `event_type` other than `"TRANSACTION"`.
     /// - [`WebhookError::MalformedSignatureHex`] if `query_hmac` is not valid hexadecimal.
     /// - [`WebhookError::InvalidSecretKeyLength`] if the configured HMAC secret cannot initialize
     ///   `Hmac<Sha512>`.
@@ -167,15 +168,35 @@ impl PaymobWebhookEngine {
         &self,
         raw_body: &str,
         query_hmac: &str,
-    ) -> Result<TransactionProcessedEvent, WebhookError> {
-        if query_hmac.trim().is_empty() {
-            return Err(WebhookError::MissingQueryHmac);
+    ) -> WebhookResult<TransactionProcessedEvent> {
+        let hmac = super::verifier::require_non_empty_query_hmac(Some(query_hmac))?;
+        let event: TransactionProcessedEvent = super::verifier::parse_webhook_json_str(raw_body)?;
+        if event.event_type != "TRANSACTION" {
+            return Err(WebhookError::InvalidJsonPayload(
+                "expected webhook type 'TRANSACTION'".into(),
+            ));
         }
-        let event: TransactionProcessedEvent = serde_json::from_str(raw_body)
-            .map_err(|err| WebhookError::InvalidJsonPayload(err.to_string()))?;
         let canonical = build_protocol_a_canonical_string(&event.obj);
-        self.verify_concatenated_str(&canonical, query_hmac)?;
+        self.verify_concatenated_str(&canonical, hmac)?;
         Ok(event)
+    }
+
+    /// Verifies a Protocol A Transaction Processed `POST` webhook from raw request bytes.
+    ///
+    /// Validates that `raw_body` is valid UTF-8 before delegating to
+    /// [`Self::verify_transaction_post`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WebhookError::InvalidJsonPayload`] if `raw_body` is not valid UTF-8, or any
+    /// error returned by [`Self::verify_transaction_post`].
+    pub fn verify_transaction_post_bytes(
+        &self,
+        raw_body: &[u8],
+        query_hmac: &str,
+    ) -> WebhookResult<TransactionProcessedEvent> {
+        let raw_str = super::verifier::decode_webhook_utf8(raw_body)?;
+        self.verify_transaction_post(raw_str, query_hmac)
     }
 }
 
@@ -240,6 +261,38 @@ mod tests {
     const SAMPLE_HMAC_SECRET: &str = "3qUAg2xx6JW89Qav5GzzmXoalgjf5XxE";
     const SAMPLE_TEST_VECTOR_192036465_HMAC: &str = "28f19ec85986d4534f77201b00bf750948334753847f437b538cc699f3de447cd0d62a5f521c7b20069bd255f48e8d891f0033167ad35b434d532b61e85a3da7";
 
+    const SINGLE_FIELD_TAMPER_PAIRS: [(&str, &str); 20] = [
+        ("\"amount_cents\": 100000", "\"amount_cents\": 100001"),
+        (
+            "\"created_at\": \"2024-06-13T11:33:44.592345\"",
+            "\"created_at\": \"2024-06-13T11:33:44.592346\"",
+        ),
+        ("\"currency\": \"EGP\"", "\"currency\": \"USD\""),
+        ("\"error_occured\": false", "\"error_occured\": true"),
+        (
+            "\"has_parent_transaction\": false",
+            "\"has_parent_transaction\": true",
+        ),
+        ("\"id\": 192036465", "\"id\": 192036466"),
+        ("\"integration_id\": 4097558", "\"integration_id\": 4097559"),
+        ("\"is_3d_secure\": true", "\"is_3d_secure\": false"),
+        ("\"is_auth\": false", "\"is_auth\": true"),
+        ("\"is_capture\": false", "\"is_capture\": true"),
+        ("\"is_refunded\": false", "\"is_refunded\": true"),
+        (
+            "\"is_standalone_payment\": true",
+            "\"is_standalone_payment\": false",
+        ),
+        ("\"is_voided\": false", "\"is_voided\": true"),
+        ("\"id\": 217503754", "\"id\": 217503755"),
+        ("\"owner\": 302852", "\"owner\": 302853"),
+        ("\"pending\": false", "\"pending\": true"),
+        ("\"pan\": \"2346\"", "\"pan\": \"9999\""),
+        ("\"sub_type\": \"MasterCard\"", "\"sub_type\": \"Visa\""),
+        ("\"type\": \"card\"", "\"type\": \"wallet\""),
+        ("\"success\": true", "\"success\": false"),
+    ];
+
     #[test]
     fn test_official_vector_192036465_canonical_concatenation() {
         let event: TransactionProcessedEvent =
@@ -262,8 +315,20 @@ mod tests {
         assert_eq!(event.obj.order.id, 217503754);
         assert_eq!(event.obj.amount_cents, 100_000);
         assert_eq!(event.obj.currency, "EGP");
-        assert!(event.obj.success);
-        assert!(!event.obj.error_occured);
+        assert!(event.obj.success && !event.obj.error_occured);
+    }
+
+    #[test]
+    fn test_verify_transaction_post_accepts_uppercase_and_whitespace_hmac() {
+        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
+        let upper_padded = format!(
+            "  {} \n",
+            SAMPLE_TEST_VECTOR_192036465_HMAC.to_ascii_uppercase()
+        );
+        let event = engine
+            .verify_transaction_post(OFFICIAL_TEST_VECTOR_192036465_JSON, &upper_padded)
+            .expect("uppercase padded HMAC must verify");
+        assert_eq!(event.transaction_id(), 192036465);
     }
 
     #[test]
@@ -279,40 +344,60 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_transaction_post_rejects_tampered_amount_cents() {
+    fn test_verify_transaction_post_rejects_all_20_single_field_tamperings() {
         let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
-        let tampered_json = OFFICIAL_TEST_VECTOR_192036465_JSON.replacen(
-            "\"amount_cents\": 100000",
-            "\"amount_cents\": 100",
-            1,
-        );
-        let err = engine
-            .verify_transaction_post(&tampered_json, SAMPLE_TEST_VECTOR_192036465_HMAC)
-            .expect_err("tampered amount_cents must be rejected in constant time");
-        assert_eq!(err, WebhookError::SignatureMismatch);
+        for (from, to) in SINGLE_FIELD_TAMPER_PAIRS {
+            let tampered = OFFICIAL_TEST_VECTOR_192036465_JSON.replacen(from, to, 1);
+            let err = engine
+                .verify_transaction_post(&tampered, SAMPLE_TEST_VECTOR_192036465_HMAC)
+                .expect_err("single field tamper must fail");
+            assert_eq!(err, WebhookError::SignatureMismatch);
+        }
     }
 
     #[test]
-    fn test_verify_transaction_post_rejects_malformed_hex() {
+    fn test_verify_transaction_post_rejects_wrong_event_type() {
+        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
+        let wrong_type = OFFICIAL_TEST_VECTOR_192036465_JSON.replacen(
+            "\"type\": \"TRANSACTION\"",
+            "\"type\": \"TOKEN\"",
+            1,
+        );
+        let err = engine
+            .verify_transaction_post(&wrong_type, SAMPLE_TEST_VECTOR_192036465_HMAC)
+            .expect_err("wrong event_type must fail");
+        assert!(matches!(err, WebhookError::InvalidJsonPayload(_)));
+    }
+
+    #[test]
+    fn test_verify_transaction_post_bytes_valid_and_invalid_utf8() {
+        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
+        let ok_evt = engine
+            .verify_transaction_post_bytes(
+                OFFICIAL_TEST_VECTOR_192036465_JSON.as_bytes(),
+                SAMPLE_TEST_VECTOR_192036465_HMAC,
+            )
+            .expect("valid bytes must verify");
+        assert_eq!(ok_evt.transaction_id(), 192036465);
+
+        let err = engine
+            .verify_transaction_post_bytes(&[0xff, 0xfe, 0x00], SAMPLE_TEST_VECTOR_192036465_HMAC)
+            .expect_err("invalid UTF-8 must fail");
+        assert!(matches!(err, WebhookError::InvalidJsonPayload(_)));
+    }
+
+    #[test]
+    fn test_verify_transaction_post_rejects_malformed_hex_and_missing_hmac() {
         let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
         let err_non_hex = engine
             .verify_transaction_post(OFFICIAL_TEST_VECTOR_192036465_JSON, "zzzz-not-hex!")
             .expect_err("non-hex signature must return MalformedSignatureHex");
         assert_eq!(err_non_hex, WebhookError::MalformedSignatureHex);
 
-        let err_odd_len = engine
-            .verify_transaction_post(OFFICIAL_TEST_VECTOR_192036465_JSON, "abc")
-            .expect_err("odd-length hex signature must return MalformedSignatureHex");
-        assert_eq!(err_odd_len, WebhookError::MalformedSignatureHex);
-    }
-
-    #[test]
-    fn test_verify_transaction_post_rejects_missing_query_hmac() {
-        let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
-        let err = engine
+        let err_missing = engine
             .verify_transaction_post(OFFICIAL_TEST_VECTOR_192036465_JSON, "   ")
             .expect_err("whitespace-only query_hmac must return MissingQueryHmac");
-        assert_eq!(err, WebhookError::MissingQueryHmac);
+        assert_eq!(err_missing, WebhookError::MissingQueryHmac);
     }
 
     #[test]

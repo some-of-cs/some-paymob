@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Core microkernel primitives: regional routing, credentials, config, auth, HTTP, errors, types, and pagination.
 
 pub mod auth;

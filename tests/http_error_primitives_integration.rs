@@ -17,6 +17,9 @@ use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, RETRY_AFTER};
 use reqwest::{Method, StatusCode};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use uuid::Uuid;
 use wiremock::matchers::{header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -39,6 +42,7 @@ fn fast_config() -> HttpClientConfig {
             base_delay: Duration::from_millis(5),
             max_delay: Duration::from_millis(25),
         },
+        allow_insecure_http: true,
     }
 }
 
@@ -500,7 +504,7 @@ fn tc_1_3_3_currency_lookup_decimals_and_prefixed_id_validation() {
         ("pKr", Currency::PKR, "PKR", 2_u8),
         ("usd", Currency::USD, "USD", 2_u8),
         ("Eur", Currency::EUR, "EUR", 2_u8),
-        ("kwd", Currency::Unknown("KWD".to_string()), "KWD", 2_u8),
+        ("kwd", Currency::Unknown("KWD".to_string()), "KWD", 3_u8),
     ];
 
     for (raw, expected, canonical, decimals) in currency_cases {
@@ -562,7 +566,15 @@ fn assert_prelude_reexports() {
         type_name::<RegionalEndpoints>(),
         type_name::<Currency>(),
         type_name::<MinorUnitAmount>(),
+        type_name::<HttpClient>(),
+        type_name::<HttpClientConfig>(),
+        type_name::<HttpError>(),
+        type_name::<HttpRequest>(),
+        type_name::<HttpResponse>(),
+        type_name::<RetryPolicy>(),
+        type_name::<fn(&str, &str, &'static str) -> Result<(), PaymobError>>(),
     ];
+    let _ = validate_prefixed_id;
     for name in exported {
         assert!(!name.is_empty());
     }
@@ -584,4 +596,83 @@ fn tc_1_3_4_pagination_and_prelude_reexports() {
 
     assert_page_query_behavior();
     assert_prelude_reexports();
+}
+
+#[test]
+fn tc_1_3_1_from_http_error_from_http_response_and_503_error_json() {
+    let mut headers = HeaderMap::new();
+    headers.insert(RETRY_AFTER, HeaderValue::from_static("9"));
+    let http_resp = HttpResponse {
+        status: StatusCode::TOO_MANY_REQUESTS,
+        headers,
+        body: br#"{"error":"rate limit hit"}"#.to_vec(),
+        request_id: Uuid::new_v4(),
+    };
+    let from_resp = PaymobError::from_http_response(&http_resp);
+    assert_eq!(
+        (from_resp.is_rate_limited(), from_resp.retry_after_secs()),
+        (true, Some(9))
+    );
+
+    let from_503 = PaymobError::from(HttpError::RetriesExhausted {
+        request_id: Uuid::new_v4(),
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        retry_after: None,
+        body: br#"{"error":"upstream unavailable"}"#.to_vec(),
+    });
+    assert_eq!(
+        from_503,
+        PaymobError::ApiError {
+            status: 503,
+            message: "upstream unavailable".to_string(),
+            code: None,
+        }
+    );
+}
+
+#[tokio::test]
+async fn tc_1_3_2_chunked_streaming_body_limit_without_content_length() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server_task = tokio::spawn(async move {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let mut req_buf = [0_u8; 1024];
+            let _ = stream.read(&mut req_buf).await;
+            let chunk = "28\r\n".to_string() + &"a".repeat(40) + "\r\n";
+            let payload = format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{chunk}{chunk}0\r\n\r\n"
+            );
+            let _ = stream.write_all(payload.as_bytes()).await;
+        }
+    });
+
+    let mut cfg = fast_config();
+    cfg.max_response_bytes = 64;
+    let client = HttpClient::new(cfg).expect("client");
+    let req = HttpRequest::get(&format!("http://{addr}/chunked")).expect("url");
+    let err = client.execute(&req).await.unwrap_err();
+    let _ = server_task.await;
+
+    assert!(matches!(
+        err,
+        HttpError::ResponseTooLarge {
+            limit_bytes: 64,
+            actual_bytes: Some(80),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn tc_1_3_3_currency_iso_serde_and_kwd_three_decimal_arithmetic() {
+    let kwd = Currency::from_code("kwd");
+    let json = serde_json::to_string(&kwd).expect("serialize");
+    let roundtrip: Currency = serde_json::from_str(&json).expect("deserialize");
+    let amount = MinorUnitAmount::from_major_checked(10, roundtrip.minor_unit_decimals())
+        .expect("10 KWD");
+    assert_eq!(
+        (json.as_str(), roundtrip, amount),
+        (""KWD"", Currency::Unknown("KWD".to_string()), MinorUnitAmount(10_000))
+    );
 }

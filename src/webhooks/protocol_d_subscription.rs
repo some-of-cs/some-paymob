@@ -27,13 +27,31 @@ pub const KNOWN_SUBSCRIPTION_TRIGGERS: &[(&str, SubscriptionTriggerType)] = &[
     ("canceled", SubscriptionTriggerType::Canceled),
     ("resumed", SubscriptionTriggerType::Resumed),
     ("updated", SubscriptionTriggerType::Updated),
-    ("add_secondry_card", SubscriptionTriggerType::SecondaryCardAdded),
-    ("change_primary_card", SubscriptionTriggerType::PrimaryCardChanged),
+    (
+        "add_secondry_card",
+        SubscriptionTriggerType::SecondaryCardAdded,
+    ),
+    (
+        "change_primary_card",
+        SubscriptionTriggerType::PrimaryCardChanged,
+    ),
     ("delete_card", SubscriptionTriggerType::SecondaryCardDeleted),
-    ("register_webhook", SubscriptionTriggerType::WebhookRegistered),
-    ("Successful Transaction", SubscriptionTriggerType::SuccessfulTransaction),
-    ("Failed Transaction", SubscriptionTriggerType::FailedTransaction),
-    ("Failed Overdue Transaction", SubscriptionTriggerType::FailedOverdueTransaction),
+    (
+        "register_webhook",
+        SubscriptionTriggerType::WebhookRegistered,
+    ),
+    (
+        "Successful Transaction",
+        SubscriptionTriggerType::SuccessfulTransaction,
+    ),
+    (
+        "Failed Transaction",
+        SubscriptionTriggerType::FailedTransaction,
+    ),
+    (
+        "Failed Overdue Transaction",
+        SubscriptionTriggerType::FailedOverdueTransaction,
+    ),
 ];
 
 /// Subscription lifecycle trigger type delivered in Protocol D webhooks.

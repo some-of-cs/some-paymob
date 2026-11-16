@@ -433,8 +433,8 @@ mod tests {
             })
         ));
 
-        let zero_exp =
-            CreatePaymentKeyParams::new(10, 50_000, Currency::EGP, 1, sample_billing()).expiration(0);
+        let zero_exp = CreatePaymentKeyParams::new(10, 50_000, Currency::EGP, 1, sample_billing())
+            .expiration(0);
         assert!(matches!(
             zero_exp.validate(),
             Err(PaymobError::ValidationError {
@@ -498,13 +498,8 @@ mod tests {
             .expect("http client");
         let url =
             Url::parse(&format!("{}{}", server.uri(), LEGACY_PAYMENT_KEYS_PATH)).expect("url");
-        let params = CreatePaymentKeyParams::new(
-            555,
-            50_000,
-            Currency::EGP,
-            4_097_558,
-            sample_billing(),
-        );
+        let params =
+            CreatePaymentKeyParams::new(555, 50_000, Currency::EGP, 4_097_558, sample_billing());
         let res = create_legacy_payment_key(&http, url, &SecretString::from("jwt-ok"), &params)
             .await
             .expect("payment key created");

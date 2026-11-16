@@ -262,7 +262,10 @@ fn validate_kiosk_identifier(identifier: &str) -> Result<(), PaymobError> {
     Ok(())
 }
 
-fn serialize_secret<S: Serializer>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error> {
+fn serialize_secret<S: Serializer>(
+    secret: &SecretString,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(secret.expose_secret())
 }
 

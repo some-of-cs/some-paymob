@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn from_serde_error_redacts_sensitive_quoted_literals() {
-        let bad_json = r#"{"id": "4111-2222-3333-4444"}"#;
+        let bad_json = r#""4111-2222-3333-4444""#;
         let serde_err = serde_json::from_str::<u64>(bad_json).unwrap_err();
         let webhook_err = WebhookError::from(serde_err);
         let msg = webhook_err.to_string();

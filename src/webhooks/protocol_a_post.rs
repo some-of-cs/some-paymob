@@ -347,7 +347,7 @@ mod tests {
     fn test_verify_transaction_post_rejects_all_20_single_field_tamperings() {
         let engine = PaymobWebhookEngine::new(SAMPLE_HMAC_SECRET).expect("valid test secret");
         for (from, to) in SINGLE_FIELD_TAMPER_PAIRS {
-            let tampered = OFFICIAL_TEST_VECTOR_192036465_JSON.replacen(from, to, 1);
+            let tampered = OFFICIAL_TEST_VECTOR_192036465_JSON.replace(from, to);
             let err = engine
                 .verify_transaction_post(&tampered, SAMPLE_TEST_VECTOR_192036465_HMAC)
                 .expect_err("single field tamper must fail");

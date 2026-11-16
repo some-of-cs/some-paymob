@@ -13,14 +13,26 @@ use some_paymob::core::auth::payouts_oauth::{
     format_basic_auth_header,
 };
 
-fn payouts_creds(
-    client_id: &str,
-    client_secret: &str,
-    username: &str,
-    password: &str,
-) -> PayoutsCredentials {
-    PayoutsCredentials::new(client_id, client_secret, username, password)
-        .expect("valid payouts credentials")
+struct PayoutsMockSpec<'a> {
+    grant_type: &'a str,
+    extra_body_fragment: &'a str,
+    response_body: Value,
+    status: u16,
+    expected: u64,
+}
+
+fn default_payouts_creds() -> PayoutsCredentials {
+    PayoutsCredentials::new("cid", "csec", "alice", "s3cr3t").expect("valid payouts credentials")
+}
+
+fn provider_with_cache(server: &MockServer, cache: Arc<TokenCache>) -> PayoutsOAuthProvider {
+    PayoutsOAuthProvider::with_client_and_cache(
+        &server.uri(),
+        default_payouts_creds(),
+        Client::new(),
+        cache,
+    )
+    .expect("valid payouts provider")
 }
 
 fn payouts_token_json(access: &str, refresh: Option<&str>, expires_in: u64) -> Value {
@@ -31,21 +43,14 @@ fn payouts_token_json(access: &str, refresh: Option<&str>, expires_in: u64) -> V
     })
 }
 
-async fn mount_payouts_grant_mock(
-    server: &MockServer,
-    grant_type: &str,
-    extra_body_fragment: &str,
-    response_body: Value,
-    status: u16,
-    expected: u64,
-) {
+async fn mount_payouts_grant_mock(server: &MockServer, spec: PayoutsMockSpec<'_>) {
     Mock::given(method("POST"))
         .and(path(PAYOUTS_OAUTH_TOKEN_PATH))
         .and(header("authorization", "Basic Y2lkOmNzZWM="))
-        .and(body_string_contains(format!("grant_type={grant_type}")))
-        .and(body_string_contains(extra_body_fragment))
-        .respond_with(ResponseTemplate::new(status).set_body_json(response_body))
-        .expect(expected)
+        .and(body_string_contains(format!("grant_type={}", spec.grant_type)))
+        .and(body_string_contains(spec.extra_body_fragment))
+        .respond_with(ResponseTemplate::new(spec.status).set_body_json(spec.response_body))
+        .expect(spec.expected)
         .mount(server)
         .await;
 }
@@ -55,11 +60,13 @@ async fn tc_1_2_4_payouts_password_grant_single_flight_20_tasks() {
     let server = MockServer::start().await;
     mount_payouts_grant_mock(
         &server,
-        "password",
-        "username=alice",
-        payouts_token_json("po-acc-1", Some("po-ref-1"), 3600),
-        200,
-        1,
+        PayoutsMockSpec {
+            grant_type: "password",
+            extra_body_fragment: "username=alice",
+            response_body: payouts_token_json("po-acc-1", Some("po-ref-1"), 3600),
+            status: 200,
+            expected: 1,
+        },
     )
     .await;
 
@@ -72,7 +79,7 @@ async fn tc_1_2_4_payouts_password_grant_single_flight_20_tasks() {
         .await;
 
     let provider = Arc::new(
-        PayoutsOAuthProvider::new(&server.uri(), payouts_creds("cid", "csec", "alice", "s3cr3t"))
+        PayoutsOAuthProvider::new(&server.uri(), default_payouts_creds())
             .expect("valid payouts provider"),
     );
 
@@ -101,31 +108,29 @@ async fn tc_1_2_4_payouts_refresh_token_renewal() {
     let server = MockServer::start().await;
     mount_payouts_grant_mock(
         &server,
-        "password",
-        "username=alice",
-        payouts_token_json("po-acc-1", Some("po-ref-1"), 10),
-        200,
-        1,
+        PayoutsMockSpec {
+            grant_type: "password",
+            extra_body_fragment: "username=alice",
+            response_body: payouts_token_json("po-acc-1", Some("po-ref-1"), 10),
+            status: 200,
+            expected: 1,
+        },
     )
     .await;
     mount_payouts_grant_mock(
         &server,
-        "refresh_token",
-        "refresh_token=po-ref-1",
-        payouts_token_json("po-acc-2", Some("po-ref-2"), 3600),
-        200,
-        1,
+        PayoutsMockSpec {
+            grant_type: "refresh_token",
+            extra_body_fragment: "refresh_token=po-ref-1",
+            response_body: payouts_token_json("po-acc-2", Some("po-ref-2"), 3600),
+            status: 200,
+            expected: 1,
+        },
     )
     .await;
 
     let cache = Arc::new(TokenCache::with_refresh_margin(Duration::from_secs(3600)));
-    let provider = PayoutsOAuthProvider::with_client_and_cache(
-        &server.uri(),
-        payouts_creds("cid", "csec", "alice", "s3cr3t"),
-        Client::new(),
-        cache,
-    )
-    .expect("valid provider");
+    let provider = provider_with_cache(&server, cache);
 
     assert_eq!(
         provider.access_token().await.expect("initial").expose_secret(),
@@ -142,20 +147,24 @@ async fn tc_1_2_4_payouts_401_refresh_fallback_to_password() {
     let fallback_server = MockServer::start().await;
     mount_payouts_grant_mock(
         &fallback_server,
-        "refresh_token",
-        "refresh_token=stale-ref",
-        json!({ "error": "invalid_grant" }),
-        401,
-        1,
+        PayoutsMockSpec {
+            grant_type: "refresh_token",
+            extra_body_fragment: "refresh_token=stale-ref",
+            response_body: json!({ "error": "invalid_grant" }),
+            status: 401,
+            expected: 1,
+        },
     )
     .await;
     mount_payouts_grant_mock(
         &fallback_server,
-        "password",
-        "username=alice",
-        payouts_token_json("po-fallback", Some("po-ref-3"), 3600),
-        200,
-        1,
+        PayoutsMockSpec {
+            grant_type: "password",
+            extra_body_fragment: "username=alice",
+            response_body: payouts_token_json("po-fallback", Some("po-ref-3"), 3600),
+            status: 200,
+            expected: 1,
+        },
     )
     .await;
 
@@ -165,13 +174,7 @@ async fn tc_1_2_4_payouts_401_refresh_fallback_to_password() {
         Some(SecretString::from("stale-ref")),
         Duration::from_secs(5),
     ));
-    let fb_provider = PayoutsOAuthProvider::with_client_and_cache(
-        &fallback_server.uri(),
-        payouts_creds("cid", "csec", "alice", "s3cr3t"),
-        Client::new(),
-        fb_cache,
-    )
-    .expect("valid fallback provider");
+    let fb_provider = provider_with_cache(&fallback_server, fb_cache);
     assert_eq!(
         fb_provider
             .access_token()

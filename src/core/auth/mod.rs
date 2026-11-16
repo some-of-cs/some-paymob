@@ -86,114 +86,85 @@ pub(crate) fn format_sanitized_transport_error(err: &reqwest::Error) -> String {
     raw.replace(url.as_str(), scrubbed.as_str())
 }
 
-impl From<StrategyError> for PaymobError {
-    fn from(err: StrategyError) -> Self {
-        match err {
-            StrategyError::EmptySecretKey | StrategyError::InvalidHeaderValue => {
-                Self::ValidationError {
-                    field: "secret_key",
-                    reason: err.to_string(),
+macro_rules! impl_paymob_error_from {
+    (
+        $err_ty:ty,
+        validation: [$( $val_pat:pat => $field:expr ),+ $(,)?],
+        auth: $auth_pat:pat,
+        $(
+            api: $api_pat:pat => ($status:ident, $detail:ident),
+            transport: $trans_pat:pat,
+        )?
+    ) => {
+        impl From<$err_ty> for PaymobError {
+            fn from(err: $err_ty) -> Self {
+                match err {
+                    $(
+                        $val_pat => Self::ValidationError {
+                            field: $field,
+                            reason: err.to_string(),
+                        },
+                    )+
+                    $auth_pat => Self::AuthenticationError(err.to_string()),
+                    $(
+                        $api_pat => Self::ApiError {
+                            status: $status,
+                            message: $detail,
+                            code: None,
+                        },
+                        $trans_pat => Self::TransportError(err.to_string()),
+                    )?
                 }
             }
-            StrategyError::EmptyEndpointPath | StrategyError::InvalidEndpointPath { .. } => {
-                Self::ValidationError {
-                    field: "endpoint_path",
-                    reason: err.to_string(),
-                }
-            }
-            StrategyError::StrategyMismatch { .. } => Self::AuthenticationError(err.to_string()),
         }
-    }
+    };
 }
 
-impl From<AcceptJwtError> for PaymobError {
-    fn from(err: AcceptJwtError) -> Self {
-        match err {
-            AcceptJwtError::EmptyApiKey => Self::ValidationError {
-                field: "api_key",
-                reason: err.to_string(),
-            },
-            AcceptJwtError::InvalidBaseUrl(_) => Self::ValidationError {
-                field: "base_url",
-                reason: err.to_string(),
-            },
-            AcceptJwtError::InvalidHeaderValue => Self::ValidationError {
-                field: "auth_token",
-                reason: err.to_string(),
-            },
-            AcceptJwtError::InvalidJsonBody => Self::ValidationError {
-                field: "body",
-                reason: err.to_string(),
-            },
-            AcceptJwtError::InvalidCredentials | AcceptJwtError::MissingTokenField => {
-                Self::AuthenticationError(err.to_string())
-            }
-            AcceptJwtError::UnexpectedStatus { status, detail } => Self::ApiError {
-                status,
-                message: detail,
-                code: None,
-            },
-            AcceptJwtError::Transport(_) => Self::TransportError(err.to_string()),
-        }
-    }
-}
+impl_paymob_error_from!(
+    StrategyError,
+    validation: [
+        StrategyError::EmptySecretKey | StrategyError::InvalidHeaderValue => "secret_key",
+        StrategyError::EmptyEndpointPath | StrategyError::InvalidEndpointPath { .. } => {
+            "endpoint_path"
+        },
+    ],
+    auth: StrategyError::StrategyMismatch { .. },
+);
 
-impl From<PayoutsOAuthError> for PaymobError {
-    fn from(err: PayoutsOAuthError) -> Self {
-        match err {
-            PayoutsOAuthError::EmptyCredential(field) => Self::ValidationError {
-                field,
-                reason: err.to_string(),
-            },
-            PayoutsOAuthError::InvalidBaseUrl(_) => Self::ValidationError {
-                field: "base_url",
-                reason: err.to_string(),
-            },
-            PayoutsOAuthError::InvalidHeaderValue => Self::ValidationError {
-                field: "authorization",
-                reason: err.to_string(),
-            },
-            PayoutsOAuthError::InvalidCredentials | PayoutsOAuthError::MissingAccessToken => {
-                Self::AuthenticationError(err.to_string())
-            }
-            PayoutsOAuthError::UnexpectedStatus { status, detail } => Self::ApiError {
-                status,
-                message: detail,
-                code: None,
-            },
-            PayoutsOAuthError::Transport(_) => Self::TransportError(err.to_string()),
-        }
-    }
-}
+impl_paymob_error_from!(
+    AcceptJwtError,
+    validation: [
+        AcceptJwtError::EmptyApiKey => "api_key",
+        AcceptJwtError::InvalidBaseUrl(_) => "base_url",
+        AcceptJwtError::InvalidHeaderValue => "auth_token",
+        AcceptJwtError::InvalidJsonBody => "body",
+    ],
+    auth: AcceptJwtError::InvalidCredentials | AcceptJwtError::MissingTokenField,
+    api: AcceptJwtError::UnexpectedStatus { status, detail } => (status, detail),
+    transport: AcceptJwtError::Transport(_),
+);
 
-impl From<PartnerAuthError> for PaymobError {
-    fn from(err: PartnerAuthError) -> Self {
-        match err {
-            PartnerAuthError::EmptyBearerToken => Self::ValidationError {
-                field: "bearer_token",
-                reason: err.to_string(),
-            },
-            PartnerAuthError::EmptyApiKey => Self::ValidationError {
-                field: "api_key",
-                reason: err.to_string(),
-            },
-            PartnerAuthError::EmptyMerchantId => Self::ValidationError {
-                field: "merchant_id",
-                reason: err.to_string(),
-            },
-            PartnerAuthError::InvalidHeaderName(_) => Self::ValidationError {
-                field: "header_name",
-                reason: err.to_string(),
-            },
-            PartnerAuthError::EmptyQueryParamName => Self::ValidationError {
-                field: "query_param",
-                reason: err.to_string(),
-            },
-            PartnerAuthError::InvalidHeaderValue => Self::ValidationError {
-                field: "header_value",
-                reason: err.to_string(),
-            },
-            PartnerAuthError::MissingCredential => Self::AuthenticationError(err.to_string()),
-        }
-    }
-}
+impl_paymob_error_from!(
+    PayoutsOAuthError,
+    validation: [
+        PayoutsOAuthError::EmptyCredential(field) => field,
+        PayoutsOAuthError::InvalidBaseUrl(_) => "base_url",
+        PayoutsOAuthError::InvalidHeaderValue => "authorization",
+    ],
+    auth: PayoutsOAuthError::InvalidCredentials | PayoutsOAuthError::MissingAccessToken,
+    api: PayoutsOAuthError::UnexpectedStatus { status, detail } => (status, detail),
+    transport: PayoutsOAuthError::Transport(_),
+);
+
+impl_paymob_error_from!(
+    PartnerAuthError,
+    validation: [
+        PartnerAuthError::EmptyBearerToken => "bearer_token",
+        PartnerAuthError::EmptyApiKey => "api_key",
+        PartnerAuthError::EmptyMerchantId => "merchant_id",
+        PartnerAuthError::InvalidHeaderName(_) => "header_name",
+        PartnerAuthError::EmptyQueryParamName => "query_param",
+        PartnerAuthError::InvalidHeaderValue => "header_value",
+    ],
+    auth: PartnerAuthError::MissingCredential,
+);

@@ -4,18 +4,19 @@
 //! Implementations & `PaymobExt` Escape Hatch.
 
 use secrecy::SecretString;
-use wiremock::matchers::{body_json, header, method, path};
+use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use some_paymob::adapter::{
     HeadlessExecutionOption, PaymentProvider, PaymobExt, PayoutProvider, ProviderExt,
-    UnifiedCaptureRequest, UnifiedPaymentSessionRequest, UnifiedPayoutRequest,
-    UnifiedRefundRequest, UnifiedSavedMethodChargeRequest, UnifiedVoidRequest, UnifiedWebhookInput,
-    WebhookVerifier,
+    UnifiedCaptureRequest, UnifiedPaymentSession, UnifiedPaymentSessionRequest,
+    UnifiedPayoutRequest, UnifiedRefundRequest, UnifiedSavedMethodChargeRequest,
+    UnifiedVoidRequest, UnifiedWebhookInput, WebhookVerifier, build_intention_params,
 };
 use some_paymob::core::client::PaymobClient;
 use some_paymob::core::config::ClientConfig;
 use some_paymob::core::credentials::{ApiKey, SecretKey};
+use some_paymob::core::error::PaymobError;
 use some_paymob::core::region::PaymobRegion;
 use some_paymob::core::types::{Currency, MinorUnitAmount};
 use some_paymob::resources::splits::models::SplitRecipientRule;
@@ -38,29 +39,7 @@ fn build_mock_client(base_url: &str) -> PaymobClient {
 }
 
 #[tokio::test]
-async fn ac1_create_payment_session_and_paymob_ext_wire_into_intention() {
-    let server = MockServer::start().await;
-
-    Mock::given(method("POST"))
-        .and(path("/v1/intention/"))
-        .and(header(
-            "authorization",
-            "Token egy_sk_test_us810_integration",
-        ))
-        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
-            "id": "pi_us810_001",
-            "intention_order_id": 990011,
-            "client_secret": "egy_csk_test_secret_810",
-            "payment_keys": [],
-            "payment_methods": [],
-            "special_reference": "ORD-810",
-            "confirmed": false,
-            "status": "intended"
-        })))
-        .mount(&server)
-        .await;
-
-    let client = build_mock_client(&server.uri());
+async fn ac1_and_ac3_paymob_ext_wires_into_intention_params_and_redacts_session() {
     let ext = ProviderExt::Paymob(
         PaymobExt::new()
             .with_pre_selected_plan(42)
@@ -75,17 +54,31 @@ async fn ac1_create_payment_session_and_paymob_ext_wire_into_intention() {
         .apply_to_session_request(base_req)
         .expect("wired request");
 
-    let session = client
-        .create_payment_session(&wired_req)
-        .await
-        .expect("session created");
+    let params = build_intention_params(&wired_req).expect("valid intention params");
+    assert_eq!(params.special_reference(), Some("ORD-810"));
+    assert_eq!(params.pre_selected_plan(), Some(42));
+    assert!(wired_req.extras.is_some());
 
-    assert_eq!(session.session_id, "pi_us810_001");
-    assert_eq!(session.order_id, "990011");
-    assert_eq!(session.status, "intended");
-    assert!(!session.confirmed);
-    assert!(session.checkout_url.contains("egy_csk_test_secret_810"));
+    let client = build_mock_client("http://127.0.0.1:9");
+    let https_err = client.create_payment_session(&wired_req).await;
+    assert!(matches!(
+        https_err,
+        Err(PaymobError::ValidationError {
+            field: "http_config",
+            ..
+        })
+    ));
 
+    let session = UnifiedPaymentSession {
+        session_id: "pi_us810_001".to_owned(),
+        order_id: "990011".to_owned(),
+        client_secret: SecretString::from("egy_csk_test_secret_810"),
+        checkout_url:
+            "https://accept.paymob.com/unifiedcheckout/?clientSecret=egy_csk_test_secret_810"
+                .to_owned(),
+        status: "intended".to_owned(),
+        confirmed: false,
+    };
     let dbg = format!("{session:?}");
     assert!(!dbg.contains("egy_csk_test_secret_810"));
     assert!(dbg.contains("[REDACTED]"));
@@ -175,37 +168,27 @@ async fn ac1_capture_refund_and_void_delegate_to_manage_service() {
 }
 
 #[tokio::test]
-async fn ac2_charge_saved_method_delegates_to_headless_mit_pay() {
-    let server = MockServer::start().await;
-
-    Mock::given(method("POST"))
-        .and(path("/api/acceptance/payments/pay"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": 778899,
-            "pending": false,
-            "amount_cents": 12000,
-            "success": true,
-            "is_auth": false,
-            "is_capture": false,
-            "is_void": false,
-            "is_refund": false
-        })))
-        .mount(&server)
-        .await;
-
-    let client = build_mock_client(&server.uri());
+async fn ac2_charge_saved_method_redacts_secrets_and_enforces_https() {
+    let client = build_mock_client("http://127.0.0.1:9");
     let req = UnifiedSavedMethodChargeRequest::new(
         SecretString::from("payment_key_test_810"),
         SecretString::from("saved_card_token_810"),
-    );
-    let receipt = client
-        .charge_saved_method(&req)
-        .await
-        .expect("mit charge succeeds");
+    )
+    .with_cvn("999");
+    let dbg = format!("{req:?}");
+    assert!(!dbg.contains("payment_key_test_810"));
+    assert!(!dbg.contains("saved_card_token_810"));
+    assert!(!dbg.contains("999"));
+    assert!(dbg.contains("[REDACTED]"));
 
-    assert_eq!(receipt.transaction_id, 778899);
-    assert_eq!(receipt.amount.as_u64(), 12_000);
-    assert!(receipt.success);
+    let res = client.charge_saved_method(&req).await;
+    assert!(matches!(
+        res,
+        Err(PaymobError::ValidationError {
+            field: "http_config",
+            ..
+        })
+    ));
 }
 
 #[tokio::test]

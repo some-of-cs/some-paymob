@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Transaction webhook payload models for Paymob Protocol A (`TRANSACTION` events).
 //!
 //! These types model the JSON envelope delivered to Paymob transaction processed

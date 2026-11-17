@@ -404,9 +404,10 @@ impl PixelConfigBuilder {
     /// is empty or uses an `sk_*` prefix, `payment_methods` is empty, or Apple Pay
     /// / Google Pay settings contain empty identifiers.
     pub fn build(self) -> Result<PixelConfig, PaymobError> {
+        let client_secret = resolve_if_env_secret("client_secret", self.client_secret)?;
         let config = PixelConfig {
             public_key: self.public_key,
-            client_secret: self.client_secret,
+            client_secret,
             payment_methods: self.payment_methods,
             show_save_card: self.show_save_card,
             force_save_card: self.force_save_card,
@@ -417,6 +418,16 @@ impl PixelConfigBuilder {
         validate_pixel_config(&config)?;
         Ok(config)
     }
+}
+
+fn resolve_if_env_secret(
+    field: &'static str,
+    secret: SecretString,
+) -> Result<SecretString, PaymobError> {
+    if secret.expose_secret().trim().starts_with('$') {
+        return crate::core::credentials::resolve_secret_or_env(field, secret.expose_secret());
+    }
+    Ok(secret)
 }
 
 fn validate_pixel_config(config: &PixelConfig) -> Result<(), PaymobError> {

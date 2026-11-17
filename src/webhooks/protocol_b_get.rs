@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Protocol B: Transaction Response GET redirect 20-key HMAC-SHA512 verifier.
 //!
 //! Verifies client-side redirect query parameters returned by Paymob after

@@ -320,10 +320,18 @@ impl LegacyV2Service {
         payment_token: &SecretString,
     ) -> Result<Url, PaymobError> {
         require_nonzero("iframe_id", iframe_id)?;
-        validate_payment_token(payment_token)?;
+        let resolved_token = if payment_token.expose_secret().trim().starts_with('$') {
+            crate::core::credentials::resolve_secret_or_env(
+                "payment_token",
+                payment_token.expose_secret(),
+            )?
+        } else {
+            payment_token.clone()
+        };
+        validate_payment_token(&resolved_token)?;
         let mut url = self.endpoint_url(&format!("/api/acceptance/iframes/{iframe_id}"))?;
         url.query_pairs_mut()
-            .append_pair("payment_token", payment_token.expose_secret());
+            .append_pair("payment_token", resolved_token.expose_secret());
         Ok(url)
     }
 

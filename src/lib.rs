@@ -31,6 +31,7 @@ pub mod webhooks;
 /// Crate-root re-exports of the core Paymob client, configuration, region, error, and money types.
 pub use crate::core::client::PaymobClient;
 pub use crate::core::config::{ClientConfig, ClientConfigBuilder};
+pub use crate::core::credentials::{resolve_secret_or_env, resolve_secret_or_env_with};
 pub use crate::core::error::PaymobError;
 pub use crate::core::region::PaymobRegion;
 pub use crate::core::types::{Currency, MinorUnitAmount};

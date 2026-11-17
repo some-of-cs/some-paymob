@@ -325,11 +325,160 @@ pub fn parse_key_prefix(raw: &str) -> Option<ParsedKeyPrefix> {
         })
 }
 
-/// Trims surrounding whitespace, validates non-emptiness, and wraps in [`SecretString`].
-fn non_empty_secret(
+/// Candidate `.env` file paths searched (in order) when resolving a `$ENV_VARNAME`
+/// or `${ENV_VARNAME}` secret reference that is not already set in the process environment.
+pub const DEFAULT_DOTENV_PATHS: &[&str] = &[".env", ".env.local"];
+
+/// Extracts the environment variable name if `trimmed` uses `$ENV_VARNAME` or
+/// `${ENV_VARNAME}` syntax (`[A-Za-z_][A-Za-z0-9_]*`).
+///
+/// Returns `Ok(None)` when `trimmed` does not begin with `'$'` (treated as a literal secret).
+/// Returns `Err(PaymobError::ValidationError)` when `trimmed` begins with `'$'` but the
+/// variable name is empty, unclosed, or contains non-identifier characters.
+///
+/// # Examples
+///
+/// ```
+/// use some_paymob::core::credentials::parse_env_secret_reference;
+///
+/// assert_eq!(parse_env_secret_reference("secret_key", "$PAYMOB_SECRET_KEY")?, Some("PAYMOB_SECRET_KEY"));
+/// assert_eq!(parse_env_secret_reference("secret_key", "${PAYMOB_SECRET_KEY}")?, Some("PAYMOB_SECRET_KEY"));
+/// assert_eq!(parse_env_secret_reference("secret_key", "egy_sk_test_literal")?, None);
+/// assert!(parse_env_secret_reference("secret_key", "$").is_err());
+/// # Ok::<(), some_paymob::core::error::PaymobError>(())
+/// ```
+pub fn parse_env_secret_reference<'a>(
+    field: &'static str,
+    trimmed: &'a str,
+) -> Result<Option<&'a str>, PaymobError> {
+    let Some(rest) = trimmed.strip_prefix('$') else {
+        return Ok(None);
+    };
+    let candidate = extract_braced_or_bare_var(field, rest)?;
+    if !is_valid_env_var_name(candidate) {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!(
+                "{field} environment variable reference '{trimmed}' is invalid; expected $VAR_NAME or ${{VAR_NAME}}"
+            ),
+        });
+    }
+    Ok(Some(candidate))
+}
+
+fn extract_braced_or_bare_var<'a>(
+    field: &'static str,
+    rest: &'a str,
+) -> Result<&'a str, PaymobError> {
+    let Some(after_open) = rest.strip_prefix('{') else {
+        return Ok(rest);
+    };
+    after_open
+        .strip_suffix('}')
+        .ok_or_else(|| PaymobError::ValidationError {
+            field,
+            reason: format!("{field} has unclosed '${{' in environment variable reference"),
+        })
+}
+
+fn is_valid_env_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    let valid_start = first.is_ascii_alphabetic() || first == '_';
+    valid_start && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Parses a single line from a `.env` file and returns the unquoted value if the key matches `var_name`.
+#[must_use]
+pub fn parse_dotenv_line_value(line: &str, var_name: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let stripped = trimmed.strip_prefix("export ").map_or(trimmed, str::trim);
+    let (key, raw_val) = stripped.split_once('=')?;
+    if key.trim() != var_name {
+        return None;
+    }
+    Some(unquote_dotenv_value(raw_val.trim()))
+}
+
+fn unquote_dotenv_value(raw: &str) -> String {
+    if raw.len() >= 2
+        && ((raw.starts_with('"') && raw.ends_with('"'))
+            || (raw.starts_with('\'') && raw.ends_with('\'')))
+    {
+        return raw[1..raw.len() - 1].to_owned();
+    }
+    let without_comment = raw.split(" #").next().unwrap_or(raw).trim_end();
+    without_comment.to_owned()
+}
+
+/// Searches `.env` content in memory for `var_name`, returning the last matching assignment.
+#[must_use]
+pub fn parse_dotenv_content(content: &str, var_name: &str) -> Option<String> {
+    let mut found = None;
+    for line in content.lines() {
+        if let Some(val) = parse_dotenv_line_value(line, var_name) {
+            found = Some(val);
+        }
+    }
+    found
+}
+
+fn lookup_env_or_dotenv_files(var_name: &str) -> Option<String> {
+    std::env::var(var_name)
+        .ok()
+        .filter(|val| !val.trim().is_empty())
+        .or_else(|| {
+            DEFAULT_DOTENV_PATHS
+                .iter()
+                .find_map(|p| read_dotenv_var(p, var_name))
+        })
+}
+
+fn read_dotenv_var(path: &str, var_name: &str) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    parse_dotenv_content(&content, var_name).filter(|val| !val.trim().is_empty())
+}
+
+/// Resolves a secret string or `$ENV_VARNAME` / `${ENV_VARNAME}` reference using a custom lookup closure.
+///
+/// - If `raw` (after trimming) starts with `'$'`, parses the variable name via
+///   [`parse_env_secret_reference`], queries `lookup(var_name)`, trims the resolved value,
+///   rejects empty values, and wraps the result in [`SecretString`].
+/// - Otherwise, trims `raw`, rejects empty values, and wraps it directly in [`SecretString`].
+///
+/// # Errors
+///
+/// Returns [`PaymobError::ValidationError`] if `raw` is empty, if the `$ENV_VARNAME` syntax is
+/// malformed, or if the referenced environment variable is not found or empty.
+///
+/// # Examples
+///
+/// ```
+/// use secrecy::ExposeSecret;
+/// use some_paymob::core::credentials::resolve_secret_or_env_with;
+///
+/// let resolved = resolve_secret_or_env_with("secret_key", "$MY_SK", |k| {
+///     (k == "MY_SK").then(|| "egy_sk_test_from_env".to_owned())
+/// })?;
+/// assert_eq!(resolved.expose_secret(), "egy_sk_test_from_env");
+///
+/// let literal = resolve_secret_or_env_with("secret_key", "egy_sk_test_literal", |_| None)?;
+/// assert_eq!(literal.expose_secret(), "egy_sk_test_literal");
+/// # Ok::<(), some_paymob::core::error::PaymobError>(())
+/// ```
+pub fn resolve_secret_or_env_with<F>(
     field: &'static str,
     raw: impl Into<String>,
-) -> Result<SecretString, PaymobError> {
+    lookup: F,
+) -> Result<SecretString, PaymobError>
+where
+    F: FnOnce(&str) -> Option<String>,
+{
     let value = Zeroizing::new(raw.into());
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -338,7 +487,66 @@ fn non_empty_secret(
             reason: format!("{field} must not be empty"),
         });
     }
+    if let Some(var_name) = parse_env_secret_reference(field, trimmed)? {
+        let resolved = Zeroizing::new(lookup(var_name).ok_or_else(|| {
+            PaymobError::ValidationError {
+                field,
+                reason: format!(
+                    "{field} references environment variable '{var_name}', which was not found in process environment or .env files"
+                ),
+            }
+        })?);
+        let resolved_trimmed = resolved.trim();
+        if resolved_trimmed.is_empty() {
+            return Err(PaymobError::ValidationError {
+                field,
+                reason: format!(
+                    "{field} environment variable '{var_name}' resolved to an empty value"
+                ),
+            });
+        }
+        return Ok(SecretString::from(resolved_trimmed.to_owned()));
+    }
     Ok(SecretString::from(trimmed.to_owned()))
+}
+
+/// Resolves a secret string or `$ENV_VARNAME` / `${ENV_VARNAME}` reference from the process
+/// environment (`std::env::var`) with automatic fallback to `.env` and `.env.local` files.
+///
+/// Built-in reusable secret resolver used across [`SecretKey`], [`PublicKey`], [`ApiKey`],
+/// [`HmacSecret`], [`PayoutsCredentials`], [`PartnerCredentials`],
+/// [`PaymobWebhookEngine`](crate::webhooks::PaymobWebhookEngine), and resource token builders.
+///
+/// # Errors
+///
+/// Returns [`PaymobError::ValidationError`] if `raw` is empty, if the `$ENV_VARNAME` syntax is
+/// malformed, or if the referenced variable is missing/empty in both the process environment
+/// and `.env` files.
+///
+/// # Examples
+///
+/// ```
+/// use secrecy::ExposeSecret;
+/// use some_paymob::core::credentials::resolve_secret_or_env;
+///
+/// let direct = resolve_secret_or_env("api_key", "  direct_secret_123  ")?;
+/// assert_eq!(direct.expose_secret(), "direct_secret_123");
+/// # Ok::<(), some_paymob::core::error::PaymobError>(())
+/// ```
+pub fn resolve_secret_or_env(
+    field: &'static str,
+    raw: impl Into<String>,
+) -> Result<SecretString, PaymobError> {
+    resolve_secret_or_env_with(field, raw, lookup_env_or_dotenv_files)
+}
+
+/// Trims surrounding whitespace, resolves any `$ENV_VARNAME` / `${ENV_VARNAME}` reference,
+/// validates non-emptiness, and wraps in [`SecretString`].
+fn non_empty_secret(
+    field: &'static str,
+    raw: impl Into<String>,
+) -> Result<SecretString, PaymobError> {
+    resolve_secret_or_env(field, raw)
 }
 
 /// Checks whether a lowercase, trimmed key starts with `tag` (e.g., `"pk_"`)
@@ -973,5 +1181,87 @@ mod tests {
             ),
             (true, false, "live".to_string())
         );
+    }
+
+    #[test]
+    fn tc_env_secret_resolver_resolves_dollar_and_braced_syntax_and_dotenv() {
+        let resolved = resolve_secret_or_env_with("secret_key", "$PAYMOB_TEST_SK", |k| {
+            (k == "PAYMOB_TEST_SK").then(|| "  egy_sk_test_env_resolved_999  ".to_owned())
+        })
+        .expect("should resolve $VAR");
+        assert_eq!(resolved.expose_secret(), "egy_sk_test_env_resolved_999");
+
+        let braced = resolve_secret_or_env_with("hmac_secret", "${PAYMOB_TEST_HMAC}", |k| {
+            (k == "PAYMOB_TEST_HMAC").then(|| "hmac_from_braced_env".to_owned())
+        })
+        .expect("should resolve ${VAR}");
+        assert_eq!(braced.expose_secret(), "hmac_from_braced_env");
+
+        let dotenv_sample = "
+            # comment line
+            OTHER_KEY=123
+            export PAYMOB_DOTENV_SK=\"ksa_sk_live_from_dotenv\"
+            SINGLE_QUOTED='omn_pk_test_single'
+            INLINE_COMMENT=pak_sk_test_inline # trailing comment
+        ";
+        assert_eq!(
+            parse_dotenv_content(dotenv_sample, "PAYMOB_DOTENV_SK").as_deref(),
+            Some("ksa_sk_live_from_dotenv")
+        );
+        assert_eq!(
+            parse_dotenv_content(dotenv_sample, "SINGLE_QUOTED").as_deref(),
+            Some("omn_pk_test_single")
+        );
+        assert_eq!(
+            parse_dotenv_content(dotenv_sample, "INLINE_COMMENT").as_deref(),
+            Some("pak_sk_test_inline")
+        );
+        assert!(parse_dotenv_content(dotenv_sample, "MISSING_KEY").is_none());
+    }
+
+    #[test]
+    fn tc_env_secret_resolver_rejects_malformed_missing_or_empty_env_vars() {
+        for bad_syntax in [
+            "$",
+            "${}",
+            "${UNCLOSED",
+            "$123_INVALID",
+            "$BAD-NAME",
+            "$BAD SPACE",
+        ] {
+            let err = resolve_secret_or_env_with("secret_key", bad_syntax, |_| {
+                Some("egy_sk_test_123".to_owned())
+            })
+            .expect_err("malformed $VAR syntax should fail");
+            assert!(matches!(
+                err,
+                PaymobError::ValidationError {
+                    field: "secret_key",
+                    ..
+                }
+            ));
+        }
+
+        let missing_err =
+            resolve_secret_or_env_with("api_key", "$DEFINITELY_MISSING_PAYMOB_VAR_XYZ", |_| None)
+                .expect_err("missing env var must fail");
+        assert!(matches!(
+            missing_err,
+            PaymobError::ValidationError {
+                field: "api_key",
+                ..
+            }
+        ));
+
+        let empty_err =
+            resolve_secret_or_env_with("hmac_secret", "$EMPTY_VAR", |_| Some("   ".to_owned()))
+                .expect_err("empty resolved env var must fail");
+        assert!(matches!(
+            empty_err,
+            PaymobError::ValidationError {
+                field: "hmac_secret",
+                ..
+            }
+        ));
     }
 }

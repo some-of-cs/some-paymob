@@ -183,7 +183,7 @@ impl AcceptJwtProvider {
         http: Client,
         cache: Arc<TokenCache>,
     ) -> Result<Self, AcceptJwtError> {
-        validate_api_key(&api_key)?;
+        let api_key = resolve_api_key_secret(&api_key)?;
         let auth_url = build_auth_url(base_url)?;
         Ok(Self {
             http,
@@ -385,11 +385,9 @@ pub fn is_incorrect_credentials_401(status: StatusCode, body: &[u8]) -> bool {
     })
 }
 
-fn validate_api_key(api_key: &SecretString) -> Result<(), AcceptJwtError> {
-    if api_key.expose_secret().trim().is_empty() {
-        return Err(AcceptJwtError::EmptyApiKey);
-    }
-    Ok(())
+fn resolve_api_key_secret(api_key: &SecretString) -> Result<SecretString, AcceptJwtError> {
+    crate::core::credentials::resolve_secret_or_env("api_key", api_key.expose_secret())
+        .map_err(|_| AcceptJwtError::EmptyApiKey)
 }
 
 fn build_auth_url(base_url: &str) -> Result<Url, AcceptJwtError> {

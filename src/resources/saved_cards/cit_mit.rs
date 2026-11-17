@@ -58,10 +58,13 @@ impl CitCardTokenConfig {
                 reason: "card_tokens must contain at least one saved card token".to_owned(),
             });
         }
-        for token in &card_tokens {
-            validate_token(token.expose_secret(), "card_tokens")?;
+        let mut resolved_tokens = Vec::with_capacity(card_tokens.len());
+        for token in card_tokens {
+            resolved_tokens.push(resolve_and_validate_token(token, "card_tokens")?);
         }
-        Ok(Self { card_tokens })
+        Ok(Self {
+            card_tokens: resolved_tokens,
+        })
     }
 
     /// Creates a [`CitCardTokenConfig`] containing a single validated saved card token.
@@ -81,8 +84,8 @@ impl CitCardTokenConfig {
     /// Returns [`PaymobError::ValidationError`] on `"card_tokens"` if `token` is empty
     /// or contains whitespace/control characters.
     pub fn add_token(&mut self, token: SecretString) -> Result<(), PaymobError> {
-        validate_token(token.expose_secret(), "card_tokens")?;
-        self.card_tokens.push(token);
+        let resolved = resolve_and_validate_token(token, "card_tokens")?;
+        self.card_tokens.push(resolved);
         Ok(())
     }
 
@@ -182,8 +185,8 @@ impl MitChargeParams {
         payment_token: SecretString,
         saved_token: SecretString,
     ) -> Result<Self, PaymobError> {
-        validate_token(payment_token.expose_secret(), "payment_token")?;
-        validate_token(saved_token.expose_secret(), "saved_token")?;
+        let payment_token = resolve_and_validate_token(payment_token, "payment_token")?;
+        let saved_token = resolve_and_validate_token(saved_token, "saved_token")?;
         Ok(Self {
             payment_token,
             saved_token,
@@ -203,8 +206,9 @@ impl MitChargeParams {
         saved_token: SecretString,
         cvn: SecretString,
     ) -> Result<Self, PaymobError> {
-        validate_token(payment_token.expose_secret(), "payment_token")?;
-        validate_token(saved_token.expose_secret(), "saved_token")?;
+        let payment_token = resolve_and_validate_token(payment_token, "payment_token")?;
+        let saved_token = resolve_and_validate_token(saved_token, "saved_token")?;
+        let cvn = resolve_if_env_token(cvn, "cvn")?;
         validate_use_cvc_with_moto(true, Some(&cvn))?;
         Ok(Self {
             payment_token,
@@ -316,6 +320,25 @@ pub fn validate_use_cvc_with_moto(
         }),
         (false, None) => Ok(()),
     }
+}
+
+fn resolve_if_env_token(
+    token: SecretString,
+    field: &'static str,
+) -> Result<SecretString, PaymobError> {
+    if token.expose_secret().trim().starts_with('$') {
+        return crate::core::credentials::resolve_secret_or_env(field, token.expose_secret());
+    }
+    Ok(token)
+}
+
+fn resolve_and_validate_token(
+    token: SecretString,
+    field: &'static str,
+) -> Result<SecretString, PaymobError> {
+    let resolved = resolve_if_env_token(token, field)?;
+    validate_token(resolved.expose_secret(), field)?;
+    Ok(resolved)
 }
 
 fn validate_token(value: &str, field: &'static str) -> Result<(), PaymobError> {

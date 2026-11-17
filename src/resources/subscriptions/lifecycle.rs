@@ -1049,7 +1049,8 @@ fn validate_optional_http_url(field: &'static str, raw: Option<&str>) -> Result<
         return Ok(());
     };
     let trimmed = raw_url.trim();
-    let has_control = trimmed.chars().any(char::is_control) || trimmed.chars().any(char::is_whitespace);
+    let has_control =
+        trimmed.chars().any(char::is_control) || trimmed.chars().any(char::is_whitespace);
     let parsed = url::Url::parse(trimmed).ok();
     let valid = !has_control
         && parsed

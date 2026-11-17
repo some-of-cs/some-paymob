@@ -36,7 +36,7 @@ pub const LEGACY_ORDERS_PATH: &str = "/api/ecommerce/orders";
 /// assert_eq!(item.quantity, 2);
 /// assert!(item.validate().is_ok());
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LegacyOrderItem {
     /// Human-readable item name.
     pub name: String,
@@ -68,16 +68,23 @@ impl LegacyOrderItem {
         self
     }
 
-    /// Validates that `name` is non-empty and `quantity` is at least `1`.
+    /// Validates that `name` is non-empty and both `amount_cents` and `quantity` are at least `1`.
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `name` is blank or `quantity == 0`.
+    /// Returns [`PaymobError::ValidationError`] if `name` is blank, `amount_cents == 0`,
+    /// or `quantity == 0`.
     pub fn validate(&self) -> Result<(), PaymobError> {
         if self.name.trim().is_empty() {
             return Err(PaymobError::ValidationError {
                 field: "items.name",
                 reason: "order item name must not be empty".to_owned(),
+            });
+        }
+        if self.amount_cents == 0 {
+            return Err(PaymobError::ValidationError {
+                field: "items.amount_cents",
+                reason: "order item amount_cents must be greater than zero".to_owned(),
             });
         }
         if self.quantity == 0 {
@@ -87,6 +94,32 @@ impl LegacyOrderItem {
             });
         }
         Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+struct RawLegacyOrderItem {
+    name: String,
+    amount_cents: u64,
+    #[serde(default)]
+    description: Option<String>,
+    quantity: u32,
+}
+
+impl<'de> Deserialize<'de> for LegacyOrderItem {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawLegacyOrderItem::deserialize(deserializer)?;
+        let item = Self {
+            name: raw.name,
+            amount_cents: raw.amount_cents,
+            description: raw.description,
+            quantity: raw.quantity,
+        };
+        item.validate().map_err(serde::de::Error::custom)?;
+        Ok(item)
     }
 }
 
@@ -105,7 +138,7 @@ impl LegacyOrderItem {
 ///
 /// assert!(params.validate().is_ok());
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CreateLegacyOrderParams {
     /// Order total in integer minor units (must be greater than zero).
     pub amount_cents: u64,
@@ -182,10 +215,7 @@ impl CreateLegacyOrderParams {
             });
         }
         validate_optional_merchant_id(self.merchant_order_id.as_deref())?;
-        for item in &self.items {
-            item.validate()?;
-        }
-        Ok(())
+        validate_order_items(&self.items)
     }
 
     /// Serializes this order payload and injects Regime 2 `"auth_token"` into the JSON object.
@@ -205,9 +235,51 @@ impl CreateLegacyOrderParams {
     }
 }
 
+#[derive(Deserialize)]
+struct RawCreateLegacyOrderParams {
+    amount_cents: u64,
+    currency: Currency,
+    delivery_needed: bool,
+    #[serde(default)]
+    merchant_order_id: Option<String>,
+    #[serde(default)]
+    items: Vec<LegacyOrderItem>,
+}
+
+impl<'de> Deserialize<'de> for CreateLegacyOrderParams {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawCreateLegacyOrderParams::deserialize(deserializer)?;
+        let params = Self {
+            amount_cents: raw.amount_cents,
+            currency: raw.currency,
+            delivery_needed: raw.delivery_needed,
+            merchant_order_id: raw.merchant_order_id,
+            items: raw.items,
+        };
+        params.validate().map_err(serde::de::Error::custom)?;
+        Ok(params)
+    }
+}
+
 /// Authenticated wrapper pairing [`CreateLegacyOrderParams`] with a Regime 2 `auth_token`.
 ///
 /// Implements a custom [`fmt::Debug`] that emits `"[REDACTED]"` for `auth_token`.
+/// The `auth_token` field is private and cannot be accessed directly by callers:
+///
+/// ```compile_fail
+/// use secrecy::SecretString;
+/// use some_paymob::core::types::Currency;
+/// use some_paymob::resources::legacy::orders::{
+///     AuthenticatedLegacyOrderRequest, CreateLegacyOrderParams,
+/// };
+///
+/// let params = CreateLegacyOrderParams::new(50_000, Currency::EGP);
+/// let req = AuthenticatedLegacyOrderRequest::new(SecretString::from("jwt"), params);
+/// let _leaked = &req.auth_token;
+/// ```
 #[derive(Clone)]
 pub struct AuthenticatedLegacyOrderRequest {
     auth_token: SecretString,
@@ -247,7 +319,7 @@ impl AuthenticatedLegacyOrderRequest {
 }
 
 /// Registered order returned by `POST /api/ecommerce/orders`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LegacyOrder {
     /// Paymob-assigned numeric order identifier.
     pub id: u64,
@@ -270,6 +342,74 @@ pub struct LegacyOrder {
     /// Optional payment status string.
     #[serde(default)]
     pub payment_status: Option<String>,
+}
+
+impl LegacyOrder {
+    /// Validates that `id > 0`, `amount_cents > 0`, and `currency` is non-empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `id == 0`, `amount_cents == 0`,
+    /// or `currency` is blank.
+    pub fn validate(&self) -> Result<(), PaymobError> {
+        if self.id == 0 {
+            return Err(PaymobError::ValidationError {
+                field: "id",
+                reason: "legacy order id must be greater than zero".to_owned(),
+            });
+        }
+        if self.amount_cents == 0 {
+            return Err(PaymobError::ValidationError {
+                field: "amount_cents",
+                reason: "legacy order amount_cents must be greater than zero".to_owned(),
+            });
+        }
+        if self.currency.as_str().trim().is_empty() {
+            return Err(PaymobError::ValidationError {
+                field: "currency",
+                reason: "legacy order currency must not be empty".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+struct RawLegacyOrder {
+    id: u64,
+    amount_cents: u64,
+    currency: Currency,
+    #[serde(default)]
+    merchant_order_id: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    delivery_needed: Option<bool>,
+    #[serde(default)]
+    paid_amount_cents: Option<u64>,
+    #[serde(default)]
+    payment_status: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for LegacyOrder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawLegacyOrder::deserialize(deserializer)?;
+        let order = Self {
+            id: raw.id,
+            amount_cents: raw.amount_cents,
+            currency: raw.currency,
+            merchant_order_id: raw.merchant_order_id,
+            created_at: raw.created_at,
+            delivery_needed: raw.delivery_needed,
+            paid_amount_cents: raw.paid_amount_cents,
+            payment_status: raw.payment_status,
+        };
+        order.validate().map_err(serde::de::Error::custom)?;
+        Ok(order)
+    }
 }
 
 /// Executes `POST /api/ecommerce/orders` with Regime 2 `"auth_token"` body injection.
@@ -314,13 +454,18 @@ pub async fn create_legacy_order(
 }
 
 fn validate_optional_merchant_id(id: Option<&str>) -> Result<(), PaymobError> {
-    if let Some(raw) = id {
-        if raw.trim().is_empty() {
-            return Err(PaymobError::ValidationError {
-                field: "merchant_order_id",
-                reason: "merchant_order_id must not be blank when provided".to_owned(),
-            });
-        }
+    if id.is_some_and(|raw| raw.trim().is_empty()) {
+        return Err(PaymobError::ValidationError {
+            field: "merchant_order_id",
+            reason: "merchant_order_id must not be blank when provided".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_order_items(items: &[LegacyOrderItem]) -> Result<(), PaymobError> {
+    for item in items {
+        item.validate()?;
     }
     Ok(())
 }
@@ -404,6 +549,16 @@ mod tests {
             })
         ));
 
+        let bad_item_amount = CreateLegacyOrderParams::new(100, Currency::EGP)
+            .add_item(LegacyOrderItem::new("Item", 0, 1));
+        assert!(matches!(
+            bad_item_amount.validate(),
+            Err(PaymobError::ValidationError {
+                field: "items.amount_cents",
+                ..
+            })
+        ));
+
         let bad_item_qty = CreateLegacyOrderParams::new(100, Currency::EGP)
             .add_item(LegacyOrderItem::new("Item", 100, 0));
         assert!(matches!(
@@ -413,6 +568,33 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn tc_2_3_cycle2_deserialize_enforces_validation_on_order_types() {
+        let item_json = serde_json::json!({"name": "Widget", "amount_cents": 0, "quantity": 1});
+        assert!(serde_json::from_value::<LegacyOrderItem>(item_json).is_err());
+
+        let params_json = serde_json::json!({
+            "amount_cents": 0,
+            "currency": "EGP",
+            "delivery_needed": false
+        });
+        assert!(serde_json::from_value::<CreateLegacyOrderParams>(params_json).is_err());
+
+        let zero_id_order = serde_json::json!({
+            "id": 0,
+            "amount_cents": 50_000,
+            "currency": "EGP"
+        });
+        assert!(serde_json::from_value::<LegacyOrder>(zero_id_order).is_err());
+
+        let zero_amt_order = serde_json::json!({
+            "id": 998_877,
+            "amount_cents": 0,
+            "currency": "EGP"
+        });
+        assert!(serde_json::from_value::<LegacyOrder>(zero_amt_order).is_err());
     }
 
     #[test]

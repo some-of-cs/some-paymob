@@ -4,3 +4,9 @@
 pub mod affordability;
 pub mod pixel;
 pub mod unified;
+
+pub use affordability::{AffordabilityWidgetConfig, AffordabilityWidgetConfigBuilder};
+pub use pixel::{
+    ApplePaySettings, GooglePaySettings, PixelConfig, PixelConfigBuilder, PixelPaymentMethod,
+};
+pub use unified::CheckoutService;

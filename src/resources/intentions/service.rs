@@ -5,6 +5,7 @@
 //! pre-flight and post-response Test/Live [`EnvironmentMode`] parity guards.
 
 use std::collections::HashMap;
+use std::fmt;
 
 use reqwest::Method;
 use reqwest::header::HeaderMap;
@@ -56,7 +57,7 @@ const INTENTION_PATH: &str = "/v1/intention/";
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct IntentionsService<'a> {
     client: &'a PaymobClient,
     known_integration_modes: HashMap<u64, EnvironmentMode>,
@@ -64,6 +65,18 @@ pub struct IntentionsService<'a> {
     mock_base_url: Option<String>,
     #[cfg(test)]
     mock_http: Option<HttpClient>,
+}
+
+impl fmt::Debug for IntentionsService<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IntentionsService")
+            .field("client", &self.client)
+            .field(
+                "known_integration_modes_count",
+                &self.known_integration_modes.len(),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl PaymobClient {
@@ -149,14 +162,22 @@ impl<'a> IntentionsService<'a> {
         key_mode: EnvironmentMode,
     ) -> Result<(), PaymobError> {
         for method in methods {
-            let PaymentMethodInput::IntegrationId(id) = method else {
-                continue;
-            };
-            let Some(&known_mode) = self.known_integration_modes.get(id) else {
-                continue;
-            };
+            self.check_single_method_parity(method, key_mode)?;
+        }
+        Ok(())
+    }
+
+    fn check_single_method_parity(
+        &self,
+        method: &PaymentMethodInput,
+        key_mode: EnvironmentMode,
+    ) -> Result<(), PaymobError> {
+        let Some(id) = method.as_integration_id() else {
+            return Ok(());
+        };
+        if let Some(&known_mode) = self.known_integration_modes.get(&id) {
             if known_mode != key_mode {
-                return Err(env_mismatch_error(*id, key_mode, known_mode));
+                return Err(env_mismatch_error(id, key_mode, known_mode));
             }
         }
         Ok(())
@@ -169,14 +190,8 @@ impl<'a> IntentionsService<'a> {
     ) -> Result<HttpRequest, PaymobError> {
         let url = self.resolve_intention_url()?;
         let headers = self.build_auth_headers(&method)?;
-        let mut req = HttpRequest::new(method, &url)
-            .map_err(PaymobError::from)?
-            .with_json(payload)
-            .map_err(PaymobError::from)?;
-        for (name, value) in &headers {
-            req = req.with_header(name.clone(), value.clone());
-        }
-        Ok(req)
+        let req = new_json_request(method, &url, payload)?;
+        Ok(attach_headers(req, &headers))
     }
 
     async fn dispatch_intention<T: serde::Serialize>(
@@ -191,12 +206,7 @@ impl<'a> IntentionsService<'a> {
             .execute(&req)
             .await
             .map_err(PaymobError::from)?;
-        if !response.status.is_success() {
-            return Err(PaymobError::from_http_response(&response));
-        }
-        let parsed: IntentionResponse = response.json().map_err(PaymobError::from)?;
-        verify_response_parity(&parsed, key_mode)?;
-        Ok(parsed)
+        parse_and_verify_response(&response, key_mode)
     }
 
     fn build_auth_headers(&self, method: &Method) -> Result<HeaderMap, PaymobError> {
@@ -230,6 +240,34 @@ impl<'a> IntentionsService<'a> {
         }
         self.client.http()
     }
+}
+
+fn new_json_request<T: serde::Serialize>(
+    method: Method,
+    url: &str,
+    payload: &T,
+) -> Result<HttpRequest, PaymobError> {
+    let req = HttpRequest::new(method, url).map_err(PaymobError::from)?;
+    req.with_json(payload).map_err(PaymobError::from)
+}
+
+fn attach_headers(mut req: HttpRequest, headers: &HeaderMap) -> HttpRequest {
+    for (name, value) in headers {
+        req = req.with_header(name.clone(), value.clone());
+    }
+    req
+}
+
+fn parse_and_verify_response(
+    response: &crate::core::http::HttpResponse,
+    key_mode: EnvironmentMode,
+) -> Result<IntentionResponse, PaymobError> {
+    if !response.status.is_success() {
+        return Err(PaymobError::from_http_response(response));
+    }
+    let parsed: IntentionResponse = response.json().map_err(PaymobError::from)?;
+    verify_response_parity(&parsed, key_mode)?;
+    Ok(parsed)
 }
 
 fn verify_response_parity(
@@ -417,5 +455,17 @@ mod tests {
             .await
             .expect_err("400 validation error");
         assert!(err.is_validation_error());
+    }
+
+    #[test]
+    fn tc_2_1_cycle2_service_debug_redacts_internal_state() {
+        let client = test_client("egy_sk_test_secret_value_999");
+        let svc = client
+            .intentions()
+            .with_integration_mode(4_097_558, EnvironmentMode::Test);
+        let dbg = format!("{svc:?}");
+        assert!(dbg.contains("IntentionsService"));
+        assert!(dbg.contains("known_integration_modes_count"));
+        assert!(!dbg.contains("egy_sk_test_secret_value_999"));
     }
 }

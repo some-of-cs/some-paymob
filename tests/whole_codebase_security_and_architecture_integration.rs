@@ -206,7 +206,7 @@ async fn legacy_v2_rejects_non_loopback_http_and_shares_accept_jwt_cache() {
     assert!(matches!(
         bad_url_err,
         Err(PaymobError::ValidationError {
-            field: "accept_base_url",
+            field: "auth_token",
             ..
         })
     ));

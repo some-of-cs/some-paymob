@@ -342,8 +342,7 @@ pub fn generate_signed_transaction_post(
     .to_string();
 
     // Ensure generated payload always satisfies PaymobWebhookEngine roundtrip contract.
-    let _ =
-        PaymobWebhookEngine::verify_concatenated_with_secret(hmac_secret, &canonical, &hmac_hex)?;
+    PaymobWebhookEngine::verify_concatenated_with_secret(hmac_secret, &canonical, &hmac_hex)?;
 
     Ok(SignedWebhookToolPayload {
         json_body,

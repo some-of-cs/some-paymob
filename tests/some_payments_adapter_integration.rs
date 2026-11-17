@@ -110,7 +110,7 @@ async fn ac1_and_ac3_paymob_ext_wires_into_intention_params_and_redacts_session(
 }
 
 #[tokio::test]
-async fn ac1_capture_delegates_to_manage_service() {
+async fn ac1_capture_refund_and_void_delegate_to_manage_service() {
     let cap = assert_manage_op(
         "/api/acceptance/capture",
         serde_json::json!({ "transaction_id": 1001, "amount_cents": 5000 }),
@@ -118,23 +118,20 @@ async fn ac1_capture_delegates_to_manage_service() {
             "id": 1002, "pending": false, "amount_cents": 5000,
             "success": true, "is_capture": true, "is_captured": true
         }),
-        |client| async move {
-            client
-                .capture_payment(&UnifiedCaptureRequest::new(
-                    1001,
-                    MinorUnitAmount::new(5000),
-                ))
-                .await
+        |c| async move {
+            c.capture_payment(&UnifiedCaptureRequest::new(
+                1001,
+                MinorUnitAmount::new(5000),
+            ))
+            .await
         },
     )
     .await;
-    assert_eq!(cap.transaction_id, 1002);
-    assert_eq!(cap.amount.as_u64(), 5000);
-    assert!(cap.success);
-}
+    assert_eq!(
+        (cap.transaction_id, cap.amount.as_u64(), cap.success),
+        (1002, 5000, true)
+    );
 
-#[tokio::test]
-async fn ac1_refund_delegates_to_manage_service() {
     let refund = assert_manage_op(
         "/api/acceptance/void_refund/refund",
         serde_json::json!({ "transaction_id": 1002, "amount_cents": 2500 }),
@@ -142,20 +139,17 @@ async fn ac1_refund_delegates_to_manage_service() {
             "id": 1003, "pending": false, "amount_cents": 2500,
             "success": true, "is_refund": true, "is_refunded": true
         }),
-        |client| async move {
-            client
-                .refund_payment(&UnifiedRefundRequest::new(1002, MinorUnitAmount::new(2500)))
+        |c| async move {
+            c.refund_payment(&UnifiedRefundRequest::new(1002, MinorUnitAmount::new(2500)))
                 .await
         },
     )
     .await;
-    assert_eq!(refund.refund_id, 1003);
-    assert_eq!(refund.amount.as_u64(), 2500);
-    assert!(refund.is_refunded);
-}
+    assert_eq!(
+        (refund.refund_id, refund.amount.as_u64(), refund.is_refunded),
+        (1003, 2500, true)
+    );
 
-#[tokio::test]
-async fn ac1_void_delegates_to_manage_service() {
     let voided = assert_manage_op(
         "/api/acceptance/void_refund/void",
         serde_json::json!({ "transaction_id": 1004 }),
@@ -163,11 +157,10 @@ async fn ac1_void_delegates_to_manage_service() {
             "id": 1005, "pending": false, "amount_cents": 5000,
             "success": true, "is_void": true, "is_voided": true
         }),
-        |client| async move { client.void_payment(&UnifiedVoidRequest::new(1004)).await },
+        |c| async move { c.void_payment(&UnifiedVoidRequest::new(1004)).await },
     )
     .await;
-    assert_eq!(voided.transaction_id, 1005);
-    assert!(voided.is_voided);
+    assert_eq!((voided.transaction_id, voided.is_voided), (1005, true));
 }
 
 #[tokio::test]

@@ -133,6 +133,12 @@ pub fn normalize_webhook_event(event: &WebhookEvent) -> UnifiedWebhookOutcome {
     }
 }
 
+enum ManageOp {
+    Capture(CaptureParams),
+    Refund(RefundParams),
+    Void(VoidParams),
+}
+
 async fn run_client_call<P, R, F, Fut>(
     client: PaymobClient,
     params_res: Result<P, PaymobError>,
@@ -146,17 +152,20 @@ where
     op(client, params).await
 }
 
-async fn run_manage_call<P, R, F, Fut>(
+async fn execute_manage_op(client: PaymobClient, op: ManageOp) -> Result<Transaction, PaymobError> {
+    match op {
+        ManageOp::Capture(params) => client.manage().capture(params).await,
+        ManageOp::Refund(params) => client.manage().refund(params).await,
+        ManageOp::Void(params) => client.manage().void(params).await,
+    }
+}
+
+async fn run_manage_call<R>(
     client: PaymobClient,
-    params_res: Result<P, PaymobError>,
-    op: F,
+    op_res: Result<ManageOp, PaymobError>,
     map_receipt: fn(Transaction) -> R,
-) -> Result<R, PaymobError>
-where
-    F: FnOnce(PaymobClient, P) -> Fut,
-    Fut: Future<Output = Result<Transaction, PaymobError>>,
-{
-    let tx = run_client_call(client, params_res, op).await?;
+) -> Result<R, PaymobError> {
+    let tx = run_client_call(client, op_res, execute_manage_op).await?;
     Ok(map_receipt(tx))
 }
 
@@ -219,36 +228,26 @@ impl PaymentProvider for PaymobClient {
         &self,
         req: &UnifiedCaptureRequest,
     ) -> impl Future<Output = Result<UnifiedCaptureReceipt, Self::Error>> + Send + '_ {
-        run_manage_call(
-            self.clone(),
-            CaptureParams::try_new(req.transaction_id, req.amount.as_u64()),
-            |client, params| async move { client.manage().capture(params).await },
-            to_capture_receipt,
-        )
+        let op =
+            CaptureParams::try_new(req.transaction_id, req.amount.as_u64()).map(ManageOp::Capture);
+        run_manage_call(self.clone(), op, to_capture_receipt)
     }
 
     fn refund_payment(
         &self,
         req: &UnifiedRefundRequest,
     ) -> impl Future<Output = Result<UnifiedRefundReceipt, Self::Error>> + Send + '_ {
-        run_manage_call(
-            self.clone(),
-            RefundParams::try_new(req.transaction_id, req.amount.as_u64()),
-            |client, params| async move { client.manage().refund(params).await },
-            to_refund_receipt,
-        )
+        let op =
+            RefundParams::try_new(req.transaction_id, req.amount.as_u64()).map(ManageOp::Refund);
+        run_manage_call(self.clone(), op, to_refund_receipt)
     }
 
     fn void_payment(
         &self,
         req: &UnifiedVoidRequest,
     ) -> impl Future<Output = Result<UnifiedVoidReceipt, Self::Error>> + Send + '_ {
-        run_manage_call(
-            self.clone(),
-            VoidParams::try_new(req.transaction_id),
-            |client, params| async move { client.manage().void(params).await },
-            to_void_receipt,
-        )
+        let op = VoidParams::try_new(req.transaction_id).map(ManageOp::Void);
+        run_manage_call(self.clone(), op, to_void_receipt)
     }
 
     fn charge_saved_method(
@@ -341,6 +340,14 @@ mod tests {
     use crate::core::region::PaymobRegion;
     use crate::core::types::Currency;
 
+    fn test_egypt_client() -> PaymobClient {
+        let config = ClientConfig::builder()
+            .region(PaymobRegion::Egypt)
+            .build()
+            .expect("config");
+        PaymobClient::new(config).expect("client")
+    }
+
     #[test]
     fn build_intention_params_maps_numeric_and_named_methods() {
         let req = UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(15_000), Currency::EGP)
@@ -374,22 +381,14 @@ mod tests {
 
     #[test]
     fn verify_webhook_rejects_missing_hmac_secret() {
-        let config = ClientConfig::builder()
-            .region(PaymobRegion::Egypt)
-            .build()
-            .expect("config");
-        let client = PaymobClient::new(config).expect("client");
+        let client = test_egypt_client();
         let res = client.verify_webhook(&UnifiedWebhookInput::new("{}", None));
         assert!(res.is_err());
     }
 
     #[tokio::test]
     async fn execute_payout_validates_empty_recipient() {
-        let config = ClientConfig::builder()
-            .region(PaymobRegion::Egypt)
-            .build()
-            .expect("config");
-        let client = PaymobClient::new(config).expect("client");
+        let client = test_egypt_client();
         let req =
             UnifiedPayoutRequest::new("", MinorUnitAmount::new(1000), Currency::EGP, "vodafone");
         assert!(matches!(

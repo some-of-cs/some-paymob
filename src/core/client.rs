@@ -349,6 +349,21 @@ impl PaymobClient {
     pub fn webhook_engine(&self) -> Result<crate::webhooks::PaymobWebhookEngine, PaymobError> {
         self.inner.config.webhook_engine()
     }
+    /// Returns a [`SavedCardsService`](crate::resources::saved_cards::SavedCardsService)
+    /// bound to this client for saved-card CIT/MIT and headless payments.
+    #[cfg(feature = "saved-cards")]
+    #[must_use]
+    pub fn saved_cards(&self) -> crate::resources::saved_cards::SavedCardsService {
+        crate::resources::saved_cards::SavedCardsService::new(self.clone())
+    }
+
+    /// Returns a [`SubscriptionsService`](crate::resources::subscriptions::SubscriptionsService)
+    /// bound to this client for subscription plans, lifecycle, card vault, and history operations.
+    #[cfg(feature = "subscriptions")]
+    #[must_use]
+    pub fn subscriptions(&self) -> crate::resources::subscriptions::SubscriptionsService {
+        crate::resources::subscriptions::SubscriptionsService::new(self.clone())
+    }
 }
 
 fn has_forbidden_chars_or_authority(path: &str, trimmed: &str) -> bool {

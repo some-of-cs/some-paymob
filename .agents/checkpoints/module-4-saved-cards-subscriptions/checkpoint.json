@@ -1,0 +1,39 @@
+{
+  "module": "module-4-saved-cards-subscriptions",
+  "branch": "feat/module-4-saved-cards-subscriptions",
+  "status": "wave_4_pr_opened",
+  "stories": {
+    "us-4.1.0": {
+      "branch": "feat/us-4.1.0-saved-cards-headless-pay",
+      "story_pr": 77,
+      "merged_sha": "3ccfa0e8933130c1bee25d58163fe364681aeed1",
+      "units": {
+        "unit-1": 37,
+        "unit-2": 52,
+        "unit-3": 68
+      }
+    },
+    "us-4.2.0": {
+      "branch": "feat/us-4.2.0-subscription-plans",
+      "story_pr": 79,
+      "merged_sha": "6d87ec246b8be2acfce3ba7e434591f77b6e16f",
+      "units": {
+        "unit-1": 41,
+        "unit-2": 38,
+        "unit-3": 62
+      }
+    },
+    "us-4.3.0": {
+      "branch": "feat/us-4.3.0-subscription-lifecycle-cards-refunds",
+      "story_pr": 78,
+      "merged_sha": "6c0b0ee9e77437dffe0595dcac0184448f46e16f",
+      "units": {
+        "unit-1": 40,
+        "unit-2": 73,
+        "unit-3": 64,
+        "unit-4": 65,
+        "unit-5": 63
+      }
+    }
+  }
+}

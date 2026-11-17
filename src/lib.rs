@@ -11,14 +11,16 @@
 pub mod core;
 pub mod prelude;
 
-/// Paymob API resource modules, checkout builders, payment lifecycle management, inquiries, QuickLinks, and splits.
+/// Paymob API resource modules, checkout builders, payment lifecycle management, inquiries, QuickLinks, splits, saved cards, and subscriptions.
 #[cfg(any(
     feature = "intentions",
     feature = "legacy-v2",
     feature = "manage",
     feature = "inquiries",
     feature = "quicklinks",
-    feature = "splits"
+    feature = "splits",
+    feature = "saved-cards",
+    feature = "subscriptions"
 ))]
 pub mod resources;
 
@@ -68,3 +70,11 @@ pub use resources::inquiries::InquiriesService;
 /// Crate-root re-export of the QuickLinks payment links service (`create`, `cancel`).
 #[cfg(feature = "quicklinks")]
 pub use resources::quicklinks::QuickLinksService;
+
+/// Crate-root re-export of saved-card tokenization and headless payment services.
+#[cfg(feature = "saved-cards")]
+pub use resources::saved_cards::SavedCardsService;
+
+/// Crate-root re-export of subscription plan and recurring billing services.
+#[cfg(feature = "subscriptions")]
+pub use resources::subscriptions::SubscriptionsService;

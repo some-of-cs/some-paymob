@@ -69,3 +69,11 @@ pub use crate::resources::inquiries::InquiriesService;
 /// Re-exports QuickLinks payment links service.
 #[cfg(feature = "quicklinks")]
 pub use crate::resources::quicklinks::QuickLinksService;
+
+/// Re-exports all public saved-card tokenization and headless payment types.
+#[cfg(feature = "saved-cards")]
+pub use crate::resources::saved_cards::*;
+
+/// Re-exports all public subscription plan, lifecycle, card vault, and history types.
+#[cfg(feature = "subscriptions")]
+pub use crate::resources::subscriptions::*;

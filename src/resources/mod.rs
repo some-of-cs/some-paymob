@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Paymob API resource modules, checkout builders, payment lifecycle management, inquiries, QuickLinks, and splits.
+//! Paymob API resource modules, checkout builders, payment lifecycle management, inquiries, QuickLinks, splits, saved cards, and subscriptions.
 
 #[cfg(feature = "intentions")]
 pub mod checkout;
@@ -13,5 +13,9 @@ pub mod legacy;
 pub mod manage;
 #[cfg(feature = "quicklinks")]
 pub mod quicklinks;
+#[cfg(feature = "saved-cards")]
+pub mod saved_cards;
 #[cfg(feature = "splits")]
 pub mod splits;
+#[cfg(feature = "subscriptions")]
+pub mod subscriptions;

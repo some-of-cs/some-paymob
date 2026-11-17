@@ -373,7 +373,7 @@ pub fn generate_signed_transaction_post(
     let success = request.success;
 
     let canonical = format!(
-        "{amount_cents}{TX_CREATED_AT}{currency}falsefalse{tx_id}{TX_INTEGRATION_ID}         truefalsefalsefalsetruefalse{order_id}{TX_OWNER}false{TX_PAN}{TX_SUB_TYPE}{TX_SOURCE_TYPE}{success}"
+        "{amount_cents}{TX_CREATED_AT}{currency}falsefalse{tx_id}{TX_INTEGRATION_ID}truefalsefalsefalsetruefalse{order_id}{TX_OWNER}false{TX_PAN}{TX_SUB_TYPE}{TX_SOURCE_TYPE}{success}"
     );
     let hmac_hex = sign_hmac_sha512(hmac_secret, &canonical)?;
     let json_body = build_transaction_post_body(request);

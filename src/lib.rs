@@ -26,6 +26,26 @@ pub use crate::core::error::PaymobError;
 pub use crate::core::region::PaymobRegion;
 pub use crate::core::types::{Currency, MinorUnitAmount};
 
+/// Crate-root re-exports of the v1 Payment Intentions and Checkout services.
+#[cfg(feature = "intentions")]
+pub use crate::resources::checkout::{
+    AffordabilityWidgetConfig, AffordabilityWidgetConfigBuilder, CheckoutService, PixelConfig,
+    PixelConfigBuilder, PixelPaymentMethod,
+};
+#[cfg(feature = "intentions")]
+pub use crate::resources::intentions::{
+    BillingData, BillingDataBuilder, CreateIntentionParams, CreateIntentionParamsBuilder,
+    IntentionCustomer, IntentionItem, IntentionResponse, IntentionsService, PaymentMethodInput,
+    UpdateIntentionParams, UpdateIntentionParamsBuilder,
+};
+
+/// Crate-root re-exports of the opt-in Legacy Accept v2 3-step checkout service and models.
+#[cfg(feature = "legacy-v2")]
+pub use crate::resources::legacy::{
+    CreateLegacyOrderParams, CreatePaymentKeyParams, LegacyBillingData, LegacyCheckoutParams,
+    LegacyCheckoutSession, LegacyOrder, LegacyOrderItem, LegacyV2Service, PaymentKeyResponse,
+};
+
 /// Crate-root re-exports of the core Paymob webhook engine, event, error, and result types.
 #[cfg(feature = "webhooks")]
 pub use webhooks::{PaymobWebhookEngine, WebhookError, WebhookEvent, WebhookResult};

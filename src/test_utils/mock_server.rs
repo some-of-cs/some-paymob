@@ -358,11 +358,23 @@ impl PaymobMockServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::auth::accept_jwt::AcceptJwtProvider;
+    use crate::core::auth::accept_jwt::{AcceptJwtError, AcceptJwtProvider};
     use crate::core::auth::payouts_oauth::{PayoutsCredentials, PayoutsOAuthProvider};
     use crate::core::http::{HttpClient, HttpClientConfig, HttpRequest, RetryPolicy};
-    use secrecy::ExposeSecret;
+    use secrecy::{ExposeSecret, SecretString};
     use std::time::Duration;
+
+    async fn send_inquiry(
+        client: &reqwest::Client,
+        url: &str,
+        tok: &SecretString,
+    ) -> Result<reqwest::Response, AcceptJwtError> {
+        Ok(client
+            .post(url)
+            .json(&json!({ "auth_token": tok.expose_secret() }))
+            .send()
+            .await?)
+    }
 
     #[tokio::test]
     async fn tc_8_2_2_jwt_401_expiry_triggers_single_flight_refresh() {
@@ -379,12 +391,9 @@ mod tests {
             )
             .await;
 
-        let provider = AcceptJwtProvider::new(
-            server.accept_uri(),
-            "test_api_key",
-            Duration::from_secs(3600),
-        )
-        .expect("valid provider");
+        let provider =
+            AcceptJwtProvider::new(&server.accept_uri(), SecretString::from("test_api_key"))
+                .expect("valid provider");
 
         let client = reqwest::Client::new();
         let inquiry_url = format!(
@@ -395,12 +404,7 @@ mod tests {
             .execute_with_retry(|tok| {
                 let c = client.clone();
                 let u = inquiry_url.clone();
-                async move {
-                    c.post(u)
-                        .json(&json!({ "auth_token": tok.expose_secret() }))
-                        .send()
-                        .await
-                }
+                async move { send_inquiry(&c, &u, &tok).await }
             })
             .await
             .expect("retry after 401 succeeds");
@@ -471,8 +475,7 @@ mod tests {
         let creds = PayoutsCredentials::new("client_id", "client_secret", "user", "pass")
             .expect("valid creds");
         let oauth =
-            PayoutsOAuthProvider::new(server.payouts_uri(), creds, Duration::from_secs(3600))
-                .expect("valid oauth provider");
+            PayoutsOAuthProvider::new(&server.payouts_uri(), creds).expect("valid oauth provider");
         let tok = oauth.access_token().await.expect("oauth token");
         assert_eq!(tok.expose_secret(), "oauth-acc-1");
     }

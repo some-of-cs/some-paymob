@@ -246,3 +246,38 @@ async fn ac4_tc_3_2_4_tc_3_2_5_order_inquiry_and_redaction() {
     assert!(!dbg.contains("maher@example.com"));
     assert!(!dbg.contains("+201000000000"));
 }
+
+#[tokio::test]
+async fn inquiries_evict_stale_jwt_and_retry_once_on_401_incorrect_credentials() {
+    let server = MockServer::start().await;
+    mount_auth_token(&server, "jwt_fresh_retry").await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/acceptance/transactions/192036465"))
+        .and(header("Authorization", "Bearer stale_jwt_token"))
+        .respond_with(
+            ResponseTemplate::new(401).set_body_json(json!({"detail": "incorrect credentials"})),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/acceptance/transactions/192036465"))
+        .and(header("Authorization", "Bearer jwt_fresh_retry"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(sample_transaction_json()))
+        .mount(&server)
+        .await;
+
+    let client = build_mock_client(&server.uri());
+    let stale =
+        some_paymob::core::auth::cache::CachedToken::with_default_ttl("stale_jwt_token", None);
+    client.auth().accept_cache().store(stale);
+
+    let tx = client
+        .inquiries()
+        .by_transaction_id(192_036_465)
+        .await
+        .expect("401 incorrect credentials should evict stale JWT and retry");
+    assert_eq!(tx.id, 192_036_465);
+}

@@ -105,3 +105,117 @@ fn splits_and_convenience_fees_reexport_and_enforce_edge_bounds() {
         .expect("valid fee");
     assert_eq!(fee, 2_300);
 }
+
+#[cfg(feature = "onboarding")]
+fn build_partner_client(base_url: &str) -> PaymobClient {
+    let creds = PartnerCredentials::with_bearer_token("pk_partner_1", "partner_bearer_tok")
+        .expect("valid partner creds");
+    let config = ClientConfig::builder()
+        .region(PaymobRegion::Custom {
+            accept_base_url: base_url.to_owned(),
+            checkout_base_url: base_url.to_owned(),
+            payouts_base_url: base_url.to_owned(),
+            payouts_staging_base_url: base_url.to_owned(),
+        })
+        .partner_credentials(creds)
+        .max_retries(0)
+        .build()
+        .expect("valid config");
+    PaymobClient::new(config).expect("valid client")
+}
+
+#[cfg(feature = "onboarding")]
+#[tokio::test]
+async fn partner_retrieve_merchant_hmac_secret_validates_mid_and_redacts_secret() {
+    let server = wiremock::MockServer::start().await;
+    let body = serde_json::json!({
+        "label": "merchant_hmac",
+        "status": "Created",
+        "code": 201,
+        "body": { "hmac_secret": "MERCHANT_SUPER_SECRET_HMAC_998877" }
+    });
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path(
+            "/api/partner/merchants/hmac_secret/998877",
+        ))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer partner_bearer_tok",
+        ))
+        .respond_with(wiremock::ResponseTemplate::new(201).set_body_json(body))
+        .mount(&server)
+        .await;
+
+    let client = build_partner_client(&server.uri());
+    let zero_err = client
+        .onboarding()
+        .auth()
+        .retrieve_merchant_hmac_secret(0)
+        .await;
+    assert!(matches!(
+        zero_err,
+        Err(PaymobError::ValidationError { field: "mid", .. })
+    ));
+
+    let env = client
+        .onboarding()
+        .auth()
+        .retrieve_merchant_hmac_secret(998_877)
+        .await
+        .expect("retrieve_merchant_hmac_secret succeeds");
+    assert_eq!(env.hmac_secret(), "MERCHANT_SUPER_SECRET_HMAC_998877");
+    assert!(!format!("{env:?}").contains("MERCHANT_SUPER_SECRET_HMAC_998877"));
+}
+
+#[cfg(feature = "subscriptions")]
+#[test]
+fn subscription_transaction_debug_redacts_raw_source_data_and_gateway_data() {
+    let raw_json = serde_json::json!({
+        "id": 770011,
+        "amount_cents": 15000,
+        "success": true,
+        "pending": false,
+        "is_voided": false,
+        "is_refunded": false,
+        "currency": "EGP",
+        "created_at": "2026-11-17T00:00:00Z",
+        "source_data": { "pan": "4111222233334444", "sub_type": "MasterCard" },
+        "data": { "mig_token": "secret_mig_tok_999" }
+    });
+    let tx: some_paymob::SubscriptionTransaction =
+        serde_json::from_value(raw_json).expect("valid subscription transaction");
+    let dbg = format!("{tx:?}");
+    assert!(dbg.contains("[REDACTED]"));
+    assert!(!dbg.contains("4111222233334444"));
+    assert!(!dbg.contains("secret_mig_tok_999"));
+}
+
+#[cfg(feature = "legacy-v2")]
+#[tokio::test]
+async fn legacy_v2_rejects_non_loopback_http_and_shares_accept_jwt_cache() {
+    use secrecy::ExposeSecret as _;
+
+    let client = try_custom_http_client("http://127.0.0.1:9")
+        .expect("loopback http allowed at client creation");
+    client
+        .auth()
+        .accept_cache()
+        .store(CachedToken::with_default_ttl("shared_accept_jwt", None));
+
+    let bad_url_err = LegacyV2Service::with_base_url(client.clone(), "http://example.com");
+    assert!(matches!(
+        bad_url_err,
+        Err(PaymobError::ValidationError {
+            field: "accept_base_url",
+            ..
+        })
+    ));
+
+    let legacy_local =
+        LegacyV2Service::with_base_url(client, "http://127.0.0.1:9").expect("valid loopback url");
+    let cached_tok = legacy_local
+        .generate_auth_token()
+        .await
+        .expect("should read shared accept_cache without network call");
+    assert_eq!(cached_tok.expose_secret(), "shared_accept_jwt");
+}

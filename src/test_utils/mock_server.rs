@@ -74,10 +74,14 @@ pub struct JsonEndpointMockConfig<'a> {
     pub body: Value,
 }
 
-struct FailThenOkConfig<'a> {
+struct MockRoute<'a> {
     host: MockHost,
     http_method: &'a str,
     endpoint_path: &'a str,
+}
+
+struct FailThenOkConfig<'a> {
+    route: MockRoute<'a>,
     fail_count: usize,
     failure_status: u16,
     failure_body: Value,
@@ -278,6 +282,30 @@ impl PaymobMockServer {
             .await;
     }
 
+    async fn mount_responder(&self, route: MockRoute<'_>, responder: impl Respond + 'static) {
+        let target = match route.host {
+            MockHost::Accept => &self.accept,
+            MockHost::Payouts => &self.payouts,
+        };
+        Mock::given(method(route.http_method))
+            .and(path(route.endpoint_path))
+            .respond_with(responder)
+            .mount(target)
+            .await;
+    }
+
+    async fn mount_fail_then_ok(&self, cfg: FailThenOkConfig<'_>) {
+        let responder = FailThenOkResponder {
+            attempts: Arc::new(AtomicUsize::new(0)),
+            fail_count: cfg.fail_count,
+            failure_status: cfg.failure_status,
+            failure_body: cfg.failure_body,
+            retry_after_secs: cfg.retry_after_secs,
+            ok_body: cfg.ok_body,
+        };
+        self.mount_responder(cfg.route, responder).await;
+    }
+
     /// Mounts an Accept endpoint that returns `401 {"detail": "incorrect credentials"}`
     /// for the first `fail_count` requests, then `200 ok_body`.
     ///
@@ -300,42 +328,13 @@ impl PaymobMockServer {
     ///     .await;
     /// # }
     /// ```
-    async fn mount_responder(
-        &self,
-        host: MockHost,
-        http_method: &str,
-        endpoint_path: &str,
-        responder: impl Respond + 'static,
-    ) {
-        let target = match host {
-            MockHost::Accept => &self.accept,
-            MockHost::Payouts => &self.payouts,
-        };
-        Mock::given(method(http_method))
-            .and(path(endpoint_path))
-            .respond_with(responder)
-            .mount(target)
-            .await;
-    }
-
-    async fn mount_fail_then_ok(&self, cfg: FailThenOkConfig<'_>) {
-        let responder = FailThenOkResponder {
-            attempts: Arc::new(AtomicUsize::new(0)),
-            fail_count: cfg.fail_count,
-            failure_status: cfg.failure_status,
-            failure_body: cfg.failure_body,
-            retry_after_secs: cfg.retry_after_secs,
-            ok_body: cfg.ok_body,
-        };
-        self.mount_responder(cfg.host, cfg.http_method, cfg.endpoint_path, responder)
-            .await;
-    }
-
     pub async fn mount_jwt_expiry_then_ok(&self, config: JwtExpiryMockConfig<'_>) {
         self.mount_fail_then_ok(FailThenOkConfig {
-            host: MockHost::Accept,
-            http_method: config.http_method,
-            endpoint_path: config.endpoint_path,
+            route: MockRoute {
+                host: MockHost::Accept,
+                http_method: config.http_method,
+                endpoint_path: config.endpoint_path,
+            },
             fail_count: config.fail_count,
             failure_status: 401,
             failure_body: json!({ "detail": "incorrect credentials" }),
@@ -373,9 +372,11 @@ impl PaymobMockServer {
     /// ```
     pub async fn mount_payouts_429_then_ok(&self, config: PayoutsRateLimitMockConfig<'_>) {
         self.mount_fail_then_ok(FailThenOkConfig {
-            host: MockHost::Payouts,
-            http_method: config.http_method,
-            endpoint_path: config.endpoint_path,
+            route: MockRoute {
+                host: MockHost::Payouts,
+                http_method: config.http_method,
+                endpoint_path: config.endpoint_path,
+            },
             fail_count: config.fail_count,
             failure_status: 429,
             failure_body: json!({
@@ -414,9 +415,11 @@ impl PaymobMockServer {
     /// ```
     pub async fn mount_json(&self, config: JsonEndpointMockConfig<'_>) {
         self.mount_responder(
-            config.host,
-            config.http_method,
-            config.endpoint_path,
+            MockRoute {
+                host: config.host,
+                http_method: config.http_method,
+                endpoint_path: config.endpoint_path,
+            },
             ResponseTemplate::new(config.status).set_body_json(config.body),
         )
         .await;

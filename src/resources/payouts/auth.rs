@@ -196,7 +196,7 @@ impl<'a> PayoutsAuthService<'a> {
     fn cache_token(&self, token: &PayoutsTokenResponse) {
         let cached = CachedToken::new(
             token.access_token.expose_secret().to_owned(),
-            Some(token.refresh_token.expose_secret().to_owned()),
+            Some(token.refresh_token.clone()),
             std::time::Duration::from_secs(token.expires_in),
         );
         self.client.auth().payouts_cache().store(cached);

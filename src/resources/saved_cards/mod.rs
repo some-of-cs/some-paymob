@@ -10,4 +10,9 @@ pub mod service;
 /// Unit 4.1.1: Polymorphic `PaymentSource` enum with `[REDACTED]` formatting.
 pub mod sources;
 
-pub use service::SavedCardsService;
+pub use cit_mit::{CitCardTokenConfig, MitChargeParams, validate_use_cvc_with_moto};
+pub use service::{
+    ACCEPT_PAY_PATH, HeadlessPayResponse, KioskPayParams, MitPayParams, RawPayParams,
+    SavedCardsService, WalletPayParams,
+};
+pub use sources::PaymentSource;

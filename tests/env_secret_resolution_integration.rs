@@ -244,9 +244,9 @@ fn env_secret_resolution_works_for_checkout_and_legacy_v2() {
 #[cfg(all(feature = "saved-cards", feature = "subscriptions"))]
 #[test]
 fn env_secret_resolution_works_for_saved_cards_and_subscriptions() {
-    use some_paymob::resources::saved_cards::{
-        CitCardTokenConfig, KioskPayParams, MitChargeParams, PaymentSource, TokenPayParams,
-    };
+    use some_paymob::resources::saved_cards::cit_mit::{CitCardTokenConfig, MitChargeParams};
+    use some_paymob::resources::saved_cards::service::{KioskPayParams, MitPayParams};
+    use some_paymob::resources::saved_cards::sources::PaymentSource;
     use some_paymob::resources::subscriptions::cards::AddSecondaryCardParams;
 
     with_temp_env(
@@ -270,7 +270,7 @@ fn env_secret_resolution_works_for_saved_cards_and_subscriptions() {
             assert_eq!(mit.saved_token().expose_secret(), "saved_tok_from_env_666");
             assert_eq!(mit.cvn().unwrap().expose_secret(), "789");
 
-            let tok_pay = TokenPayParams::new("$TEST_PAY_TOK", "${TEST_SAVED_TOK}")
+            let tok_pay = MitPayParams::new("$TEST_PAY_TOK", "${TEST_SAVED_TOK}")
                 .unwrap()
                 .with_cvn("$TEST_CVN")
                 .unwrap();

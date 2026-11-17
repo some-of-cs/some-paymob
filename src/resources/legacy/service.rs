@@ -11,9 +11,11 @@
 //! [`PaymobClient::legacy_v2`] (and alias [`PaymobClient::legacy`]).
 
 use std::fmt;
+use std::future::Future;
 
 use secrecy::{ExposeSecret, SecretString};
 use url::Url;
+use zeroize::Zeroizing;
 
 use crate::core::auth::accept_jwt::{ACCEPT_AUTH_TOKENS_PATH, AcceptJwtError, AcceptJwtProvider};
 use crate::core::client::PaymobClient;
@@ -133,26 +135,15 @@ impl LegacyCheckoutParams {
     /// Returns [`PaymobError::ValidationError`] if `iframe_id == 0`,
     /// `integration_id == 0`, `amount_cents == 0`, or billing/order fields are invalid.
     pub fn validate(&self) -> Result<(), PaymobError> {
-        if self.iframe_id == 0 {
-            return Err(PaymobError::ValidationError {
-                field: "iframe_id",
-                reason: "iframe_id must be greater than zero".to_owned(),
-            });
-        }
-        if self.integration_id == 0 {
-            return Err(PaymobError::ValidationError {
-                field: "integration_id",
-                reason: "integration_id must be greater than zero".to_owned(),
-            });
-        }
-        if self.expiration == 0 {
-            return Err(PaymobError::ValidationError {
-                field: "expiration",
-                reason: "expiration must be greater than zero".to_owned(),
-            });
-        }
+        self.validate_identifiers()?;
         self.to_order_params().validate()?;
         self.billing_data.validate()
+    }
+
+    fn validate_identifiers(&self) -> Result<(), PaymobError> {
+        require_nonzero("iframe_id", self.iframe_id)?;
+        require_nonzero("integration_id", self.integration_id)?;
+        require_nonzero("expiration", u64::from(self.expiration))
     }
 
     fn to_order_params(&self) -> CreateLegacyOrderParams {
@@ -237,19 +228,9 @@ impl LegacyV2Service {
         client: PaymobClient,
         base_url: impl Into<String>,
     ) -> Result<Self, PaymobError> {
-        let api_key = client
-            .config()
-            .api_key()
-            .ok_or_else(|| PaymobError::ValidationError {
-                field: "api_key",
-                reason: "api_key is required for Legacy Accept v2 checkout".to_owned(),
-            })?;
+        let api_key = extract_trimmed_api_key(&client)?;
         let base_url = base_url.into().trim_end_matches('/').to_owned();
-        let jwt_provider = AcceptJwtProvider::new(
-            &base_url,
-            SecretString::from(api_key.expose_secret().to_owned()),
-        )
-        .map_err(map_jwt_err)?;
+        let jwt_provider = AcceptJwtProvider::new(&base_url, api_key).map_err(map_jwt_err)?;
         let http = build_http_for_base_url(&client, &base_url)?;
         Ok(Self {
             client,
@@ -279,17 +260,10 @@ impl LegacyV2Service {
         &self,
         params: &CreateLegacyOrderParams,
     ) -> Result<LegacyOrder, PaymobError> {
-        let url = self.endpoint_url(LEGACY_ORDERS_PATH)?;
-        let token = self.generate_auth_token().await?;
-        match create_legacy_order(&self.http, url.clone(), &token, params).await {
-            Ok(order) => Ok(order),
-            Err(err) if err.is_auth_error() => {
-                self.jwt_provider.cache().evict_if_matches(&token).await;
-                let fresh = self.generate_auth_token().await?;
-                create_legacy_order(&self.http, url, &fresh, params).await
-            }
-            Err(err) => Err(err),
-        }
+        self.execute_with_jwt_retry(LEGACY_ORDERS_PATH, |url, token| async move {
+            create_legacy_order(&self.http, url, &token, params).await
+        })
+        .await
     }
 
     /// Generates a short-lived payment key (`POST /api/acceptance/payment_keys`)
@@ -302,17 +276,10 @@ impl LegacyV2Service {
         &self,
         params: &CreatePaymentKeyParams,
     ) -> Result<PaymentKeyResponse, PaymobError> {
-        let url = self.endpoint_url(LEGACY_PAYMENT_KEYS_PATH)?;
-        let token = self.generate_auth_token().await?;
-        match create_legacy_payment_key(&self.http, url.clone(), &token, params).await {
-            Ok(key) => Ok(key),
-            Err(err) if err.is_auth_error() => {
-                self.jwt_provider.cache().evict_if_matches(&token).await;
-                let fresh = self.generate_auth_token().await?;
-                create_legacy_payment_key(&self.http, url, &fresh, params).await
-            }
-            Err(err) => Err(err),
-        }
+        self.execute_with_jwt_retry(LEGACY_PAYMENT_KEYS_PATH, |url, token| async move {
+            create_legacy_payment_key(&self.http, url, &token, params).await
+        })
+        .await
     }
 
     /// Builds a percent-encoded Paymob Accept v2 iframe URL for `iframe_id` and `payment_token`.
@@ -320,7 +287,8 @@ impl LegacyV2Service {
     /// # Errors
     ///
     /// Returns [`PaymobError::ValidationError`] if `iframe_id == 0`, `payment_token`
-    /// is blank, or URL construction fails.
+    /// is blank, contains ASCII control characters, is a server secret key (`sk_*`),
+    /// or URL construction fails.
     ///
     /// # Examples
     ///
@@ -351,18 +319,8 @@ impl LegacyV2Service {
         iframe_id: u64,
         payment_token: &SecretString,
     ) -> Result<Url, PaymobError> {
-        if iframe_id == 0 {
-            return Err(PaymobError::ValidationError {
-                field: "iframe_id",
-                reason: "iframe_id must be greater than zero".to_owned(),
-            });
-        }
-        if payment_token.expose_secret().trim().is_empty() {
-            return Err(PaymobError::ValidationError {
-                field: "payment_token",
-                reason: "payment_token must not be empty".to_owned(),
-            });
-        }
+        require_nonzero("iframe_id", iframe_id)?;
+        validate_payment_token(payment_token)?;
         let mut url = self.endpoint_url(&format!("/api/acceptance/iframes/{iframe_id}"))?;
         url.query_pairs_mut()
             .append_pair("payment_token", payment_token.expose_secret());
@@ -390,6 +348,42 @@ impl LegacyV2Service {
             payment_key,
             iframe_url,
         })
+    }
+
+    async fn execute_with_jwt_retry<T, F, Fut>(
+        &self,
+        path: &str,
+        mut op: F,
+    ) -> Result<T, PaymobError>
+    where
+        F: FnMut(Url, SecretString) -> Fut,
+        Fut: Future<Output = Result<T, PaymobError>>,
+    {
+        let url = self.endpoint_url(path)?;
+        let token = self.generate_auth_token().await?;
+        match op(url.clone(), token.clone()).await {
+            Ok(output) => Ok(output),
+            Err(err) => self.retry_on_auth_error(err, &token, url, op).await,
+        }
+    }
+
+    async fn retry_on_auth_error<T, F, Fut>(
+        &self,
+        err: PaymobError,
+        stale_token: &SecretString,
+        url: Url,
+        mut op: F,
+    ) -> Result<T, PaymobError>
+    where
+        F: FnMut(Url, SecretString) -> Fut,
+        Fut: Future<Output = Result<T, PaymobError>>,
+    {
+        if !err.is_auth_error() {
+            return Err(err);
+        }
+        self.jwt_provider.cache().evict_if_matches(stale_token).await;
+        let fresh = self.generate_auth_token().await?;
+        op(url, fresh).await
     }
 
     fn endpoint_url(&self, path: &str) -> Result<Url, PaymobError> {
@@ -421,6 +415,60 @@ impl PaymobClient {
     pub fn legacy(&self) -> Result<LegacyV2Service, PaymobError> {
         self.legacy_v2()
     }
+}
+
+fn require_nonzero(field: &'static str, value: u64) -> Result<(), PaymobError> {
+    if value == 0 {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} must be greater than zero"),
+        });
+    }
+    Ok(())
+}
+
+fn extract_trimmed_api_key(client: &PaymobClient) -> Result<SecretString, PaymobError> {
+    let api_key = client
+        .config()
+        .api_key()
+        .ok_or_else(|| PaymobError::ValidationError {
+            field: "api_key",
+            reason: "api_key is required for Legacy Accept v2 checkout".to_owned(),
+        })?;
+    let trimmed = Zeroizing::new(api_key.expose_secret().trim().to_owned());
+    Ok(SecretString::from(trimmed.as_str().to_owned()))
+}
+
+fn validate_payment_token(payment_token: &SecretString) -> Result<(), PaymobError> {
+    let raw = payment_token.expose_secret();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(PaymobError::ValidationError {
+            field: "payment_token",
+            reason: "payment_token must not be empty".to_owned(),
+        });
+    }
+    if raw.bytes().any(|b| b.is_ascii_control()) {
+        return Err(PaymobError::ValidationError {
+            field: "payment_token",
+            reason: "payment_token must not contain ASCII control characters".to_owned(),
+        });
+    }
+    if is_secret_key_token(trimmed) {
+        return Err(PaymobError::ValidationError {
+            field: "payment_token",
+            reason: "server secret key (sk_*) must not be passed as payment_token".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn is_secret_key_token(trimmed: &str) -> bool {
+    let lower = Zeroizing::new(trimmed.to_ascii_lowercase());
+    if lower.starts_with("sk_") {
+        return true;
+    }
+    lower.contains("_sk_")
 }
 
 fn build_http_for_base_url(
@@ -550,6 +598,41 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn tc_2_3_cycle2_iframe_url_rejects_control_chars_and_secret_keys() {
+        let service = test_client().legacy_v2().expect("legacy_v2");
+        for invalid in [
+            "tok\r\ninjected",
+            "tok\0null",
+            "sk_test_123456",
+            "sk_live_abcdef",
+            "egy_sk_test_123456",
+            "ksa_sk_live_999",
+        ] {
+            let res = service.iframe_url(812_345, &SecretString::from(invalid));
+            assert!(matches!(
+                res,
+                Err(PaymobError::ValidationError {
+                    field: "payment_token",
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn tc_2_3_cycle2_deserialization_guards_reject_zero_order_id_and_control_token() {
+        let bad_order = serde_json::json!({
+            "id": 0,
+            "amount_cents": 50_000,
+            "currency": "EGP"
+        });
+        assert!(serde_json::from_value::<LegacyOrder>(bad_order).is_err());
+
+        let bad_key = serde_json::json!({ "token": "pay_tok\r\ninjected" });
+        assert!(serde_json::from_value::<PaymentKeyResponse>(bad_key).is_err());
     }
 
     #[tokio::test]

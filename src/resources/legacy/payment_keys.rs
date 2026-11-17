@@ -40,7 +40,7 @@ pub const DEFAULT_PAYMENT_KEY_EXPIRATION_SECS: u32 = 3_600;
 /// assert!(billing.validate().is_ok());
 /// assert!(format!("{billing:?}").contains("[REDACTED]"));
 /// ```
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct LegacyBillingData {
     /// Customer first name.
     pub first_name: String,
@@ -152,6 +152,49 @@ impl LegacyBillingData {
     }
 }
 
+#[derive(Deserialize)]
+struct RawLegacyBillingData {
+    first_name: String,
+    last_name: String,
+    email: String,
+    phone_number: String,
+    apartment: String,
+    floor: String,
+    street: String,
+    building: String,
+    shipping_method: String,
+    postal_code: String,
+    city: String,
+    country: String,
+    state: String,
+}
+
+impl<'de> Deserialize<'de> for LegacyBillingData {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawLegacyBillingData::deserialize(deserializer)?;
+        let billing = Self {
+            first_name: raw.first_name,
+            last_name: raw.last_name,
+            email: raw.email,
+            phone_number: raw.phone_number,
+            apartment: raw.apartment,
+            floor: raw.floor,
+            street: raw.street,
+            building: raw.building,
+            shipping_method: raw.shipping_method,
+            postal_code: raw.postal_code,
+            city: raw.city,
+            country: raw.country,
+            state: raw.state,
+        };
+        billing.validate().map_err(serde::de::Error::custom)?;
+        Ok(billing)
+    }
+}
+
 /// Request parameters for `POST /api/acceptance/payment_keys`.
 ///
 /// # Examples
@@ -166,7 +209,7 @@ impl LegacyBillingData {
 ///     .lock_order_when_paid(true);
 /// assert!(params.validate().is_ok());
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CreatePaymentKeyParams {
     /// Paymob order identifier returned by `POST /api/ecommerce/orders`.
     pub order_id: u64,
@@ -228,12 +271,16 @@ impl CreatePaymentKeyParams {
     /// `integration_id`, or `expiration` is zero, `currency` is blank, or
     /// `billing_data` fails validation.
     pub fn validate(&self) -> Result<(), PaymobError> {
+        self.validate_numeric_fields()?;
+        require_non_blank("currency", self.currency.as_str())?;
+        self.billing_data.validate()
+    }
+
+    fn validate_numeric_fields(&self) -> Result<(), PaymobError> {
         require_positive_u64("order_id", self.order_id)?;
         require_positive_u64("amount_cents", self.amount_cents)?;
         require_positive_u64("integration_id", self.integration_id)?;
-        require_positive_u64("expiration", u64::from(self.expiration))?;
-        require_non_blank("currency", self.currency.as_str())?;
-        self.billing_data.validate()
+        require_positive_u64("expiration", u64::from(self.expiration))
     }
 
     /// Serializes this payload and injects Regime 2 `"auth_token"` into the JSON object.
@@ -253,11 +300,52 @@ impl CreatePaymentKeyParams {
     }
 }
 
+#[derive(Deserialize)]
+struct RawCreatePaymentKeyParams {
+    order_id: u64,
+    amount_cents: u64,
+    currency: Currency,
+    integration_id: u64,
+    billing_data: LegacyBillingData,
+    expiration: u32,
+    lock_order_when_paid: bool,
+}
+
+impl<'de> Deserialize<'de> for CreatePaymentKeyParams {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawCreatePaymentKeyParams::deserialize(deserializer)?;
+        let params = Self {
+            order_id: raw.order_id,
+            amount_cents: raw.amount_cents,
+            currency: raw.currency,
+            integration_id: raw.integration_id,
+            billing_data: raw.billing_data,
+            expiration: raw.expiration,
+            lock_order_when_paid: raw.lock_order_when_paid,
+        };
+        params.validate().map_err(serde::de::Error::custom)?;
+        Ok(params)
+    }
+}
+
 /// Response returned by `POST /api/acceptance/payment_keys`.
 ///
 /// Wraps the short-lived `payment_token` in [`SecretString`] and emits
-/// `"[REDACTED]"` in [`fmt::Debug`].
-#[derive(Clone, Deserialize)]
+/// `"[REDACTED]"` in [`fmt::Debug`]. Intentionally omits [`Serialize`] so
+/// short-lived payment tokens cannot be accidentally serialized into logs or
+/// outbound responses:
+///
+/// ```compile_fail
+/// use some_paymob::resources::legacy::payment_keys::PaymentKeyResponse;
+///
+/// fn assert_serializable<T: serde::Serialize>() {}
+///
+/// assert_serializable::<PaymentKeyResponse>();
+/// ```
+#[derive(Clone)]
 pub struct PaymentKeyResponse {
     /// Short-lived payment key token passed to the Paymob iframe URL.
     pub token: SecretString,
@@ -282,6 +370,40 @@ impl PaymentKeyResponse {
     #[must_use]
     pub fn expose_token(&self) -> &str {
         self.token.expose_secret()
+    }
+
+    /// Validates that `token` is non-empty, non-whitespace, and contains no ASCII control characters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `token` is blank or contains ASCII control characters.
+    pub fn validate(&self) -> Result<(), PaymobError> {
+        let raw = self.token.expose_secret();
+        require_non_blank("token", raw)?;
+        if raw.bytes().any(|b| b.is_ascii_control()) {
+            return Err(PaymobError::ValidationError {
+                field: "token",
+                reason: "payment key token must not contain ASCII control characters".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+struct RawPaymentKeyResponse {
+    token: SecretString,
+}
+
+impl<'de> Deserialize<'de> for PaymentKeyResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawPaymentKeyResponse::deserialize(deserializer)?;
+        let resp = Self { token: raw.token };
+        resp.validate().map_err(serde::de::Error::custom)?;
+        Ok(resp)
     }
 }
 
@@ -457,6 +579,29 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn tc_2_3_cycle2_deserialize_enforces_validation_and_token_hygiene() {
+        let mut billing_json = serde_json::to_value(sample_billing()).expect("billing json");
+        billing_json["email"] = serde_json::json!("invalid-email");
+        assert!(serde_json::from_value::<LegacyBillingData>(billing_json).is_err());
+
+        let valid_params = CreatePaymentKeyParams::new(
+            998_877,
+            50_000,
+            Currency::EGP,
+            4_097_558,
+            sample_billing(),
+        );
+        let mut params_json = serde_json::to_value(&valid_params).expect("params json");
+        params_json["order_id"] = serde_json::json!(0);
+        assert!(serde_json::from_value::<CreatePaymentKeyParams>(params_json).is_err());
+
+        for bad_tok in ["", "   ", "tok\n123", "tok\r123", "tok\0null"] {
+            let tok_json = serde_json::json!({ "token": bad_tok });
+            assert!(serde_json::from_value::<PaymentKeyResponse>(tok_json).is_err());
+        }
     }
 
     #[test]

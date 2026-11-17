@@ -31,15 +31,28 @@ pub use crate::core::types::{Currency, MinorUnitAmount, validate_prefixed_id};
 
 /// Re-exports all public Unified Checkout, Pixel JS, and Affordability Widget types.
 #[cfg(feature = "intentions")]
-pub use crate::resources::checkout::*;
+pub use crate::resources::checkout::{
+    AffordabilityWidgetConfig, AffordabilityWidgetConfigBuilder, ApplePaySettings, CheckoutService,
+    GooglePaySettings, PixelConfig, PixelConfigBuilder, PixelPaymentMethod,
+};
 
 /// Re-exports all public v1 Payment Intention request, response, and service types.
 #[cfg(feature = "intentions")]
-pub use crate::resources::intentions::*;
+pub use crate::resources::intentions::{
+    BillingData, BillingDataBuilder, ConfiguredPaymentMethod, CreateIntentionParams,
+    CreateIntentionParamsBuilder, IntentionCustomer, IntentionDetail, IntentionItem,
+    IntentionPaymentKey, IntentionResponse, IntentionsService, PaymentMethodInput,
+    UpdateIntentionParams, UpdateIntentionParamsBuilder,
+};
 
 /// Re-exports all public Legacy Accept v2 3-step checkout types and helpers.
 #[cfg(feature = "legacy-v2")]
-pub use crate::resources::legacy::*;
+pub use crate::resources::legacy::{
+    AuthenticatedLegacyOrderRequest, CreateLegacyOrderParams, CreatePaymentKeyParams,
+    DEFAULT_PAYMENT_KEY_EXPIRATION_SECS, LEGACY_ORDERS_PATH, LEGACY_PAYMENT_KEYS_PATH,
+    LegacyBillingData, LegacyCheckoutParams, LegacyCheckoutSession, LegacyOrder, LegacyOrderItem,
+    LegacyV2Service, PaymentKeyResponse, create_legacy_order, create_legacy_payment_key,
+};
 
 /// Re-exports all public webhook verification types, traits, and helpers.
 #[cfg(feature = "webhooks")]

@@ -360,8 +360,7 @@ mod tests {
     async fn tc_5_1_1_rejects_empty_or_control_char_refresh_token_and_malformed_response() {
         let server = MockServer::start().await;
         let client = credentials_payouts_client(&server.uri());
-        for bad in ["   ", "tok
-injected"] {
+        for bad in ["   ", "tok\r\ninjected"] {
             let err = client
                 .payouts()
                 .auth()

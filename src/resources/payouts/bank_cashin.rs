@@ -179,7 +179,10 @@ impl<'a> PayoutsCashinService<'a> {
         validate_pan(params.bank_card_number.expose_secret())?;
         validate_clean_field("bank_code", &params.bank_code)?;
         validate_clean_field("full_name", &params.full_name)?;
-        validate_optional_clean_field("client_reference_id", params.client_reference_id.as_deref())?;
+        validate_optional_clean_field(
+            "client_reference_id",
+            params.client_reference_id.as_deref(),
+        )?;
         post_tagged_disburse(self.client(), DisburseIssuer::BankCard, &params).await
     }
 
@@ -200,7 +203,10 @@ impl<'a> PayoutsCashinService<'a> {
         )?;
         validate_clean_field("bank_code", &params.bank_code)?;
         validate_clean_field("full_name", &params.full_name)?;
-        validate_optional_clean_field("client_reference_id", params.client_reference_id.as_deref())?;
+        validate_optional_clean_field(
+            "client_reference_id",
+            params.client_reference_id.as_deref(),
+        )?;
         post_tagged_disburse(self.client(), DisburseIssuer::InstantBank, &params).await
     }
 
@@ -218,7 +224,10 @@ impl<'a> PayoutsCashinService<'a> {
         validate_msisdn(&params.msisdn)?;
         validate_national_id(params.national_id.expose_secret())?;
         validate_clean_field("full_name", &params.full_name)?;
-        validate_optional_clean_field("client_reference_id", params.client_reference_id.as_deref())?;
+        validate_optional_clean_field(
+            "client_reference_id",
+            params.client_reference_id.as_deref(),
+        )?;
         post_tagged_disburse(self.client(), DisburseIssuer::EgyptianPost, &params).await
     }
 
@@ -346,8 +355,7 @@ mod tests {
             client
                 .payouts()
                 .cashin()
-                .cancel_aman(CancelAmanParams::new(" 
- "))
+                .cancel_aman(CancelAmanParams::new(" \n "))
                 .await,
             Err(PaymobError::ValidationError {
                 field: "transaction_id",

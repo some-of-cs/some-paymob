@@ -253,8 +253,7 @@ mod tests {
             .payouts()
             .cashin()
             .bank_wallet(
-                MobileWalletCashinParams::new("01500000000", 50)
-                    .with_client_reference_id("   "),
+                MobileWalletCashinParams::new("01500000000", 50).with_client_reference_id("   "),
             )
             .await
             .expect_err("empty client_reference_id must fail");

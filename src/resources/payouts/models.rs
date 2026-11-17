@@ -300,7 +300,9 @@ pub(crate) fn validate_msisdn(value: &str) -> Result<&str, PaymobError> {
     if !(10..=15).contains(&digits.len()) || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return Err(PaymobError::ValidationError {
             field: "msisdn",
-            reason: String::from("msisdn must contain 10 to 15 ASCII digits (optional leading '+')"),
+            reason: String::from(
+                "msisdn must contain 10 to 15 ASCII digits (optional leading '+')",
+            ),
         });
     }
     Ok(trimmed)
@@ -380,10 +382,15 @@ mod tests {
     fn tc_5_1_2_msisdn_and_clean_field_validators_reject_malformed_inputs() {
         assert!(validate_msisdn("01023456789").is_ok());
         assert!(validate_msisdn("+201023456789").is_ok());
-        for bad in ["", "12345", "0102345678a", "010234567890123456", "0102345
-678"] {
+        for bad in [
+            "",
+            "12345",
+            "0102345678a",
+            "010234567890123456",
+            "0102345\n678",
+        ] {
             assert!(validate_msisdn(bad).is_err());
         }
-        assert!(validate_clean_field("bank_code", "CIB ").is_err());
+        assert!(validate_clean_field("bank_code", "CIB\0").is_err());
     }
 }

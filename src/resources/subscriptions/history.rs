@@ -245,7 +245,10 @@ impl fmt::Debug for SubscriptionTransaction {
             .field("is_voided", &self.is_voided)
             .field("currency", &self.currency)
             .field("api_source", &self.api_source)
-            .field("source_data", &self.source_data.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "source_data",
+                &self.source_data.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("data", &self.data.as_ref().map(|_| "[REDACTED]"))
             .finish_non_exhaustive()
     }

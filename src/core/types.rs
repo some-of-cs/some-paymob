@@ -504,7 +504,9 @@ where
 {
     let value = u64::deserialize(deserializer)?;
     if value == 0 {
-        return Err(serde::de::Error::custom("identifier must be a non-zero u64"));
+        return Err(serde::de::Error::custom(
+            "identifier must be a non-zero u64",
+        ));
     }
     Ok(value)
 }
@@ -548,9 +550,7 @@ enum FlexibleOptU64 {
 
 /// Deserializes an `Option<u64>` from a JSON integer, numeric string, `{ "id": u64 }`, or null.
 #[allow(dead_code)]
-pub(crate) fn deserialize_opt_u64_flexible<'de, D>(
-    deserializer: D,
-) -> Result<Option<u64>, D::Error>
+pub(crate) fn deserialize_opt_u64_flexible<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
     D: Deserializer<'de>,
 {

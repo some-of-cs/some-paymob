@@ -417,11 +417,13 @@ impl PaymobClient {
         let secret = secrecy::SecretString::from(secret_key.expose_secret().to_owned());
         crate::core::auth::strategy::inject_secret_key_token(&mut headers, &secret)
             .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-        headers.remove(reqwest::header::AUTHORIZATION).ok_or_else(|| {
-            PaymobError::AuthenticationError(String::from(
-                "failed to construct Regime 1 Authorization header",
-            ))
-        })
+        headers
+            .remove(reqwest::header::AUTHORIZATION)
+            .ok_or_else(|| {
+                PaymobError::AuthenticationError(String::from(
+                    "failed to construct Regime 1 Authorization header",
+                ))
+            })
     }
 
     /// Acquires or reuses a cached Regime 2 60-minute Accept JWT (`POST /api/auth/tokens`)

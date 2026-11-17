@@ -230,12 +230,9 @@ impl LegacyV2Service {
     ) -> Result<Self, PaymobError> {
         let api_key = extract_trimmed_api_key(&client)?;
         let base_url = base_url.into().trim_end_matches('/').to_owned();
-        let jwt_provider = AcceptJwtProvider::with_cache(
-            &base_url,
-            api_key,
-            client.auth().accept_cache_arc(),
-        )
-        .map_err(map_jwt_err)?;
+        let jwt_provider =
+            AcceptJwtProvider::with_cache(&base_url, api_key, client.auth().accept_cache_arc())
+                .map_err(map_jwt_err)?;
         let http = build_http_for_base_url(&client, &base_url)?;
         Ok(Self {
             client,

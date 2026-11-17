@@ -66,9 +66,7 @@ pub enum SandboxConstraintError {
         age_days: u64,
     },
     /// Attempted to run a live-only payment channel (Kiosk or BNPL) in sandbox mode.
-    #[error(
-        "Paymob channel `{channel}` is live-only and unsupported in Sandbox mode"
-    )]
+    #[error("Paymob channel `{channel}` is live-only and unsupported in Sandbox mode")]
     UnsupportedSandboxChannel {
         /// Human-readable channel name (`"Kiosk"` or `"BNPL"`).
         channel: &'static str,
@@ -166,10 +164,12 @@ impl SandboxGuard {
             return;
         }
         if age_days >= SANDBOX_CREDENTIAL_WARN_AGE_DAYS {
-            report.warnings.push(SandboxWarning::CredentialExpiringSoon {
-                age_days,
-                days_remaining: SANDBOX_CREDENTIAL_MAX_AGE_DAYS - age_days,
-            });
+            report
+                .warnings
+                .push(SandboxWarning::CredentialExpiringSoon {
+                    age_days,
+                    days_remaining: SANDBOX_CREDENTIAL_MAX_AGE_DAYS - age_days,
+                });
         }
     }
 
@@ -228,7 +228,10 @@ impl fmt::Debug for SignedWebhookToolPayload {
 /// let sig = sign_hmac_sha512(&secret, "100020003000").expect("valid secret");
 /// assert_eq!(sig.len(), 128);
 /// ```
-pub fn sign_hmac_sha512(hmac_secret: &SecretString, canonical_message: &str) -> WebhookResult<String> {
+pub fn sign_hmac_sha512(
+    hmac_secret: &SecretString,
+    canonical_message: &str,
+) -> WebhookResult<String> {
     let trimmed = hmac_secret.expose_secret().trim();
     if trimmed.is_empty() {
         return Err(WebhookError::InvalidSecretKeyLength);
@@ -339,7 +342,8 @@ pub fn generate_signed_transaction_post(
     .to_string();
 
     // Ensure generated payload always satisfies PaymobWebhookEngine roundtrip contract.
-    let _ = PaymobWebhookEngine::verify_concatenated_with_secret(hmac_secret, &canonical, &hmac_hex)?;
+    let _ =
+        PaymobWebhookEngine::verify_concatenated_with_secret(hmac_secret, &canonical, &hmac_hex)?;
 
     Ok(SignedWebhookToolPayload {
         json_body,

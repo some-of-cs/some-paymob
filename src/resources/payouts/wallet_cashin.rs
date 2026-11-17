@@ -6,18 +6,14 @@
 
 use std::fmt;
 
-use reqwest::header::AUTHORIZATION;
 use serde::Serialize;
 
 use crate::core::error::PaymobError;
-use crate::core::http::HttpRequest;
 use crate::resources::payouts::models::{
-    DisburseIssuer, DisbursementResponse, validate_non_empty, validate_positive_amount,
+    DisburseIssuer, DisbursementResponse, validate_msisdn, validate_optional_clean_field,
+    validate_positive_amount,
 };
-use crate::resources::payouts::{
-    PayoutsCashinService, execute_payouts_request, parse_payouts_response,
-    resolve_payouts_bearer_header,
-};
+use crate::resources::payouts::{PayoutsCashinService, post_tagged_disburse};
 
 /// Relative endpoint path for Paymob Send instant disbursement.
 pub const PAYOUTS_DISBURSE_PATH: &str = "/api/secure/disburse/";
@@ -39,7 +35,7 @@ pub const PAYOUTS_DISBURSE_PATH: &str = "/api/secure/disburse/";
 /// ```
 #[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct MobileWalletCashinParams {
-    /// Recipient mobile wallet number (`msisdn`).
+    /// Recipient mobile wallet number (`msisdn`, 10–15 digits).
     pub msisdn: String,
     /// Disbursement amount (`u64`, zero floats).
     pub amount: u64,
@@ -88,19 +84,24 @@ impl MobileWalletCashinParams {
         self
     }
 
-    fn validate(&self) -> Result<(), PaymobError> {
-        validate_non_empty("msisdn", &self.msisdn)?;
+    fn validate_and_normalize(&self) -> Result<NormalizedWalletWire<'_>, PaymobError> {
+        let msisdn = validate_msisdn(&self.msisdn)?;
         validate_positive_amount(self.amount)?;
-        if let Some(ref_id) = &self.client_reference_id {
-            validate_non_empty("client_reference_id", ref_id)?;
-        }
-        Ok(())
+        let client_reference_id = validate_optional_clean_field(
+            "client_reference_id",
+            self.client_reference_id.as_deref(),
+        )?;
+        Ok(NormalizedWalletWire {
+            msisdn,
+            amount: self.amount,
+            client_reference_id,
+            customer_bears_fees: self.customer_bears_fees,
+        })
     }
 }
 
 #[derive(Serialize)]
-struct WalletDisburseWire<'a> {
-    issuer: &'static str,
+struct NormalizedWalletWire<'a> {
     msisdn: &'a str,
     amount: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -114,7 +115,7 @@ impl<'a> PayoutsCashinService<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `msisdn` or `amount` is invalid.
+    /// Returns [`PaymobError::ValidationError`] if `msisdn`, `amount`, or `client_reference_id` is invalid.
     pub async fn vodafone(
         &self,
         params: MobileWalletCashinParams,
@@ -127,7 +128,7 @@ impl<'a> PayoutsCashinService<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `msisdn` or `amount` is invalid.
+    /// Returns [`PaymobError::ValidationError`] if `msisdn`, `amount`, or `client_reference_id` is invalid.
     pub async fn etisalat(
         &self,
         params: MobileWalletCashinParams,
@@ -140,7 +141,7 @@ impl<'a> PayoutsCashinService<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `msisdn` or `amount` is invalid.
+    /// Returns [`PaymobError::ValidationError`] if `msisdn`, `amount`, or `client_reference_id` is invalid.
     pub async fn orange(
         &self,
         params: MobileWalletCashinParams,
@@ -153,7 +154,7 @@ impl<'a> PayoutsCashinService<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `msisdn` or `amount` is invalid.
+    /// Returns [`PaymobError::ValidationError`] if `msisdn`, `amount`, or `client_reference_id` is invalid.
     pub async fn bank_wallet(
         &self,
         params: MobileWalletCashinParams,
@@ -167,23 +168,8 @@ impl<'a> PayoutsCashinService<'a> {
         issuer: DisburseIssuer,
         params: MobileWalletCashinParams,
     ) -> Result<DisbursementResponse, PaymobError> {
-        params.validate()?;
-        let bearer = resolve_payouts_bearer_header(self.client()).await?;
-        let url = self.client().payouts_url(PAYOUTS_DISBURSE_PATH)?;
-        let wire = WalletDisburseWire {
-            issuer: issuer.as_str(),
-            msisdn: params.msisdn.trim(),
-            amount: params.amount,
-            client_reference_id: params.client_reference_id.as_deref().map(str::trim),
-            customer_bears_fees: params.customer_bears_fees,
-        };
-        let request = HttpRequest::post(url.as_str())
-            .map_err(PaymobError::from)?
-            .with_header(AUTHORIZATION, bearer)
-            .with_json(&wire)
-            .map_err(PaymobError::from)?;
-        let response = execute_payouts_request(self.client(), &request).await?;
-        parse_payouts_response(&response)
+        let normalized = params.validate_and_normalize()?;
+        post_tagged_disburse(self.client(), issuer, &normalized).await
     }
 }
 
@@ -193,28 +179,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
-    use crate::core::auth::CachedToken;
-    use crate::core::client::PaymobClient;
-    use crate::core::config::ClientConfig;
-    use crate::core::region::PaymobRegion;
-
-    fn seeded_client(base_url: &str) -> PaymobClient {
-        let cfg = ClientConfig::builder()
-            .region(PaymobRegion::Custom {
-                accept_base_url: base_url.to_owned(),
-                checkout_base_url: base_url.to_owned(),
-                payouts_base_url: base_url.to_owned(),
-                payouts_staging_base_url: base_url.to_owned(),
-            })
-            .build()
-            .expect("valid config");
-        let client = PaymobClient::new(cfg).expect("valid client");
-        client
-            .auth()
-            .payouts_cache()
-            .store(CachedToken::with_default_ttl("test-payouts-jwt", None));
-        client
-    }
+    use crate::resources::payouts::test_support::seeded_payouts_client;
 
     #[tokio::test]
     async fn tc_5_1_3_vodafone_cashin_dispatches_and_parses() {
@@ -238,11 +203,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = seeded_client(&server.uri());
+        let client = seeded_payouts_client(&server.uri(), "test-payouts-jwt");
         let resp = client
             .payouts()
             .cashin()
-            .vodafone(MobileWalletCashinParams::new("01023456789", 112))
+            .vodafone(MobileWalletCashinParams::new(" 01023456789 ", 112))
             .await
             .expect("vodafone cashin should succeed");
         assert_eq!(resp.transaction_id, "tx_vf_1");
@@ -250,23 +215,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tc_5_1_3_rejects_empty_msisdn_and_zero_amount() {
+    async fn tc_5_1_3_rejects_invalid_msisdn_zero_amount_and_bad_ref_id() {
         let server = MockServer::start().await;
-        let client = seeded_client(&server.uri());
+        let client = seeded_payouts_client(&server.uri(), "test-payouts-jwt");
 
-        let err_msisdn = client
-            .payouts()
-            .cashin()
-            .etisalat(MobileWalletCashinParams::new("  ", 100))
-            .await
-            .expect_err("empty msisdn must fail");
-        assert!(matches!(
-            err_msisdn,
-            PaymobError::ValidationError {
-                field: "msisdn",
-                ..
-            }
-        ));
+        for bad_msisdn in ["  ", "010123", "0102345678a"] {
+            let err = client
+                .payouts()
+                .cashin()
+                .etisalat(MobileWalletCashinParams::new(bad_msisdn, 100))
+                .await
+                .expect_err("invalid msisdn must fail");
+            assert!(matches!(
+                err,
+                PaymobError::ValidationError {
+                    field: "msisdn",
+                    ..
+                }
+            ));
+        }
 
         let err_amt = client
             .payouts()
@@ -278,6 +245,23 @@ mod tests {
             err_amt,
             PaymobError::ValidationError {
                 field: "amount",
+                ..
+            }
+        ));
+
+        let err_ref = client
+            .payouts()
+            .cashin()
+            .bank_wallet(
+                MobileWalletCashinParams::new("01500000000", 50)
+                    .with_client_reference_id("   "),
+            )
+            .await
+            .expect_err("empty client_reference_id must fail");
+        assert!(matches!(
+            err_ref,
+            PaymobError::ValidationError {
+                field: "client_reference_id",
                 ..
             }
         ));

@@ -1,16 +1,11 @@
 #![forbid(unsafe_code)]
 //! Payouts transaction and reference inquiries (`US-5.2.0/unit-2`).
 
-use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 
 use crate::core::error::PaymobError;
-use crate::core::http::HttpRequest;
-use crate::resources::payouts::models::DisbursementResponse;
-use crate::resources::payouts::{
-    PayoutsInquiriesService, execute_payouts_request, parse_payouts_response,
-    resolve_payouts_bearer_header,
-};
+use crate::resources::payouts::models::{DisbursementResponse, validate_clean_field};
+use crate::resources::payouts::{PayoutsInquiriesService, post_payouts_json};
 
 /// Instant transaction inquiry endpoint path.
 pub const PAYOUTS_TX_INQUIRE_PATH: &str = "/api/secure/transaction/inquire/";
@@ -20,10 +15,13 @@ pub const PAYOUTS_BULK_INQUIRE_PATH: &str = "/disburse/api/v1/bulk_transaction/i
 pub const PAYOUTS_BULK_INQUIRE_BY_REF_PATH: &str =
     "/disburse/api/v1/bulk_transaction/inquire_by_reference/";
 
+/// Maximum number of transaction or reference IDs permitted in a single inquiry request (`1,000`).
+pub const MAX_INQUIRY_IDS: usize = 1_000;
+
 /// Query parameters for `transactions()` inquiry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TransactionInquiryParams {
-    /// Transaction IDs to inquire.
+    /// Transaction IDs to inquire (`1..=MAX_INQUIRY_IDS`, each non-empty).
     pub transactions_ids: Vec<String>,
     /// Set to `true` to query bulk disbursement endpoint (`/disburse/api/v1/bulk_transaction/inquire/`).
     #[serde(skip_serializing)]
@@ -62,7 +60,7 @@ impl TransactionInquiryParams {
 /// Query parameters for `by_reference()` inquiry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReferenceInquiryParams {
-    /// Client reference IDs to look up.
+    /// Client reference IDs to look up (`1..=MAX_INQUIRY_IDS`, each non-empty).
     pub client_reference_ids: Vec<String>,
     /// Optional banking-transaction flag.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -101,6 +99,19 @@ pub struct TransactionInquiryResponse {
     pub status_description: Option<String>,
 }
 
+fn validate_id_list(field: &'static str, ids: &[String]) -> Result<(), PaymobError> {
+    if ids.is_empty() || ids.len() > MAX_INQUIRY_IDS {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} must contain 1 to {MAX_INQUIRY_IDS} non-empty IDs"),
+        });
+    }
+    for id in ids {
+        validate_clean_field(field, id)?;
+    }
+    Ok(())
+}
+
 impl<'a> PayoutsInquiriesService<'a> {
     /// Queries instant or bulk payout transactions by transaction ID.
     ///
@@ -109,58 +120,33 @@ impl<'a> PayoutsInquiriesService<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `transactions_ids` is empty.
+    /// Returns [`PaymobError::ValidationError`] if `transactions_ids` is empty, exceeds
+    /// [`MAX_INQUIRY_IDS`], or contains blank/control-character IDs.
     pub async fn transactions(
         &self,
         params: TransactionInquiryParams,
     ) -> Result<TransactionInquiryResponse, PaymobError> {
-        if params.transactions_ids.is_empty() {
-            return Err(PaymobError::ValidationError {
-                field: "transactions_ids",
-                reason: String::from("transactions_ids must not be empty"),
-            });
-        }
+        validate_id_list("transactions_ids", &params.transactions_ids)?;
         let endpoint = if params.is_bulk {
             PAYOUTS_BULK_INQUIRE_PATH
         } else {
             PAYOUTS_TX_INQUIRE_PATH
         };
-        self.post_inquiry(endpoint, &params).await
+        post_payouts_json(self.client(), endpoint, &params).await
     }
 
     /// Queries payout transactions by `client_reference_ids` (`POST /disburse/api/v1/bulk_transaction/inquire_by_reference/`).
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `client_reference_ids` is empty.
+    /// Returns [`PaymobError::ValidationError`] if `client_reference_ids` is empty, exceeds
+    /// [`MAX_INQUIRY_IDS`], or contains blank/control-character IDs.
     pub async fn by_reference(
         &self,
         params: ReferenceInquiryParams,
     ) -> Result<TransactionInquiryResponse, PaymobError> {
-        if params.client_reference_ids.is_empty() {
-            return Err(PaymobError::ValidationError {
-                field: "client_reference_ids",
-                reason: String::from("client_reference_ids must not be empty"),
-            });
-        }
-        self.post_inquiry(PAYOUTS_BULK_INQUIRE_BY_REF_PATH, &params)
-            .await
-    }
-
-    async fn post_inquiry<T: Serialize>(
-        &self,
-        endpoint: &str,
-        payload: &T,
-    ) -> Result<TransactionInquiryResponse, PaymobError> {
-        let bearer = resolve_payouts_bearer_header(self.client()).await?;
-        let url = self.client().payouts_url(endpoint)?;
-        let request = HttpRequest::post(url.as_str())
-            .map_err(PaymobError::from)?
-            .with_header(AUTHORIZATION, bearer)
-            .with_json(payload)
-            .map_err(PaymobError::from)?;
-        let response = execute_payouts_request(self.client(), &request).await?;
-        parse_payouts_response(&response)
+        validate_id_list("client_reference_ids", &params.client_reference_ids)?;
+        post_payouts_json(self.client(), PAYOUTS_BULK_INQUIRE_BY_REF_PATH, &params).await
     }
 }
 
@@ -170,31 +156,10 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
-    use crate::core::auth::CachedToken;
-    use crate::core::client::PaymobClient;
-    use crate::core::config::ClientConfig;
-    use crate::core::region::PaymobRegion;
-
-    fn seeded_client(base_url: &str) -> PaymobClient {
-        let cfg = ClientConfig::builder()
-            .region(PaymobRegion::Custom {
-                accept_base_url: base_url.to_owned(),
-                checkout_base_url: base_url.to_owned(),
-                payouts_base_url: base_url.to_owned(),
-                payouts_staging_base_url: base_url.to_owned(),
-            })
-            .build()
-            .expect("valid config");
-        let client = PaymobClient::new(cfg).expect("valid client");
-        client
-            .auth()
-            .payouts_cache()
-            .store(CachedToken::with_default_ttl("inq-jwt", None));
-        client
-    }
+    use crate::resources::payouts::test_support::seeded_payouts_client;
 
     #[tokio::test]
-    async fn tc_5_2_2_transactions_and_by_reference_inquiries() {
+    async fn tc_5_2_2_transactions_and_by_reference_inquiries_and_negative_validation() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/secure/transaction/inquire/"))
@@ -216,7 +181,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = seeded_client(&server.uri());
+        let client = seeded_payouts_client(&server.uri(), "inq-jwt");
         let tx_resp = client
             .payouts()
             .inquiries()
@@ -232,5 +197,28 @@ mod tests {
             .await
             .expect("by_reference inquiry should succeed");
         assert_eq!(ref_resp.results[0].transaction_id, "tx_ref_1");
+
+        assert!(matches!(
+            client
+                .payouts()
+                .inquiries()
+                .transactions(TransactionInquiryParams::new(vec![String::from("   ")]))
+                .await,
+            Err(PaymobError::ValidationError {
+                field: "transactions_ids",
+                ..
+            })
+        ));
+        assert!(matches!(
+            client
+                .payouts()
+                .inquiries()
+                .by_reference(ReferenceInquiryParams::new(vec![]))
+                .await,
+            Err(PaymobError::ValidationError {
+                field: "client_reference_ids",
+                ..
+            })
+        ));
     }
 }

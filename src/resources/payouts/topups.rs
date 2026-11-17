@@ -2,23 +2,21 @@
 //! Payouts topup requests (`US-5.2.0/unit-4`).
 //!
 //! Covers `POST /api/secure/topup/request/` for Bank Transfers (enforcing `<= 2.8 MB`
-//! proof size guard) and Accept Balance transfers.
+//! proof size guard and path-traversal-free filenames) and Accept Balance transfers.
 
 use std::fmt;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use reqwest::header::AUTHORIZATION;
 use serde::Serialize;
 
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::http::HttpRequest;
 use crate::resources::payouts::budget::TopupRecord;
-use crate::resources::payouts::models::{validate_non_empty, validate_positive_amount};
-use crate::resources::payouts::{
-    execute_payouts_request, parse_payouts_response, resolve_payouts_bearer_header,
+use crate::resources::payouts::models::{
+    validate_clean_field, validate_optional_clean_field, validate_positive_amount,
 };
+use crate::resources::payouts::post_payouts_json;
 
 /// Relative endpoint path for Paymob Send topup requests.
 pub const PAYOUTS_TOPUP_REQUEST_PATH: &str = "/api/secure/topup/request/";
@@ -33,9 +31,9 @@ pub struct BankTransferTopupParams {
     pub amount: u64,
     /// Currency name (e.g. `"egyptian_pound"`).
     pub currency: String,
-    /// Raw proof file bytes (enforced `<= 2_936_012` bytes / 2.8 MB).
+    /// Raw proof file bytes (enforced `1..=2_936_012` bytes / 2.8 MB).
     pub to_attach_proof: Vec<u8>,
-    /// Proof filename (e.g. `"receipt.pdf"`).
+    /// Proof filename (e.g. `"receipt.pdf"`, free of path separators).
     pub proof_filename: String,
     /// Optional source bank name.
     pub from_bank_name: Option<String>,
@@ -57,7 +55,9 @@ impl fmt::Debug for BankTransferTopupParams {
 }
 
 /// Request parameters for Accept Balance topup (`POST /api/secure/topup/request/`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+///
+/// Redacts `username` in [`fmt::Debug`].
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct AcceptBalanceTopupParams {
     /// Topup amount (`u64`, zero floats).
     pub amount: u64,
@@ -66,8 +66,19 @@ pub struct AcceptBalanceTopupParams {
     pub transfer_type: &'static str,
     /// Currency string (e.g. `"egyptian_pound"`).
     pub currency: String,
-    /// Paymob Payouts username.
+    /// Paymob Payouts username (redacted in `Debug`).
     pub username: String,
+}
+
+impl fmt::Debug for AcceptBalanceTopupParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AcceptBalanceTopupParams")
+            .field("amount", &self.amount)
+            .field("transfer_type", &self.transfer_type)
+            .field("currency", &self.currency)
+            .field("username", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl AcceptBalanceTopupParams {
@@ -118,73 +129,72 @@ impl<'a> PayoutsTopupsService<'a> {
 
     /// Submits a Bank Transfer topup request (`POST /api/secure/topup/request/`).
     ///
-    /// Rejects attachments exceeding [`MAX_TOPUP_PROOF_BYTES`] (`2.8 MB`) locally before upload.
+    /// Rejects attachments exceeding [`MAX_TOPUP_PROOF_BYTES`] (`2.8 MB`) or filenames
+    /// containing path separators (`/`, `\`, `..`) locally before upload.
     ///
     /// # Errors
     ///
     /// Returns [`PaymobError::ValidationError`] if `amount == 0`, `to_attach_proof` is empty or
-    /// exceeds `2,936,012` bytes, or `currency`/`proof_filename` is empty.
+    /// exceeds `2,936,012` bytes, or `currency`/`proof_filename` is invalid.
     pub async fn from_bank_transfer(
         &self,
         params: BankTransferTopupParams,
     ) -> Result<TopupRecord, PaymobError> {
         validate_positive_amount(params.amount)?;
-        validate_non_empty("currency", &params.currency)?;
-        validate_non_empty("proof_filename", &params.proof_filename)?;
+        let currency = validate_clean_field("currency", &params.currency)?;
+        let filename = validate_proof_filename(&params.proof_filename)?;
+        let from_bank_name =
+            validate_optional_clean_field("from_bank_name", params.from_bank_name.as_deref())?;
+        let reference_number =
+            validate_optional_clean_field("reference_number", params.reference_number.as_deref())?;
         validate_proof_size(&params.to_attach_proof)?;
 
         let wire = BankTransferWire {
             amount: params.amount,
             transfer_type: "from_bank_transfer",
-            currency: params.currency.trim(),
+            currency,
             to_attach_proof: BASE64_STANDARD.encode(&params.to_attach_proof),
-            proof_filename: params.proof_filename.trim(),
-            from_bank_name: params.from_bank_name.as_deref().map(str::trim),
-            reference_number: params.reference_number.as_deref().map(str::trim),
+            proof_filename: filename,
+            from_bank_name,
+            reference_number,
         };
-        self.post_topup(&wire).await
+        post_payouts_json(self.client, PAYOUTS_TOPUP_REQUEST_PATH, &wire).await
     }
 
     /// Submits an Accept Balance topup request (`POST /api/secure/topup/request/`).
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `amount == 0` or `currency`/`username` is empty.
+    /// Returns [`PaymobError::ValidationError`] if `amount == 0` or `currency`/`username` is invalid.
     pub async fn from_accept_balance(
         &self,
         params: AcceptBalanceTopupParams,
     ) -> Result<TopupRecord, PaymobError> {
         validate_positive_amount(params.amount)?;
-        validate_non_empty("currency", &params.currency)?;
-        validate_non_empty("username", &params.username)?;
-        self.post_topup(&params).await
-    }
-
-    async fn post_topup<T: Serialize>(&self, payload: &T) -> Result<TopupRecord, PaymobError> {
-        let bearer = resolve_payouts_bearer_header(self.client).await?;
-        let url = self.client.payouts_url(PAYOUTS_TOPUP_REQUEST_PATH)?;
-        let request = HttpRequest::post(url.as_str())
-            .map_err(PaymobError::from)?
-            .with_header(AUTHORIZATION, bearer)
-            .with_json(payload)
-            .map_err(PaymobError::from)?;
-        let response = execute_payouts_request(self.client, &request).await?;
-        parse_payouts_response(&response)
+        let currency = validate_clean_field("currency", &params.currency)?;
+        let username = validate_clean_field("username", &params.username)?;
+        let normalized = AcceptBalanceTopupParams::new(params.amount, currency, username);
+        post_payouts_json(self.client, PAYOUTS_TOPUP_REQUEST_PATH, &normalized).await
     }
 }
 
-fn validate_proof_size(bytes: &[u8]) -> Result<(), PaymobError> {
-    if bytes.is_empty() {
+fn validate_proof_filename(raw: &str) -> Result<&str, PaymobError> {
+    let trimmed = validate_clean_field("proof_filename", raw)?;
+    if trimmed.contains('/') || trimmed.contains('\') || trimmed.contains("..") {
         return Err(PaymobError::ValidationError {
-            field: "to_attach_proof",
-            reason: String::from("to_attach_proof must not be empty"),
+            field: "proof_filename",
+            reason: String::from("proof_filename must not contain path separators or '..'"),
         });
     }
-    if bytes.len() > MAX_TOPUP_PROOF_BYTES {
+    Ok(trimmed)
+}
+
+fn validate_proof_size(bytes: &[u8]) -> Result<(), PaymobError> {
+    if bytes.is_empty() || bytes.len() > MAX_TOPUP_PROOF_BYTES {
         return Err(PaymobError::ValidationError {
             field: "to_attach_proof",
             reason: format!(
-                "to_attach_proof exceeds maximum 2.8 MB ({MAX_TOPUP_PROOF_BYTES} bytes)"
+                "to_attach_proof must be 1 to {MAX_TOPUP_PROOF_BYTES} bytes (<= 2.8 MB)"
             ),
         });
     }
@@ -197,57 +207,60 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
-    use crate::core::auth::CachedToken;
-    use crate::core::config::ClientConfig;
-    use crate::core::region::PaymobRegion;
-
-    fn seeded_client(base_url: &str) -> PaymobClient {
-        let cfg = ClientConfig::builder()
-            .region(PaymobRegion::Custom {
-                accept_base_url: base_url.to_owned(),
-                checkout_base_url: base_url.to_owned(),
-                payouts_base_url: base_url.to_owned(),
-                payouts_staging_base_url: base_url.to_owned(),
-            })
-            .build()
-            .expect("valid config");
-        let client = PaymobClient::new(cfg).expect("valid client");
-        client
-            .auth()
-            .payouts_cache()
-            .store(CachedToken::with_default_ttl("topup-jwt", None));
-        client
-    }
+    use crate::resources::payouts::test_support::seeded_payouts_client;
 
     #[tokio::test]
-    async fn tc_5_2_4_rejects_oversized_proof_locally_before_network() {
+    async fn tc_5_2_4_rejects_oversized_empty_and_path_traversal_proof_locally() {
         let server = MockServer::start().await;
-        let client = seeded_client(&server.uri());
-        let oversized = vec![0u8; MAX_TOPUP_PROOF_BYTES + 1];
-        let err = client
+        let client = seeded_payouts_client(&server.uri(), "topup-jwt");
+
+        for bad_proof in [vec![], vec![0u8; MAX_TOPUP_PROOF_BYTES + 1]] {
+            let err = client
+                .payouts()
+                .topups()
+                .from_bank_transfer(BankTransferTopupParams {
+                    amount: 500,
+                    currency: String::from("egyptian_pound"),
+                    to_attach_proof: bad_proof,
+                    proof_filename: String::from("proof.pdf"),
+                    from_bank_name: None,
+                    reference_number: None,
+                })
+                .await
+                .expect_err("invalid proof size must fail locally");
+            assert!(matches!(
+                err,
+                PaymobError::ValidationError {
+                    field: "to_attach_proof",
+                    ..
+                }
+            ));
+        }
+
+        let bad_name_err = client
             .payouts()
             .topups()
             .from_bank_transfer(BankTransferTopupParams {
                 amount: 500,
                 currency: String::from("egyptian_pound"),
-                to_attach_proof: oversized,
-                proof_filename: String::from("proof.pdf"),
+                to_attach_proof: vec![1, 2, 3],
+                proof_filename: String::from("../etc/passwd"),
                 from_bank_name: None,
                 reference_number: None,
             })
             .await
-            .expect_err("oversized proof must fail locally");
+            .expect_err("traversal proof_filename must fail");
         assert!(matches!(
-            err,
+            bad_name_err,
             PaymobError::ValidationError {
-                field: "to_attach_proof",
+                field: "proof_filename",
                 ..
             }
         ));
     }
 
     #[tokio::test]
-    async fn tc_5_2_4_from_accept_balance_succeeds_and_redacts_accounts() {
+    async fn tc_5_2_4_from_accept_balance_succeeds_and_redacts_accounts_and_username() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/secure/topup/request/"))
@@ -263,15 +276,14 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = seeded_client(&server.uri());
+        let params = AcceptBalanceTopupParams::new(500, "egyptian_pound", "secret_treasury_user");
+        assert!(!format!("{params:?}").contains("secret_treasury_user"));
+
+        let client = seeded_payouts_client(&server.uri(), "topup-jwt");
         let record = client
             .payouts()
             .topups()
-            .from_accept_balance(AcceptBalanceTopupParams::new(
-                500,
-                "egyptian_pound",
-                "treasury_user",
-            ))
+            .from_accept_balance(params)
             .await
             .expect("from_accept_balance should succeed");
         assert_eq!(record.status.as_deref(), Some("pending"));

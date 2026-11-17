@@ -2,14 +2,16 @@
 //! Payouts OAuth 2.0 token facade (`US-5.1.0/unit-1`).
 //!
 //! Wraps `POST /api/secure/o/token/` using HTTP Basic Auth (`{client_id}:{client_secret}`)
-//! and `application/x-www-form-urlencoded` `password` and `refresh_token` grants.
+//! and `application/x-www-form-urlencoded` `password` and `refresh_token` grants, with
+//! [`Zeroizing`] form buffers, response bounds validation, and single-flight cache integration.
 
 use std::fmt;
+use std::time::Duration;
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use secrecy::{ExposeSecret, SecretString};
-use serde::Deserialize;
-use zeroize::ZeroizeOnDrop;
+use serde::{Deserialize, Deserializer};
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::core::auth::CachedToken;
 use crate::core::auth::payouts_oauth::{PAYOUTS_OAUTH_TOKEN_PATH, format_basic_auth_header};
@@ -17,15 +19,27 @@ use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
 use crate::core::http::HttpRequest;
 use crate::resources::payouts::execute_payouts_request;
+use crate::resources::payouts::models::validate_clean_field;
+
+#[derive(Deserialize, ZeroizeOnDrop)]
+struct RawPayoutsTokenResponse {
+    access_token: SecretString,
+    refresh_token: SecretString,
+    expires_in: u64,
+    #[serde(default)]
+    scope: String,
+    #[serde(default)]
+    token_type: String,
+}
 
 /// Response returned by Paymob Payouts OAuth 2.0 `POST /api/secure/o/token/`.
 ///
-/// Secrets are wrapped in [`SecretString`] and redacted (`[REDACTED]`) in [`fmt::Debug`].
+/// Secrets are wrapped in [`SecretString`], validated during deserialization (rejecting
+/// empty/whitespace tokens or `expires_in == 0`), and redacted (`[REDACTED]`) in [`fmt::Debug`].
 ///
 /// # Examples
 ///
 /// ```
-/// use secrecy::SecretString;
 /// use some_paymob::resources::payouts::PayoutsTokenResponse;
 ///
 /// let json = r#"{
@@ -39,20 +53,53 @@ use crate::resources::payouts::execute_payouts_request;
 /// assert_eq!(parsed.expires_in, 3600);
 /// assert!(format!("{parsed:?}").contains("[REDACTED]"));
 /// ```
-#[derive(Clone, Deserialize, ZeroizeOnDrop)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct PayoutsTokenResponse {
     /// Short-lived OAuth 2.0 bearer access token (60-minute TTL).
     pub access_token: SecretString,
     /// OAuth 2.0 refresh token for renewing expired access tokens.
     pub refresh_token: SecretString,
-    /// Token lifetime in seconds (typically `3600`).
+    /// Token lifetime in seconds (must be `> 0`, typically `3600`).
     pub expires_in: u64,
     /// Granted OAuth 2.0 scope string.
-    #[serde(default)]
     pub scope: String,
     /// Token type (typically `"Bearer"`).
-    #[serde(default)]
     pub token_type: String,
+}
+
+impl<'de> Deserialize<'de> for PayoutsTokenResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawPayoutsTokenResponse::deserialize(deserializer)?;
+        validate_token_secret("access_token", &raw.access_token)
+            .map_err(serde::de::Error::custom)?;
+        validate_token_secret("refresh_token", &raw.refresh_token)
+            .map_err(serde::de::Error::custom)?;
+        if raw.expires_in == 0 {
+            return Err(serde::de::Error::custom(
+                "PayoutsTokenResponse.expires_in must be greater than zero",
+            ));
+        }
+        Ok(Self {
+            access_token: raw.access_token.clone(),
+            refresh_token: raw.refresh_token.clone(),
+            expires_in: raw.expires_in,
+            scope: raw.scope.clone(),
+            token_type: raw.token_type.clone(),
+        })
+    }
+}
+
+fn validate_token_secret(field: &'static str, secret: &SecretString) -> Result<(), String> {
+    let val = secret.expose_secret();
+    if val.trim().is_empty() || val.bytes().any(|b| b.is_ascii_control()) {
+        return Err(format!(
+            "PayoutsTokenResponse.{field} must be non-empty and free of control characters"
+        ));
+    }
+    Ok(())
 }
 
 impl fmt::Debug for PayoutsTokenResponse {
@@ -95,63 +142,43 @@ impl<'a> PayoutsAuthService<'a> {
 
     /// Requests a new Payouts OAuth 2.0 token pair via `grant_type=password`.
     ///
+    /// Zeroizes intermediate URL-encoded form buffers immediately after building the request.
+    ///
     /// # Errors
     ///
     /// Returns [`PaymobError::AuthenticationError`] if `payouts_credentials` are missing
     /// or the gateway rejects the credentials (`401` / `invalid_grant`).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use some_paymob::core::client::PaymobClient;
-    /// use some_paymob::core::config::ClientConfig;
-    /// use some_paymob::core::credentials::PayoutsCredentials;
-    /// use some_paymob::core::region::PaymobRegion;
-    ///
-    /// # async fn example() -> Result<(), some_paymob::core::error::PaymobError> {
-    /// let config = ClientConfig::builder()
-    ///     .region(PaymobRegion::Egypt)
-    ///     .payouts_credentials(PayoutsCredentials::new("cid", "csec", "user", "pass")?)
-    ///     .build()?;
-    /// let client = PaymobClient::new(config)?;
-    /// let token = client.payouts().auth().generate_token().await?;
-    /// assert_eq!(token.expires_in, 3600);
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn generate_token(&self) -> Result<PayoutsTokenResponse, PaymobError> {
         let creds = self.require_credentials()?;
-        let body = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("grant_type", "password")
-            .append_pair("username", creds.username())
-            .append_pair("password", creds.password())
-            .finish();
-        self.dispatch_token_request(body.into_bytes()).await
+        let form = Zeroizing::new(
+            url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("grant_type", "password")
+                .append_pair("username", creds.username())
+                .append_pair("password", creds.password())
+                .finish(),
+        );
+        self.dispatch_token_request(form.as_bytes().to_vec()).await
     }
 
     /// Renews a Payouts OAuth 2.0 token pair via `grant_type=refresh_token`.
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `refresh_token` is empty, or
-    /// [`PaymobError::AuthenticationError`] if `payouts_credentials` are missing
-    /// or the gateway returns `invalid_grant` / `401`.
+    /// Returns [`PaymobError::ValidationError`] if `refresh_token` is empty or contains
+    /// control characters, or [`PaymobError::AuthenticationError`] if `payouts_credentials`
+    /// are missing or the gateway returns `invalid_grant` / `401`.
     pub async fn refresh_token(
         &self,
         refresh_token: &SecretString,
     ) -> Result<PayoutsTokenResponse, PaymobError> {
-        let trimmed = refresh_token.expose_secret().trim();
-        if trimmed.is_empty() {
-            return Err(PaymobError::ValidationError {
-                field: "refresh_token",
-                reason: String::from("refresh_token must not be empty"),
-            });
-        }
-        let body = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("grant_type", "refresh_token")
-            .append_pair("refresh_token", trimmed)
-            .finish();
-        self.dispatch_token_request(body.into_bytes()).await
+        let trimmed = validate_clean_field("refresh_token", refresh_token.expose_secret())?;
+        let form = Zeroizing::new(
+            url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("grant_type", "refresh_token")
+                .append_pair("refresh_token", trimmed)
+                .finish(),
+        );
+        self.dispatch_token_request(form.as_bytes().to_vec()).await
     }
 
     fn require_credentials(
@@ -194,23 +221,50 @@ impl<'a> PayoutsAuthService<'a> {
     }
 
     fn cache_token(&self, token: &PayoutsTokenResponse) {
-        let cached = CachedToken::new(
-            token.access_token.expose_secret().to_owned(),
-            Some(token.refresh_token.clone()),
-            std::time::Duration::from_secs(token.expires_in),
-        );
-        self.client.auth().payouts_cache().store(cached);
+        self.client
+            .auth()
+            .payouts_cache()
+            .store(to_cached_token(token));
     }
+}
+
+pub(crate) async fn acquire_or_refresh_cached_token(
+    client: &PaymobClient,
+) -> Result<CachedToken, PaymobError> {
+    let auth_svc = PayoutsAuthService::new(client);
+    if let Some(rt) = client
+        .auth()
+        .payouts_cache()
+        .peek()
+        .and_then(|t| t.refresh_token.clone())
+        && let Ok(refreshed) = auth_svc.refresh_token(&rt).await
+    {
+        return Ok(to_cached_token(&refreshed));
+    }
+    let generated = auth_svc.generate_token().await?;
+    Ok(to_cached_token(&generated))
+}
+
+fn to_cached_token(token: &PayoutsTokenResponse) -> CachedToken {
+    CachedToken::new(
+        token.access_token.expose_secret().to_owned(),
+        Some(token.refresh_token.clone()),
+        Duration::from_secs(token.expires_in),
+    )
 }
 
 fn map_oauth_error(response: &crate::core::http::HttpResponse) -> PaymobError {
     if let Ok(text) = response.text()
         && let Ok(parsed) = serde_json::from_str::<OAuthGrantErrorBody>(text)
-        && parsed.error.as_deref() == Some("invalid_grant")
+        && matches!(
+            parsed.error.as_deref(),
+            Some("invalid_grant" | "invalid_client" | "unauthorized_client")
+        )
     {
         let reason = parsed
             .error_description
             .or(parsed.detail)
+            .or(parsed.error)
             .unwrap_or_else(|| String::from("invalid_grant"));
         return PaymobError::AuthenticationError(reason);
     }
@@ -224,24 +278,8 @@ mod tests {
 
     use super::*;
     use crate::core::config::ClientConfig;
-    use crate::core::credentials::PayoutsCredentials;
     use crate::core::region::PaymobRegion;
-
-    fn payouts_test_client(base_url: &str) -> PaymobClient {
-        let creds = PayoutsCredentials::new("cid_1", "csec_1", "user_1", "pass_1")
-            .expect("valid payouts creds");
-        let cfg = ClientConfig::builder()
-            .region(PaymobRegion::Custom {
-                accept_base_url: base_url.to_owned(),
-                checkout_base_url: base_url.to_owned(),
-                payouts_base_url: base_url.to_owned(),
-                payouts_staging_base_url: base_url.to_owned(),
-            })
-            .payouts_credentials(creds)
-            .build()
-            .expect("valid config");
-        PaymobClient::new(cfg).expect("valid client")
-    }
+    use crate::resources::payouts::test_support::credentials_payouts_client;
 
     #[tokio::test]
     async fn tc_5_1_1_generate_and_refresh_token_succeed_and_redact_debug() {
@@ -259,7 +297,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = payouts_test_client(&server.uri());
+        let client = credentials_payouts_client(&server.uri());
         let generated = client
             .payouts()
             .auth()
@@ -284,7 +322,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tc_5_1_1_invalid_grant_maps_to_authentication_error() {
+    async fn tc_5_1_1_invalid_grant_and_missing_credentials_fail() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/secure/o/token/"))
@@ -295,7 +333,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = payouts_test_client(&server.uri());
+        let client = credentials_payouts_client(&server.uri());
         let err = client
             .payouts()
             .auth()
@@ -303,24 +341,46 @@ mod tests {
             .await
             .expect_err("invalid_grant must fail");
         assert!(matches!(err, PaymobError::AuthenticationError(_)));
+
+        let unconfigured_cfg = ClientConfig::builder()
+            .region(PaymobRegion::Egypt)
+            .build()
+            .expect("valid config without payouts creds");
+        let unconfigured_client = PaymobClient::new(unconfigured_cfg).expect("valid client");
+        let missing_err = unconfigured_client
+            .payouts()
+            .auth()
+            .generate_token()
+            .await
+            .expect_err("missing payouts_credentials must fail");
+        assert!(matches!(missing_err, PaymobError::AuthenticationError(_)));
     }
 
     #[tokio::test]
-    async fn tc_5_1_1_empty_refresh_token_rejected_locally() {
+    async fn tc_5_1_1_rejects_empty_or_control_char_refresh_token_and_malformed_response() {
         let server = MockServer::start().await;
-        let client = payouts_test_client(&server.uri());
-        let err = client
-            .payouts()
-            .auth()
-            .refresh_token(&SecretString::from("   "))
-            .await
-            .expect_err("empty refresh token must fail");
-        assert!(matches!(
-            err,
-            PaymobError::ValidationError {
-                field: "refresh_token",
-                ..
-            }
-        ));
+        let client = credentials_payouts_client(&server.uri());
+        for bad in ["   ", "tok
+injected"] {
+            let err = client
+                .payouts()
+                .auth()
+                .refresh_token(&SecretString::from(bad))
+                .await
+                .expect_err("invalid refresh token must fail");
+            assert!(matches!(
+                err,
+                PaymobError::ValidationError {
+                    field: "refresh_token",
+                    ..
+                }
+            ));
+        }
+
+        let bad_json_empty = r#"{"access_token":" ","refresh_token":"r","expires_in":3600}"#;
+        assert!(serde_json::from_str::<PayoutsTokenResponse>(bad_json_empty).is_err());
+
+        let bad_json_zero_ttl = r#"{"access_token":"a","refresh_token":"r","expires_in":0}"#;
+        assert!(serde_json::from_str::<PayoutsTokenResponse>(bad_json_zero_ttl).is_err());
     }
 }

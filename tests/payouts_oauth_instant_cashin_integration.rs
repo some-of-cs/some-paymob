@@ -1,10 +1,14 @@
 #![forbid(unsafe_code)]
 //! Story-level integration tests for `US-5.1.0` (Payouts OAuth2 + 7-issuer Instant Cashin + Aman Cancel).
 
+use std::time::Duration;
+
 use secrecy::SecretString;
+use some_paymob::core::auth::CachedToken;
 use some_paymob::core::client::PaymobClient;
 use some_paymob::core::config::ClientConfig;
 use some_paymob::core::credentials::PayoutsCredentials;
+use some_paymob::core::error::PaymobError;
 use some_paymob::core::region::PaymobRegion;
 use some_paymob::resources::payouts::{
     BankCardCashinParams, BankTransactionType, CancelAmanParams, DisburseIssuer,
@@ -43,23 +47,35 @@ async fn mount_disburse_mock(server: &MockServer) {
 }
 
 #[tokio::test]
-async fn us_5_1_0_oauth_token_generation() {
+async fn us_5_1_0_oauth_token_generation_and_expired_token_auto_refresh() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/secure/o/token/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "access_token": "e2e_access",
-            "refresh_token": "e2e_refresh",
+            "access_token": "e2e_access_renewed",
+            "refresh_token": "e2e_refresh_renewed",
             "expires_in": 3600,
             "scope": "read write",
             "token_type": "Bearer"
         })))
         .mount(&server)
         .await;
+    mount_disburse_mock(&server).await;
 
     let client = make_client(&server.uri());
-    let tok = client.payouts().auth().generate_token().await.unwrap();
-    assert_eq!(tok.expires_in, 3600);
+    client.auth().payouts_cache().store(CachedToken::new(
+        "expired_access",
+        Some(SecretString::from("valid_refresh")),
+        Duration::from_secs(1),
+    ));
+
+    let resp = client
+        .payouts()
+        .cashin()
+        .vodafone(MobileWalletCashinParams::new("01023456789", 150))
+        .await
+        .expect("expired token must auto-refresh via PayoutsAuthService");
+    assert_eq!(resp.transaction_id, "tx_e2e_1");
 }
 
 #[tokio::test]
@@ -70,9 +86,7 @@ async fn us_5_1_0_mobile_and_bank_wallet_issuers() {
     client
         .auth()
         .payouts_cache()
-        .store(some_paymob::core::auth::CachedToken::with_default_ttl(
-            "jwt", None,
-        ));
+        .store(CachedToken::with_default_ttl("jwt", None));
     let cashin = client.payouts().cashin();
 
     let vf = cashin
@@ -95,7 +109,7 @@ async fn us_5_1_0_mobile_and_bank_wallet_issuers() {
 }
 
 #[tokio::test]
-async fn us_5_1_0_bank_post_and_aman_cancel() {
+async fn us_5_1_0_bank_post_aman_cancel_and_negative_cases() {
     let server = MockServer::start().await;
     mount_disburse_mock(&server).await;
     Mock::given(method("POST"))
@@ -111,9 +125,7 @@ async fn us_5_1_0_bank_post_and_aman_cancel() {
     client
         .auth()
         .payouts_cache()
-        .store(some_paymob::core::auth::CachedToken::with_default_ttl(
-            "jwt", None,
-        ));
+        .store(CachedToken::with_default_ttl("jwt", None));
     let cashin = client.payouts().cashin();
 
     cashin
@@ -155,4 +167,14 @@ async fn us_5_1_0_bank_post_and_aman_cancel() {
         .await
         .unwrap();
     assert_eq!(aman.disbursement_status.as_deref(), Some("cancelled"));
+
+    assert!(matches!(
+        cashin
+            .vodafone(MobileWalletCashinParams::new("invalid", 100))
+            .await,
+        Err(PaymobError::ValidationError {
+            field: "msisdn",
+            ..
+        })
+    ));
 }

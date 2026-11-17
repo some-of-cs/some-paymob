@@ -5,23 +5,24 @@
 
 use std::fmt;
 
-use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 
 use crate::core::error::PaymobError;
-use crate::core::http::HttpRequest;
 use crate::resources::payouts::models::{
-    DisburseIssuer, DisbursementResponse, validate_non_empty, validate_positive_amount,
+    DisburseIssuer, DisbursementResponse, validate_msisdn, validate_optional_clean_field,
+    validate_positive_amount,
 };
-use crate::resources::payouts::{
-    PayoutsCashinService, execute_payouts_request, parse_payouts_response,
-    resolve_payouts_bearer_header,
-};
+use crate::resources::payouts::{PayoutsCashinService, post_payouts_json};
 
 /// Relative endpoint path for Paymob Send bulk disbursement.
 pub const PAYOUTS_BULK_DISBURSE_PATH: &str = "/disburse/api/v1/disburse/bulk_transaction/";
 
+/// Maximum number of disbursement items allowed in a single bulk request (`1,000`).
+pub const MAX_BULK_DISBURSEMENT_ITEMS: usize = 1_000;
+
 /// Single item within a [`BulkDisbursementParams`] batch.
+///
+/// Redacts `msisdn` and `full_name` in [`fmt::Debug`].
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BulkDisbursementItem {
     /// Disbursement issuer.
@@ -31,7 +32,7 @@ pub struct BulkDisbursementItem {
     /// Recipient mobile number (redacted in `Debug`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub msisdn: Option<String>,
-    /// Recipient full name.
+    /// Recipient full name (redacted in `Debug`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_name: Option<String>,
     /// Optional bank routing code.
@@ -48,10 +49,23 @@ impl fmt::Debug for BulkDisbursementItem {
             .field("issuer", &self.issuer)
             .field("amount", &self.amount)
             .field("msisdn", &self.msisdn.as_ref().map(|_| "[REDACTED]"))
-            .field("full_name", &self.full_name)
+            .field("full_name", &self.full_name.as_ref().map(|_| "[REDACTED]"))
             .field("bank_code", &self.bank_code)
             .field("client_reference_id", &self.client_reference_id)
             .finish()
+    }
+}
+
+impl BulkDisbursementItem {
+    fn validate(&self) -> Result<(), PaymobError> {
+        validate_positive_amount(self.amount)?;
+        if let Some(msisdn) = &self.msisdn {
+            validate_msisdn(msisdn)?;
+        }
+        validate_optional_clean_field("full_name", self.full_name.as_deref())?;
+        validate_optional_clean_field("bank_code", self.bank_code.as_deref())?;
+        validate_optional_clean_field("client_reference_id", self.client_reference_id.as_deref())?;
+        Ok(())
     }
 }
 
@@ -61,7 +75,7 @@ pub struct BulkDisbursementParams {
     /// Whether this batch contains banking transactions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bank_transaction: Option<bool>,
-    /// Non-empty list of disbursement items.
+    /// Non-empty list of disbursement items (`1..=MAX_BULK_DISBURSEMENT_ITEMS`).
     pub transactions: Vec<BulkDisbursementItem>,
 }
 
@@ -83,17 +97,16 @@ impl BulkDisbursementParams {
     }
 
     fn validate(&self) -> Result<(), PaymobError> {
-        if self.transactions.is_empty() {
+        if self.transactions.is_empty() || self.transactions.len() > MAX_BULK_DISBURSEMENT_ITEMS {
             return Err(PaymobError::ValidationError {
                 field: "transactions",
-                reason: String::from("bulk disbursement must include at least one transaction"),
+                reason: format!(
+                    "bulk disbursement must include 1 to {MAX_BULK_DISBURSEMENT_ITEMS} transactions"
+                ),
             });
         }
         for item in &self.transactions {
-            validate_positive_amount(item.amount)?;
-            if let Some(ref_id) = &item.client_reference_id {
-                validate_non_empty("client_reference_id", ref_id)?;
-            }
+            item.validate()?;
         }
         Ok(())
     }
@@ -121,21 +134,14 @@ impl<'a> PayoutsCashinService<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `transactions` is empty or any item has `amount == 0`.
+    /// Returns [`PaymobError::ValidationError`] if `transactions` is empty, exceeds
+    /// [`MAX_BULK_DISBURSEMENT_ITEMS`], or any item fails validation.
     pub async fn bulk(
         &self,
         params: BulkDisbursementParams,
     ) -> Result<BulkDisbursementResponse, PaymobError> {
         params.validate()?;
-        let bearer = resolve_payouts_bearer_header(self.client()).await?;
-        let url = self.client().payouts_url(PAYOUTS_BULK_DISBURSE_PATH)?;
-        let request = HttpRequest::post(url.as_str())
-            .map_err(PaymobError::from)?
-            .with_header(AUTHORIZATION, bearer)
-            .with_json(&params)
-            .map_err(PaymobError::from)?;
-        let response = execute_payouts_request(self.client(), &request).await?;
-        parse_payouts_response(&response)
+        post_payouts_json(self.client(), PAYOUTS_BULK_DISBURSE_PATH, &params).await
     }
 }
 
@@ -145,31 +151,10 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
-    use crate::core::auth::CachedToken;
-    use crate::core::client::PaymobClient;
-    use crate::core::config::ClientConfig;
-    use crate::core::region::PaymobRegion;
-
-    fn seeded_client(base_url: &str) -> PaymobClient {
-        let cfg = ClientConfig::builder()
-            .region(PaymobRegion::Custom {
-                accept_base_url: base_url.to_owned(),
-                checkout_base_url: base_url.to_owned(),
-                payouts_base_url: base_url.to_owned(),
-                payouts_staging_base_url: base_url.to_owned(),
-            })
-            .build()
-            .expect("valid config");
-        let client = PaymobClient::new(cfg).expect("valid client");
-        client
-            .auth()
-            .payouts_cache()
-            .store(CachedToken::with_default_ttl("bulk-jwt", None));
-        client
-    }
+    use crate::resources::payouts::test_support::seeded_payouts_client;
 
     #[tokio::test]
-    async fn tc_5_2_1_bulk_disbursement_succeeds_and_rejects_empty() {
+    async fn tc_5_2_1_bulk_disbursement_succeeds_and_rejects_invalid_batches() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/disburse/api/v1/disburse/bulk_transaction"))
@@ -187,19 +172,17 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = seeded_client(&server.uri());
-        let empty_err = client
-            .payouts()
-            .cashin()
-            .bulk(BulkDisbursementParams::new(vec![]))
-            .await
-            .expect_err("empty batch must fail");
+        let client = seeded_payouts_client(&server.uri(), "bulk-jwt");
         assert!(matches!(
-            empty_err,
-            PaymobError::ValidationError {
+            client
+                .payouts()
+                .cashin()
+                .bulk(BulkDisbursementParams::new(vec![]))
+                .await,
+            Err(PaymobError::ValidationError {
                 field: "transactions",
                 ..
-            }
+            })
         ));
 
         let item = BulkDisbursementItem {
@@ -210,7 +193,22 @@ mod tests {
             bank_code: None,
             client_reference_id: Some(String::from("batch_ref_1")),
         };
-        assert!(!format!("{item:?}").contains("01023456789"));
+        let dbg = format!("{item:?}");
+        assert!(!dbg.contains("01023456789"));
+        assert!(!dbg.contains("Driver One"));
+
+        let oversized = vec![item.clone(); MAX_BULK_DISBURSEMENT_ITEMS + 1];
+        assert!(matches!(
+            client
+                .payouts()
+                .cashin()
+                .bulk(BulkDisbursementParams::new(oversized))
+                .await,
+            Err(PaymobError::ValidationError {
+                field: "transactions",
+                ..
+            })
+        ));
 
         let resp = client
             .payouts()

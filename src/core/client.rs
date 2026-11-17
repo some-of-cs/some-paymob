@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use url::Url;
 
+use crate::core::auth::AuthManager;
 use crate::core::config::ClientConfig;
 use crate::core::error::PaymobError;
 use crate::core::http::{HttpClient, HttpClientConfig, RetryPolicy};
@@ -24,6 +25,7 @@ pub struct PaymobCore {
     config: ClientConfig,
     endpoints: RegionalEndpoints,
     http: HttpClient,
+    auth: AuthManager,
 }
 
 impl fmt::Debug for PaymobCore {
@@ -137,6 +139,7 @@ impl PaymobClient {
             config,
             endpoints,
             http,
+            auth: AuthManager::new(),
         };
         Ok(Self {
             inner: Arc::new(core),
@@ -197,6 +200,12 @@ impl PaymobClient {
     #[must_use]
     pub fn http(&self) -> &HttpClient {
         &self.inner.http
+    }
+
+    /// Returns a reference to the shared [`AuthManager`] holding single-flight token caches.
+    #[must_use]
+    pub fn auth(&self) -> &AuthManager {
+        &self.inner.auth
     }
 
     /// Builds a full Accept Acquiring URL by joining `path` onto the regional Accept base URL.
@@ -416,6 +425,9 @@ mod tests {
         let client = sample_client(PaymobRegion::Egypt);
         let cloned = client.clone();
         assert!(client.ptr_eq(&cloned));
+        let token = crate::core::auth::CachedToken::with_default_ttl("shared-jwt", None);
+        client.auth().accept_cache().store(token);
+        assert!(cloned.auth().accept_cache().peek().is_some());
     }
 
     #[test]

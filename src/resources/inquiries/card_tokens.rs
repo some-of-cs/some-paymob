@@ -162,9 +162,10 @@ async fn acquire_accept_jwt(service: &InquiriesService<'_>) -> Result<SecretStri
                 field: "api_key",
                 reason: "api_key must be configured for Regime 2 inquiry endpoints".to_owned(),
             })?;
-    let provider = AcceptJwtProvider::new(
+    let provider = AcceptJwtProvider::with_cache(
         service.client().endpoints().accept_base_url.as_str(),
         SecretString::from(api_key.expose_secret().to_owned()),
+        service.client().auth().accept_cache_arc(),
     )
     .map_err(map_accept_jwt_error)?;
     provider.token().await.map_err(map_accept_jwt_error)

@@ -44,11 +44,18 @@ pub enum CardFeeRule {
         /// Fee mode applied to credit cards.
         credit_mode: FeeCalculationMode,
     },
-    /// Apply the fee when a card BIN prefix falls within `[start_bin, end_bin]` (inclusive).
+    /// Apply the fee when a card BIN's leading `start_bin.len()` prefix falls within
+    /// `[start_bin, end_bin]` (inclusive).
+    ///
+    /// Both `start_bin` and `end_bin` must be 6-to-8 ASCII digit strings of the **same length**
+    /// (`start_bin.len() == end_bin.len()`) with `start_bin <= end_bin`. A card BIN (`6..=8`
+    /// ASCII digits with `card_bin.len() >= start_bin.len()`) matches when
+    /// `&card_bin[..start_bin.len()]` is within `[start_bin, end_bin]`, so a 6-digit range
+    /// `"400000".."499999"` includes an 8-digit card BIN `"49999912"`.
     BinRange {
-        /// Inclusive lower BIN prefix bound (6 to 8 ASCII digits).
+        /// Inclusive lower BIN prefix bound (6 to 8 ASCII digits, matching `end_bin.len()`).
         start_bin: String,
-        /// Inclusive upper BIN prefix bound (6 to 8 ASCII digits).
+        /// Inclusive upper BIN prefix bound (6 to 8 ASCII digits, matching `start_bin.len()`).
         end_bin: String,
     },
     /// Apply separate fee modes for domestic versus international cards.
@@ -263,10 +270,14 @@ const fn select_mode(
 }
 
 fn bin_in_range(bin_prefix: Option<&str>, start_bin: &str, end_bin: &str) -> bool {
-    match bin_prefix {
-        Some(bin) => is_valid_bin(bin) && bin >= start_bin && bin <= end_bin,
-        None => false,
+    let Some(card_bin) = bin_prefix else {
+        return false;
+    };
+    if !is_valid_bin(card_bin) || card_bin.len() < start_bin.len() {
+        return false;
     }
+    let prefix = &card_bin[..start_bin.len()];
+    prefix >= start_bin && prefix <= end_bin
 }
 
 fn compute_mode_fee(
@@ -331,13 +342,20 @@ fn validate_card_rule(rule: &CardFeeRule) -> Result<(), PaymobError> {
 }
 
 fn validate_bin_range(start_bin: &str, end_bin: &str) -> Result<(), PaymobError> {
-    if !is_valid_bin(start_bin) || !is_valid_bin(end_bin) || start_bin > end_bin {
+    if !is_valid_bin_bounds(start_bin, end_bin) {
         return Err(validation_err(
             "bin_range",
-            "BIN range bounds must be 6-8 ASCII digits with start_bin <= end_bin",
+            "BIN range bounds must be equal-length 6-8 ASCII digits with start_bin <= end_bin",
         ));
     }
     Ok(())
+}
+
+fn is_valid_bin_bounds(start_bin: &str, end_bin: &str) -> bool {
+    is_valid_bin(start_bin)
+        && is_valid_bin(end_bin)
+        && start_bin.len() == end_bin.len()
+        && start_bin <= end_bin
 }
 
 fn is_valid_bin(bin: &str) -> bool {
@@ -454,6 +472,37 @@ mod tests {
                 ..
             })
         ));
+
+        let mixed_len_bin = ConvenienceFeeConfig::new(FeeCalculationMode::FixedCents(100))
+            .with_card_rule(CardFeeRule::BinRange {
+                start_bin: "400000".to_owned(),
+                end_bin: "49999999".to_owned(),
+            });
+        assert!(matches!(
+            mixed_len_bin.validate(),
+            Err(PaymobError::ValidationError {
+                field: "bin_range",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn tc_3_3_3_eight_digit_card_bin_matches_six_digit_prefix_bounds() {
+        let bin_cfg = ConvenienceFeeConfig::new(FeeCalculationMode::FixedCents(500))
+            .with_card_rule(CardFeeRule::BinRange {
+                start_bin: "400000".to_owned(),
+                end_bin: "499999".to_owned(),
+            });
+        assert_eq!(
+            bin_cfg
+                .compute_fee_for_card_cents(
+                    50_000,
+                    &CardFeeContext::new(true, false).with_bin_prefix("49999912")
+                )
+                .expect("8-digit BIN within 6-digit range"),
+            500
+        );
     }
 
     #[test]

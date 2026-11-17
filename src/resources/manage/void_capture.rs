@@ -284,9 +284,10 @@ impl<'a> ManageService<'a> {
             ))
         })?;
         let base_url = self.client().accept_url("/")?;
-        let provider = AcceptJwtProvider::new(
+        let provider = AcceptJwtProvider::with_cache(
             base_url.as_str(),
             SecretString::from(api_key.expose_secret().to_owned()),
+            self.client().auth().accept_cache_arc(),
         )
         .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
 
@@ -329,7 +330,7 @@ async fn execute_manage_request(
 }
 
 fn map_http_error(err: HttpError) -> PaymobError {
-    PaymobError::TransportError(err.to_string())
+    PaymobError::from(err)
 }
 
 #[cfg(test)]
@@ -519,5 +520,29 @@ mod tests {
                 .expect_err("missing api key must fail")
                 .is_auth_error()
         );
+    }
+
+    #[tokio::test]
+    async fn void_and_capture_map_429_retries_exhausted_to_rate_limited_with_retry_after() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/acceptance/capture"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("Retry-After", "23")
+                    .set_body_json(serde_json::json!({ "detail": "Too Many Requests" })),
+            )
+            .mount(&server)
+            .await;
+
+        let client = test_client_regime1(&server.uri());
+        let err = client
+            .manage()
+            .capture(CaptureParams::new(574_588, 1_000))
+            .await
+            .expect_err("429 retry exhaustion must produce RateLimited");
+
+        assert!(err.is_rate_limited());
+        assert_eq!(err.retry_after_secs(), Some(23));
     }
 }

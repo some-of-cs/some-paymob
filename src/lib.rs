@@ -21,7 +21,8 @@ pub mod prelude;
     feature = "splits",
     feature = "saved-cards",
     feature = "subscriptions",
-    feature = "payouts"
+    feature = "payouts",
+    feature = "onboarding"
 ))]
 pub mod resources;
 
@@ -84,3 +85,7 @@ pub use resources::subscriptions::SubscriptionsService;
 /// Crate-root re-export of the Paymob Send Payouts & Disbursement service.
 #[cfg(feature = "payouts")]
 pub use resources::payouts::PayoutsService;
+
+/// Crate-root re-exports of Partner Merchant Onboarding services and scoped client.
+#[cfg(feature = "onboarding")]
+pub use resources::onboarding::{OnboardingService, PartnerAuthService, PartnerFlowService};

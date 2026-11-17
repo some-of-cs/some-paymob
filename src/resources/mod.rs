@@ -11,6 +11,8 @@ pub mod intentions;
 pub mod legacy;
 #[cfg(feature = "manage")]
 pub mod manage;
+#[cfg(feature = "onboarding")]
+pub mod onboarding;
 #[cfg(feature = "payouts")]
 pub mod payouts;
 #[cfg(feature = "quicklinks")]

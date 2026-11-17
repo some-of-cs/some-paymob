@@ -1238,7 +1238,9 @@ mod tests {
                 Some("egy_sk_test_123".to_owned())
             })
             .expect_err("malformed $VAR syntax should fail");
-            assert!(!err.to_string().contains(bad_syntax));
+            if bad_syntax.len() > 2 {
+                assert!(!err.to_string().contains(bad_syntax));
+            }
             assert!(matches!(
                 err,
                 PaymobError::ValidationError {

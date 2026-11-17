@@ -82,22 +82,7 @@ impl SplitRecipientRule {
                 "recipient_id must not be empty",
             ));
         }
-        match (self.amount_cents, self.percentage_bps) {
-            (Some(amt), None) if amt > 0 => Ok(()),
-            (Some(_), None) => Err(validation_err(
-                "amount_cents",
-                "fixed split amount_cents must be greater than zero",
-            )),
-            (None, Some(bps)) if (1..=MAX_BASIS_POINTS).contains(&bps) => Ok(()),
-            (None, Some(_)) => Err(validation_err(
-                "percentage_bps",
-                "percentage_bps must be between 1 and 10_000",
-            )),
-            _ => Err(validation_err(
-                "split_rule",
-                "specify exactly one of amount_cents or percentage_bps",
-            )),
-        }
+        validate_split_mode(self.amount_cents, self.percentage_bps)
     }
 }
 
@@ -397,6 +382,40 @@ impl SplitPaymentConfig {
         }
         Ok(())
     }
+}
+
+fn validate_split_mode(
+    amount_cents: Option<u64>,
+    percentage_bps: Option<u16>,
+) -> Result<(), PaymobError> {
+    match (amount_cents, percentage_bps) {
+        (Some(amt), None) => validate_positive_split_amount(amt),
+        (None, Some(bps)) => validate_split_bps_range(bps),
+        _ => Err(validation_err(
+            "split_rule",
+            "specify exactly one of amount_cents or percentage_bps",
+        )),
+    }
+}
+
+fn validate_positive_split_amount(amount_cents: u64) -> Result<(), PaymobError> {
+    if amount_cents == 0 {
+        return Err(validation_err(
+            "amount_cents",
+            "fixed split amount_cents must be greater than zero",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_split_bps_range(bps: u16) -> Result<(), PaymobError> {
+    if !(1..=MAX_BASIS_POINTS).contains(&bps) {
+        return Err(validation_err(
+            "percentage_bps",
+            "percentage_bps must be between 1 and 10_000",
+        ));
+    }
+    Ok(())
 }
 
 fn validation_err(field: &'static str, reason: impl Into<String>) -> PaymobError {

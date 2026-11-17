@@ -19,7 +19,7 @@ pub use crate::core::client::PaymobClient;
 pub use crate::core::config::{ClientConfig, ClientConfigBuilder};
 pub use crate::core::credentials::{
     ApiKey, EnvironmentMode, HmacSecret, PartnerCredentials, PayoutsCredentials, PublicKey,
-    SecretKey,
+    SecretKey, resolve_secret_or_env, resolve_secret_or_env_with,
 };
 pub use crate::core::error::PaymobError;
 pub use crate::core::http::{

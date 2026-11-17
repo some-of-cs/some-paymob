@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Canonical 20-key Paymob transaction HMAC concatenation builder (Unit 7.1.3).
 //!
 //! Provides the static lexicographically ordered [`TX_HMAC_KEYS`] lookup table

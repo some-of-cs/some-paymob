@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Protocol E Paymob Payouts disbursement and topup webhook callbacks.
 //!
 //! This module models Paymob Payouts webhook payloads for outbound

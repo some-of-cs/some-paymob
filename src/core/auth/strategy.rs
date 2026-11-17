@@ -275,7 +275,20 @@ pub fn inject_secret_key_token(
     headers: &mut HeaderMap,
     secret_key: &SecretString,
 ) -> Result<(), StrategyError> {
-    let raw = secret_key.expose_secret();
+    let raw_input = secret_key.expose_secret();
+    if raw_input.is_empty() {
+        return Err(StrategyError::EmptySecretKey);
+    }
+    if raw_input.bytes().any(is_invalid_token_byte) {
+        return Err(StrategyError::InvalidHeaderValue);
+    }
+    let resolved = if raw_input.starts_with('$') {
+        crate::core::credentials::resolve_secret_or_env("secret_key", raw_input)
+            .map_err(|_| StrategyError::EmptySecretKey)?
+    } else {
+        secret_key.clone()
+    };
+    let raw = resolved.expose_secret();
     if raw.is_empty() {
         return Err(StrategyError::EmptySecretKey);
     }
@@ -283,8 +296,8 @@ pub fn inject_secret_key_token(
         return Err(StrategyError::InvalidHeaderValue);
     }
 
-    let value = format_sensitive_auth_header("Token", secret_key)
-        .ok_or(StrategyError::InvalidHeaderValue)?;
+    let value =
+        format_sensitive_auth_header("Token", &resolved).ok_or(StrategyError::InvalidHeaderValue)?;
     headers.insert(AUTHORIZATION, value);
     Ok(())
 }

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Protocol C: Card Token 8-key `HMAC-SHA512` webhook verifier.
 //!
 //! Implements fail-closed, constant-time verification for Paymob's card

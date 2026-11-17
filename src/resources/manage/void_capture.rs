@@ -7,18 +7,12 @@
 //! legacy-v2 Regime 2 (`Bearer <auth_token>`) authentication via
 //! [`ClientConfig::use_legacy_v2_bearer_for_capture`](crate::core::config::ClientConfig::use_legacy_v2_bearer_for_capture).
 
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
-use secrecy::{ExposeSecret, SecretString};
+use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 
-use crate::core::auth::accept_jwt::AcceptJwtProvider;
-use crate::core::auth::strategy::inject_secret_key_token;
-use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::http::{
-    HttpClient, HttpClientConfig, HttpError, HttpRequest, HttpResponse, RetryPolicy,
-};
-use crate::resources::manage::ManageService;
+use crate::core::http::HttpRequest;
+use crate::resources::manage::{ManageService, execute_manage_request, map_http_error};
 use crate::resources::manage::models::Transaction;
 
 const VOID_PATH: &str = "/api/acceptance/void_refund/void";
@@ -231,7 +225,9 @@ impl<'a> ManageService<'a> {
         path: &str,
         payload: &T,
     ) -> Result<Transaction, PaymobError> {
-        let auth_header = self.resolve_manage_auth_header().await?;
+        let auth_header = self
+            .resolve_auth_header("secret_key is required for Regime 1 manage requests")
+            .await?;
         let url = self.client().accept_url(path)?;
         let request = HttpRequest::post(url.as_str())
             .map_err(map_http_error)?
@@ -253,85 +249,10 @@ impl<'a> ManageService<'a> {
             .map_err(|err| PaymobError::TransportError(err.to_string()))
     }
 
-    async fn resolve_manage_auth_header(&self) -> Result<HeaderValue, PaymobError> {
-        if self.client().config().use_legacy_v2_bearer_for_capture() {
-            return self.resolve_legacy_v2_bearer_header().await;
-        }
-        self.resolve_regime1_token_header()
-    }
 
-    fn resolve_regime1_token_header(&self) -> Result<HeaderValue, PaymobError> {
-        let secret_key = self.client().config().secret_key().ok_or_else(|| {
-            PaymobError::AuthenticationError(String::from(
-                "secret_key is required for Regime 1 manage requests",
-            ))
-        })?;
-        let mut headers = HeaderMap::new();
-        let secret = SecretString::from(secret_key.expose_secret().to_owned());
-        inject_secret_key_token(&mut headers, &secret)
-            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-        headers.remove(AUTHORIZATION).ok_or_else(|| {
-            PaymobError::AuthenticationError(String::from(
-                "failed to construct Regime 1 Authorization header",
-            ))
-        })
-    }
-
-    async fn resolve_legacy_v2_bearer_header(&self) -> Result<HeaderValue, PaymobError> {
-        let api_key = self.client().config().api_key().ok_or_else(|| {
-            PaymobError::AuthenticationError(String::from(
-                "api_key is required when use_legacy_v2_bearer_for_capture is enabled",
-            ))
-        })?;
-        let base_url = self.client().accept_url("/")?;
-        let provider = AcceptJwtProvider::with_cache(
-            base_url.as_str(),
-            SecretString::from(api_key.expose_secret().to_owned()),
-            self.client().auth().accept_cache_arc(),
-        )
-        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-
-        let jwt = provider
-            .token()
-            .await
-            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-        let mut header_val = HeaderValue::from_str(&format!("Bearer {}", jwt.expose_secret()))
-            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-        header_val.set_sensitive(true);
-        Ok(header_val)
-    }
 }
 
-async fn execute_manage_request(
-    client: &PaymobClient,
-    request: &HttpRequest,
-) -> Result<HttpResponse, PaymobError> {
-    let is_loopback_http = request.url().scheme() == "http"
-        && matches!(
-            request.url().host_str(),
-            Some("127.0.0.1" | "localhost" | "[::1]")
-        );
-    if !is_loopback_http {
-        return client.http().execute(request).await.map_err(map_http_error);
-    }
-    let cfg = client.config();
-    let local_http = HttpClient::new(HttpClientConfig {
-        connect_timeout: cfg.timeout(),
-        request_timeout: cfg.timeout(),
-        max_response_bytes: client.http().config().max_response_bytes,
-        retry: RetryPolicy {
-            max_retries: cfg.max_retries(),
-            ..RetryPolicy::default()
-        },
-        allow_insecure_http: true,
-    })
-    .map_err(map_http_error)?;
-    local_http.execute(request).await.map_err(map_http_error)
-}
 
-fn map_http_error(err: HttpError) -> PaymobError {
-    PaymobError::from(err)
-}
 
 #[cfg(test)]
 mod tests {

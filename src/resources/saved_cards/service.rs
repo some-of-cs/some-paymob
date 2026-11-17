@@ -648,13 +648,7 @@ fn validate_non_empty_secret(
     field: &'static str,
     secret: SecretString,
 ) -> Result<SecretString, PaymobError> {
-    if secret.expose_secret().trim().is_empty() {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must not be empty"),
-        });
-    }
-    Ok(secret)
+    crate::core::credentials::resolve_secret_or_env(field, secret.expose_secret())
 }
 
 fn validate_non_empty_string(field: &'static str, value: String) -> Result<String, PaymobError> {

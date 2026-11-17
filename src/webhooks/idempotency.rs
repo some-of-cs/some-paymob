@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Atomic webhook idempotency guard and thread-safe in-memory deduplicator.
 //!
 //! Provides [`IdempotentWebhookGuard`] for extracting deterministic

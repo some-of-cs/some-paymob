@@ -113,17 +113,16 @@ impl PayoutsCredentials {
         username: impl Into<SecretString>,
         password: impl Into<SecretString>,
     ) -> Result<Self, PayoutsOAuthError> {
-        let creds = Self {
-            client_id: client_id.into(),
-            client_secret: client_secret.into(),
-            username: username.into(),
-            password: password.into(),
-        };
-        require_non_empty("client_id", &creds.client_id)?;
-        require_non_empty("client_secret", &creds.client_secret)?;
-        require_non_empty("username", &creds.username)?;
-        require_non_empty("password", &creds.password)?;
-        Ok(creds)
+        let client_id = resolve_payouts_secret("client_id", &client_id.into())?;
+        let client_secret = resolve_payouts_secret("client_secret", &client_secret.into())?;
+        let username = resolve_payouts_secret("username", &username.into())?;
+        let password = resolve_payouts_secret("password", &password.into())?;
+        Ok(Self {
+            client_id,
+            client_secret,
+            username,
+            password,
+        })
     }
 }
 
@@ -382,11 +381,12 @@ fn format_bearer_header(token: &SecretString) -> Result<HeaderValue, PayoutsOAut
     format_sensitive_auth_header("Bearer", token).ok_or(PayoutsOAuthError::InvalidHeaderValue)
 }
 
-fn require_non_empty(field: &'static str, secret: &SecretString) -> Result<(), PayoutsOAuthError> {
-    if secret.expose_secret().trim().is_empty() {
-        return Err(PayoutsOAuthError::EmptyCredential(field));
-    }
-    Ok(())
+fn resolve_payouts_secret(
+    field: &'static str,
+    secret: &SecretString,
+) -> Result<SecretString, PayoutsOAuthError> {
+    crate::core::credentials::resolve_secret_or_env(field, secret.expose_secret())
+        .map_err(|_| PayoutsOAuthError::EmptyCredential(field))
 }
 
 fn build_token_url(base_url: &str) -> Result<Url, PayoutsOAuthError> {

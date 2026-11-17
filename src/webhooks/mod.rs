@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Constant-time cryptographic webhook verification engine (Protocols A-E & Idempotency Guard).
 //!
 //! Pre-scaffolded module index for `feat/module-7-webhooks-engine`.

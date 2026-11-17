@@ -380,12 +380,7 @@ fn validate_non_empty_secret(
     value: impl Into<String>,
     err: PartnerAuthError,
 ) -> Result<SecretString, PartnerAuthError> {
-    let raw = Zeroizing::new(value.into());
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(err);
-    }
-    Ok(SecretString::from(trimmed.to_owned()))
+    crate::core::credentials::resolve_secret_or_env("partner_secret", value).map_err(|_| err)
 }
 
 fn build_header_name(name: String) -> Result<HeaderName, PartnerAuthError> {

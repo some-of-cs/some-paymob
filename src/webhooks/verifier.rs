@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Core webhook error types and constant-time HMAC-SHA512 verification engine.
 //!
 //! Owned by Unit 7.1.1 (`feat/us-7.1.0/unit-1-webhook-error-and-core`).
@@ -330,7 +331,10 @@ impl PaymobWebhookEngine {
         concatenated: &str,
         signature_hex: &str,
     ) -> WebhookResult<()> {
-        let trimmed_secret = validate_secret_non_empty(secret)?;
+        let resolved =
+            crate::core::credentials::resolve_secret_or_env("hmac_secret", secret.expose_secret())
+                .map_err(|_| WebhookError::InvalidSecretKeyLength)?;
+        let trimmed_secret = validate_secret_non_empty(&resolved)?;
         let mut decoded = decode_sha512_hex(signature_hex)?;
         let mut mac = HmacSha512::new_from_slice(trimmed_secret.as_bytes())
             .map_err(|_| WebhookError::InvalidSecretKeyLength)?;
@@ -348,8 +352,8 @@ impl PaymobWebhookEngine {
 }
 
 fn normalize_secret_string(secret: SecretString) -> WebhookResult<SecretString> {
-    let trimmed = validate_secret_non_empty(&secret)?;
-    Ok(SecretString::from(trimmed.to_owned()))
+    crate::core::credentials::resolve_secret_or_env("hmac_secret", secret.expose_secret())
+        .map_err(|_| WebhookError::InvalidSecretKeyLength)
 }
 
 fn validate_secret_non_empty(secret: &SecretString) -> WebhookResult<&str> {

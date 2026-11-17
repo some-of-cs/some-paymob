@@ -149,7 +149,8 @@ impl<'a> CheckoutService<'a> {
             }
                 })?;
         let pk_value = validate_public_key(public_key)?;
-        let secret_value = validate_client_secret(client_secret)?;
+        let resolved_secret = resolve_client_secret_if_env(client_secret)?;
+        let secret_value = validate_client_secret(&resolved_secret)?;
 
         let mut url = Url::parse(&self.client.endpoints().checkout_base_url).map_err(|err| {
             PaymobError::ValidationError {
@@ -280,6 +281,18 @@ fn validate_public_key(public_key: &PublicKey) -> Result<&str, PaymobError> {
         });
     }
     Ok(raw)
+}
+
+fn resolve_client_secret_if_env(
+    client_secret: &SecretString,
+) -> Result<SecretString, PaymobError> {
+    if client_secret.expose_secret().trim().starts_with('$') {
+        return crate::core::credentials::resolve_secret_or_env(
+            "client_secret",
+            client_secret.expose_secret(),
+        );
+    }
+    Ok(client_secret.clone())
 }
 
 fn validate_client_secret(client_secret: &SecretString) -> Result<&str, PaymobError> {

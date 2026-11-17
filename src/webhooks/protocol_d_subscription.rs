@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Protocol D — Subscription Lifecycle 12-trigger webhook models and verifier.
 //!
 //! Paymob subscription callbacks are delivered as HTTP `POST` JSON payloads with

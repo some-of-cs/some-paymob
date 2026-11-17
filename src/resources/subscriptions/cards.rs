@@ -8,21 +8,17 @@
 use std::fmt;
 
 use reqwest::Method;
-use reqwest::header::{AUTHORIZATION, HeaderValue};
 use secrecy::{ExposeSecret, SecretString};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize, Serializer};
 use zeroize::ZeroizeOnDrop;
 
-use super::SubscriptionsService;
-use crate::core::auth::{
-    AcceptJwtProvider, CachedToken, format_bearer_header, is_incorrect_credentials_401,
-};
+use super::{SubscriptionsService, validate_positive_id};
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
+use crate::core::http::HttpClient;
 #[cfg(test)]
 use crate::core::http::HttpClientConfig;
-use crate::core::http::{HttpClient, HttpRequest, HttpResponse};
 
 const SUBSCRIPTIONS_BASE_PATH: &str = "/api/acceptance/subscriptions";
 
@@ -152,15 +148,9 @@ impl AddSecondaryCardParams {
     ///
     /// Returns [`PaymobError::ValidationError`] if `card_token` is empty or whitespace.
     pub fn new(card_token: impl Into<String>) -> Result<Self, PaymobError> {
-        let raw = card_token.into();
-        if raw.trim().is_empty() {
-            return Err(PaymobError::ValidationError {
-                field: "card_token",
-                reason: "secondary card token must not be empty".to_owned(),
-            });
-        }
+        let token = crate::core::credentials::resolve_secret_or_env("card_token", card_token)?;
         Ok(Self {
-            token: SecretString::from(raw),
+            token,
             integration_id: None,
             redirect_url: None,
         })
@@ -492,99 +482,8 @@ impl SubscriptionCardsService {
         Req: Serialize + ?Sized,
         Resp: DeserializeOwned,
     {
-        let token = self.acquire_accept_token().await?;
-        let response = self.send_once(&method, path, body, &token).await?;
-        if is_incorrect_credentials_401(response.status, &response.body) {
-            return self
-                .retry_with_fresh_token(&method, path, body, &token)
-                .await;
-        }
-        decode_response(response)
+        super::execute_subscription_bearer_json(&self.client, &self.http, method, path, body).await
     }
-
-    async fn retry_with_fresh_token<Req, Resp>(
-        &self,
-        method: &Method,
-        path: &str,
-        body: Option<&Req>,
-        stale_token: &SecretString,
-    ) -> Result<Resp, PaymobError>
-    where
-        Req: Serialize + ?Sized,
-        Resp: DeserializeOwned,
-    {
-        self.client
-            .auth()
-            .accept_cache()
-            .evict_if_matches(stale_token)
-            .await;
-        let fresh_token = self.acquire_accept_token().await?;
-        let response = self.send_once(method, path, body, &fresh_token).await?;
-        decode_response(response)
-    }
-
-    async fn send_once<Req>(
-        &self,
-        method: &Method,
-        path: &str,
-        body: Option<&Req>,
-        token: &SecretString,
-    ) -> Result<HttpResponse, PaymobError>
-    where
-        Req: Serialize + ?Sized,
-    {
-        let url = self.client.accept_url(path)?;
-        let bearer: HeaderValue = format_bearer_header(token)?;
-        let mut request = HttpRequest::new(method.clone(), url.as_str())?;
-        request = request.with_header(AUTHORIZATION, bearer);
-        if let Some(payload) = body {
-            request = request.with_json(&payload)?;
-        }
-        Ok(self.http.execute(&request).await?)
-    }
-
-    async fn acquire_accept_token(&self) -> Result<SecretString, PaymobError> {
-        let api_key =
-            self.client
-                .config()
-                .api_key()
-                .ok_or_else(|| PaymobError::ValidationError {
-                    field: "api_key",
-                    reason: "Paymob API key is required for Regime 2 authentication".to_owned(),
-                })?;
-        let base_url = self.client.endpoints().accept_base_url.clone();
-        let raw_key = SecretString::from(api_key.expose_secret().to_owned());
-
-        let cached = self
-            .client
-            .auth()
-            .accept_cache()
-            .get_or_refresh(|| async {
-                let provider = AcceptJwtProvider::new(&base_url, raw_key)?;
-                let jwt = provider.token().await?;
-                Ok::<CachedToken, PaymobError>(CachedToken::with_default_ttl(jwt, None))
-            })
-            .await?;
-
-        Ok(cached.access_token.clone())
-    }
-}
-
-fn decode_response<Resp: DeserializeOwned>(response: HttpResponse) -> Result<Resp, PaymobError> {
-    if !response.status.is_success() {
-        return Err(PaymobError::from_http_response(&response));
-    }
-    Ok(response.json::<Resp>()?)
-}
-
-fn validate_positive_id(field: &'static str, id: u64) -> Result<(), PaymobError> {
-    if id == 0 {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must be greater than zero"),
-        });
-    }
-    Ok(())
 }
 
 fn serialize_secret_string<S>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error>

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Fail-closed auto-dispatcher for Paymob webhook callbacks (Protocols A–E).
 //!
 //! Inspects incoming JSON callback payloads to identify the Paymob protocol

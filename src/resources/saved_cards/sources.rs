@@ -91,7 +91,11 @@ impl PaymentSource {
     /// # Ok::<(), some_paymob::PaymobError>(())
     /// ```
     pub fn saved_token(identifier: impl Into<SecretString>) -> Result<Self, PaymobError> {
-        let secret = identifier.into();
+        let raw = identifier.into();
+        let secret = crate::core::credentials::resolve_secret_or_env(
+            "identifier",
+            raw.expose_secret(),
+        )?;
         validate_token(secret.expose_secret())?;
         Ok(Self::SavedToken {
             identifier: secret,
@@ -117,8 +121,17 @@ impl PaymentSource {
         identifier: impl Into<SecretString>,
         cvn: impl Into<SecretString>,
     ) -> Result<Self, PaymobError> {
-        let token_secret = identifier.into();
-        let cvn_secret = cvn.into();
+        let raw_tok = identifier.into();
+        let raw_cvn = cvn.into();
+        let token_secret = crate::core::credentials::resolve_secret_or_env(
+            "identifier",
+            raw_tok.expose_secret(),
+        )?;
+        let cvn_secret = if raw_cvn.expose_secret().trim().starts_with('$') {
+            crate::core::credentials::resolve_secret_or_env("cvn", raw_cvn.expose_secret())?
+        } else {
+            raw_cvn
+        };
         validate_token(token_secret.expose_secret())?;
         validate_cvn(cvn_secret.expose_secret())?;
         Ok(Self::SavedToken {

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Protocol A: Transaction Processed `POST` 20-key HMAC-SHA512 webhook verifier.
 //!
 //! Implements fail-closed, constant-time verification for Paymob's server-to-server

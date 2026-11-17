@@ -190,15 +190,12 @@ fn env_secret_resolution_works_on_webhook_engine_and_rejects_missing_vars() {
         },
     );
 
-    with_temp_env(
-        &[("TEST_DOLLAR_HMAC", "$DOLLAR_PREFIXED_SECRET")],
-        || {
-            let engine = PaymobWebhookEngine::new("$TEST_DOLLAR_HMAC")
-                .expect("resolved secret starting with $");
-            let sig = "2bcf72fe6b6d331ce42b0dbffa1378ed6f00c49a482d497e25bc11d07f579f41c18406f07889c8b316dce20c8fb986dfb693da5ffa20d3659c925e0117813a42";
-            assert_eq!(engine.verify_concatenated_str("100020003000", sig), Ok(()));
-        },
-    );
+    with_temp_env(&[("TEST_DOLLAR_HMAC", "$DOLLAR_PREFIXED_SECRET")], || {
+        let engine =
+            PaymobWebhookEngine::new("$TEST_DOLLAR_HMAC").expect("resolved secret starting with $");
+        let sig = "2bcf72fe6b6d331ce42b0dbffa1378ed6f00c49a482d497e25bc11d07f579f41c18406f07889c8b316dce20c8fb986dfb693da5ffa20d3659c925e0117813a42";
+        assert_eq!(engine.verify_concatenated_str("100020003000", sig), Ok(()));
+    });
 }
 
 #[cfg(all(feature = "intentions", feature = "legacy-v2"))]

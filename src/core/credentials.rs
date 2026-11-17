@@ -406,8 +406,8 @@ pub fn parse_dotenv_line_value(line: &str, var_name: &str) -> Option<String> {
 }
 
 fn unquote_dotenv_value(raw: &str) -> String {
-    if let Some(unquoted) = extract_quoted_dotenv_value(raw, '"')
-        .or_else(|| extract_quoted_dotenv_value(raw, '\''))
+    if let Some(unquoted) =
+        extract_quoted_dotenv_value(raw, '"').or_else(|| extract_quoted_dotenv_value(raw, '\''))
     {
         return unquoted;
     }

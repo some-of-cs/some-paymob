@@ -357,6 +357,14 @@ impl PaymobClient {
         crate::resources::saved_cards::SavedCardsService::new(self.clone())
     }
 
+    /// Alias for [`Self::saved_cards`] returning a [`SavedCardsService`](crate::resources::saved_cards::SavedCardsService)
+    /// bound to this client (`US-4.1.0`).
+    #[cfg(feature = "saved-cards")]
+    #[must_use]
+    pub fn tokens(&self) -> crate::resources::saved_cards::SavedCardsService {
+        self.saved_cards()
+    }
+
     /// Returns a [`SubscriptionsService`](crate::resources::subscriptions::SubscriptionsService)
     /// bound to this client for subscription plans, lifecycle, card vault, and history operations.
     #[cfg(feature = "subscriptions")]

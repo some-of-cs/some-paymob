@@ -323,6 +323,12 @@ impl SubscriptionListFilter {
 /// The card `token` is wrapped in [`SecretString`] (`ZeroizeOnDrop`) and its
 /// [`fmt::Debug`] implementation always renders `token` as `"[REDACTED]"`.
 ///
+/// # Memory Hygiene & Field Moves (`ZeroizeOnDrop`)
+///
+/// Implements [`ZeroizeOnDrop`] (`Drop`) to scrub `token` and `masked_pan` on drop;
+/// borrow (`&card.masked_pan`) or clone (`card.masked_pan.clone()`) fields rather
+/// than moving fields out of an owned value (`E0509`).
+///
 /// # Examples
 ///
 /// ```rust

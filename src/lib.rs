@@ -106,7 +106,8 @@ pub use resources::saved_cards::{
 pub use resources::subscriptions::{
     AddSecondaryCardParams, ChangePrimaryCardParams, CreateSubscriptionParams,
     CreateSubscriptionPlanParams, CreateSubscriptionPlanParamsBuilder, DeleteSecondaryCardResponse,
-    PlanFrequency, PlanType, RegisterWebhookParams, Subscription, SubscriptionCardsService,
+    PlanFrequency, PlanType, RegisterWebhookParams, Subscription, SubscriptionCard,
+    SubscriptionCardsService,
     SubscriptionEnrollmentResponse, SubscriptionHistoryService, SubscriptionLastTransaction,
     SubscriptionListFilter, SubscriptionPlan, SubscriptionPlansService, SubscriptionRefundRequest,
     SubscriptionRefundResponse, SubscriptionState, SubscriptionTransaction,

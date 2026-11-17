@@ -12,10 +12,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-use crate::core::auth::accept_jwt::{AcceptJwtError, inject_body_auth_token};
+use super::map_jwt_err;
+use crate::core::auth::accept_jwt::inject_body_auth_token;
 use crate::core::error::PaymobError;
 use crate::core::http::{HttpClient, HttpRequest};
-use crate::core::types::Currency;
+use crate::core::types::{Currency, validate_non_zero_u64};
 
 /// Relative endpoint path for Paymob Accept v2 payment key generation.
 pub const LEGACY_PAYMENT_KEYS_PATH: &str = "/api/acceptance/payment_keys";
@@ -453,13 +454,7 @@ pub async fn create_legacy_payment_key(
 }
 
 fn require_positive_u64(field: &'static str, value: u64) -> Result<(), PaymobError> {
-    if value == 0 {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must be greater than zero"),
-        });
-    }
-    Ok(())
+    validate_non_zero_u64(field, value, "value must be greater than zero")
 }
 
 fn require_non_blank(field: &'static str, value: &str) -> Result<(), PaymobError> {
@@ -483,17 +478,6 @@ fn validate_email(email: &str) -> Result<(), PaymobError> {
     Ok(())
 }
 
-fn map_jwt_err(err: AcceptJwtError) -> PaymobError {
-    match err {
-        AcceptJwtError::EmptyApiKey | AcceptJwtError::InvalidCredentials => {
-            PaymobError::AuthenticationError(err.to_string())
-        }
-        _ => PaymobError::ValidationError {
-            field: "auth_token",
-            reason: err.to_string(),
-        },
-    }
-}
 
 #[cfg(test)]
 mod tests {

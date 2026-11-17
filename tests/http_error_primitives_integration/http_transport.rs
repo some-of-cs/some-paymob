@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, RETRY_AFTER};

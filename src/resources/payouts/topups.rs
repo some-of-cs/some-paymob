@@ -58,6 +58,11 @@ impl fmt::Debug for BankTransferTopupParams {
 /// Request parameters for Accept Balance topup (`POST /api/secure/topup/request/`).
 ///
 /// Redacts `username` in [`fmt::Debug`].
+///
+/// # Memory Hygiene & Field Moves (`ZeroizeOnDrop`)
+///
+/// Implements [`ZeroizeOnDrop`] (`Drop`) to scrub `username` on drop; borrow (`&params.username`)
+/// or clone (`params.username.clone()`) fields rather than moving fields out of an owned value (`E0509`).
 #[derive(Clone, PartialEq, Eq, Serialize, Zeroize, ZeroizeOnDrop)]
 pub struct AcceptBalanceTopupParams {
     /// Topup amount (`u64`, zero floats).

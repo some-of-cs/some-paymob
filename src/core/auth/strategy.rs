@@ -183,6 +183,9 @@ pub struct EndpointAuthSpec {
     strategy: AuthStrategy,
 }
 
+/// Ergonomic type alias for [`EndpointAuthSpec`] (`US-1.2.0`).
+pub type EndpointSpec = EndpointAuthSpec;
+
 impl EndpointAuthSpec {
     /// Constructs a validated [`EndpointAuthSpec`].
     ///

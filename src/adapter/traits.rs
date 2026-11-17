@@ -433,7 +433,10 @@ impl fmt::Debug for UnifiedSavedMethodChargeRequest {
 }
 
 /// Normalized receipt returned after charging a saved payment method.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Redacts `kiosk_bill_reference` in [`fmt::Debug`] so offline cashout codes
+/// are never leaked into application logs.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnifiedSavedMethodChargeReceipt {
     /// Gateway transaction identifier.
     pub transaction_id: u64,
@@ -445,8 +448,24 @@ pub struct UnifiedSavedMethodChargeReceipt {
     pub pending: bool,
     /// Optional redirect URL for 3DS or wallet challenges.
     pub redirect_url: Option<String>,
-    /// Optional offline Kiosk bill reference number.
+    /// Optional offline Kiosk bill reference number (redacted in `Debug`).
     pub kiosk_bill_reference: Option<String>,
+}
+
+impl fmt::Debug for UnifiedSavedMethodChargeReceipt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UnifiedSavedMethodChargeReceipt")
+            .field("transaction_id", &self.transaction_id)
+            .field("amount", &self.amount)
+            .field("success", &self.success)
+            .field("pending", &self.pending)
+            .field("redirect_url", &self.redirect_url)
+            .field(
+                "kiosk_bill_reference",
+                &self.kiosk_bill_reference.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
 }
 
 /// Borrowed input payload and optional query HMAC signature for webhook verification.

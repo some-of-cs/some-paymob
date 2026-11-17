@@ -40,7 +40,8 @@ pub use lifecycle::{
     SubscriptionPlansAccessor, SubscriptionsService, UpdateSubscriptionParams,
 };
 pub use models::{
-    KNOWN_SUBSCRIPTION_STATES, Subscription, SubscriptionListFilter, SubscriptionState,
+    KNOWN_SUBSCRIPTION_STATES, Subscription, SubscriptionCard, SubscriptionListFilter,
+    SubscriptionState,
 };
 pub use plan_models::{KNOWN_PLAN_FREQUENCIES, PlanFrequency, PlanType, SubscriptionPlan};
 pub use plan_params::{

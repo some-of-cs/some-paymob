@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use std::fmt;
 
 pub fn assert_redacted_debug<T: fmt::Debug>(value: &T, secrets: &[&str], expect_marker: bool) {

@@ -11,8 +11,10 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
+use zeroize::ZeroizeOnDrop;
 
-use crate::core::auth::accept_jwt::{AcceptJwtError, inject_body_auth_token};
+use super::map_jwt_err;
+use crate::core::auth::accept_jwt::inject_body_auth_token;
 use crate::core::error::PaymobError;
 use crate::core::http::{HttpClient, HttpRequest};
 use crate::core::types::Currency;
@@ -280,9 +282,10 @@ impl<'de> Deserialize<'de> for CreateLegacyOrderParams {
 /// let req = AuthenticatedLegacyOrderRequest::new(SecretString::from("jwt"), params);
 /// let _leaked = &req.auth_token;
 /// ```
-#[derive(Clone)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct AuthenticatedLegacyOrderRequest {
     auth_token: SecretString,
+    #[zeroize(skip)]
     params: CreateLegacyOrderParams,
 }
 
@@ -470,17 +473,6 @@ fn validate_order_items(items: &[LegacyOrderItem]) -> Result<(), PaymobError> {
     Ok(())
 }
 
-fn map_jwt_err(err: AcceptJwtError) -> PaymobError {
-    match err {
-        AcceptJwtError::EmptyApiKey | AcceptJwtError::InvalidCredentials => {
-            PaymobError::AuthenticationError(err.to_string())
-        }
-        _ => PaymobError::ValidationError {
-            field: "auth_token",
-            reason: err.to_string(),
-        },
-    }
-}
 
 #[cfg(test)]
 mod tests {

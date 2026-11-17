@@ -14,6 +14,7 @@ use std::fmt;
 use secrecy::{ExposeSecret, SecretString};
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
+use zeroize::ZeroizeOnDrop;
 
 use crate::core::error::PaymobError;
 
@@ -39,7 +40,7 @@ const REDACTED: &str = "[REDACTED]";
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct CitCardTokenConfig {
     card_tokens: Vec<SecretString>,
 }
@@ -166,11 +167,12 @@ impl Serialize for CitCardTokenConfig {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct MitChargeParams {
     payment_token: SecretString,
     saved_token: SecretString,
     cvn: Option<SecretString>,
+    #[zeroize(skip)]
     use_cvc_with_moto: bool,
 }
 

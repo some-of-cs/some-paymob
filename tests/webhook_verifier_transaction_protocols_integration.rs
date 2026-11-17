@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Integration tests for User Story `US-7.1.0`:
 //! Constant-time `HMAC-SHA512` core verifier, Protocol A (`POST` transaction),
 //! Protocol B (`GET` redirect), and `WebhookError` classification workflow.

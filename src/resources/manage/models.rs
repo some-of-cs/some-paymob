@@ -131,6 +131,11 @@ impl Transaction {
 ///
 /// Redacts [`TransactionSourceData::pan`] in [`fmt::Debug`] output (`"[REDACTED]"`) to
 /// prevent accidental PAN leakage into logs or error traces.
+///
+/// # Memory Hygiene & Field Moves (`ZeroizeOnDrop`)
+///
+/// Implements [`ZeroizeOnDrop`] (`Drop`) to scrub PAN metadata on drop; borrow or clone
+/// fields rather than moving fields out of an owned value (`E0509`).
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default, Zeroize, ZeroizeOnDrop)]
 pub struct TransactionSourceData {
     /// Payment instrument type (for example, `"card"` or `"wallet"`).

@@ -10,6 +10,7 @@ use std::fmt;
 
 use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::core::error::PaymobError;
 use crate::core::types::MinorUnitAmount;
@@ -65,7 +66,7 @@ const REDACTED: &str = "[REDACTED]";
 ///     state: None,
 /// };
 /// ```
-#[derive(Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Zeroize, ZeroizeOnDrop)]
 pub struct BillingData {
     phone_number: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -263,7 +264,7 @@ impl fmt::Debug for BillingData {
 }
 
 /// Builder for [`BillingData`] enforcing non-empty `phone_number` at `.build()` time.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Zeroize, ZeroizeOnDrop)]
 pub struct BillingDataBuilder {
     phone_number: Option<String>,
     first_name: Option<String>,

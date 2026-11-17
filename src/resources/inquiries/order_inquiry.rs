@@ -53,6 +53,11 @@ pub struct OrderTransactionAttempt {
 ///
 /// PII fields (`email`, `phone_number`, `first_name`, `last_name`) are redacted
 /// in `Debug` output.
+///
+/// # Memory Hygiene & Field Moves (`ZeroizeOnDrop`)
+///
+/// Implements [`ZeroizeOnDrop`] (`Drop`) to scrub PII on drop; borrow or clone fields
+/// rather than moving fields out of an owned value (`E0509`).
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct OrderShippingData {
     /// Customer first name.
@@ -177,6 +182,15 @@ impl<'a> InquiriesService<'a> {
         validate_non_zero_u64("order_id", order_id, "order_id must be greater than zero")?;
         let path = format!("/api/ecommerce/orders/{order_id}");
         execute_inquiry_bearer_get(self, &path).await
+    }
+
+    /// Ergonomic alias for [`Self::order`] (`GET /api/ecommerce/orders/{order_id}`).
+    ///
+    /// # Errors
+    ///
+    /// Propagates validation, authentication, API, and transport errors from [`Self::order`].
+    pub async fn order_inquiry(&self, order_id: u64) -> Result<OrderInquiryResponse, PaymobError> {
+        self.order(order_id).await
     }
 }
 

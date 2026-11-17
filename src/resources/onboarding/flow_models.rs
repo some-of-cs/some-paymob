@@ -743,7 +743,7 @@ mod tests {
         let bad_phone = RegisterMerchantParams::new(
             "KeyPartner",
             "owner@acme.example",
-            "+20111\06491564",
+            "+20111\x006491564",
             "Amira",
             "Hassan",
         );

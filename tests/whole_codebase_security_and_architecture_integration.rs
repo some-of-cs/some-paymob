@@ -41,7 +41,7 @@ async fn non_loopback_plaintext_http_is_rejected_across_all_resource_modules() {
         .payouts_cache()
         .store(CachedToken::with_default_ttl("seeded_oauth", None));
 
-    let inq_err = client.inquiries().retrieve_by_id(192_036_465).await;
+    let inq_err = client.inquiries().by_transaction_id(192_036_465).await;
     assert!(matches!(
         inq_err,
         Err(PaymobError::ValidationError {

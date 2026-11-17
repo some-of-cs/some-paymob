@@ -233,7 +233,9 @@ mod tests {
         let cfg = ClientConfig::builder()
             .region(PaymobRegion::Custom {
                 accept_base_url: base_url.to_owned(),
-                payouts_base_url: Some(base_url.to_owned()),
+                checkout_base_url: base_url.to_owned(),
+                payouts_base_url: base_url.to_owned(),
+                payouts_staging_base_url: base_url.to_owned(),
             })
             .payouts_credentials(creds)
             .build()

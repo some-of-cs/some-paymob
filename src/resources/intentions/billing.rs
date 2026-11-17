@@ -866,8 +866,9 @@ mod tests {
             serde_json::from_str::<IntentionItem>(r#"{"name":"Course","amount":0}"#);
         assert!(zero_item_amount.is_err());
 
-        let zero_item_qty =
-            serde_json::from_str::<IntentionItem>(r#"{"name":"Course","amount":1000,"quantity":0}"#);
+        let zero_item_qty = serde_json::from_str::<IntentionItem>(
+            r#"{"name":"Course","amount":1000,"quantity":0}"#,
+        );
         assert!(zero_item_qty.is_err());
     }
 }

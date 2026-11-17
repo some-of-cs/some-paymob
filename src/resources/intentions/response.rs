@@ -60,9 +60,7 @@ impl<'de> Deserialize<'de> for IntentionPaymentKey {
     }
 }
 
-fn validate_payment_key(
-    raw: RawIntentionPaymentKey,
-) -> Result<IntentionPaymentKey, PaymobError> {
+fn validate_payment_key(raw: RawIntentionPaymentKey) -> Result<IntentionPaymentKey, PaymobError> {
     let key_str = raw.key.expose_secret().trim();
     if key_str.is_empty() {
         return Err(PaymobError::ValidationError {
@@ -278,9 +276,7 @@ fn validate_intention_id(raw_id: &str) -> Result<String, PaymobError> {
     Ok(trimmed.to_owned())
 }
 
-fn validate_response_client_secret(
-    secret: SecretString,
-) -> Result<SecretString, PaymobError> {
+fn validate_response_client_secret(secret: SecretString) -> Result<SecretString, PaymobError> {
     let trimmed = secret.expose_secret().trim();
     if trimmed.is_empty() || trimmed.chars().any(|ch| ch.is_ascii_control()) {
         return Err(PaymobError::ValidationError {
@@ -469,9 +465,8 @@ mod tests {
         );
         assert!(bare_csk.is_err());
 
-        let empty_payment_key = serde_json::from_str::<IntentionPaymentKey>(
-            r#"{"integration":4097558,"key":"   "}"#,
-        );
+        let empty_payment_key =
+            serde_json::from_str::<IntentionPaymentKey>(r#"{"integration":4097558,"key":"   "}"#);
         assert!(empty_payment_key.is_err());
 
         let live_secret_resp = serde_json::from_str::<IntentionResponse>(

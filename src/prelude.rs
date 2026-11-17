@@ -84,11 +84,11 @@ pub use crate::resources::payouts::{
     AcceptBalanceTopupParams, AmanCashingDetails, BankCardCashinParams, BankTransactionType,
     BankTransferTopupParams, BulkDisbursementItem, BulkDisbursementParams,
     BulkDisbursementResponse, CancelAmanParams, DisburseIssuer, DisbursementResponse,
-    EgyptianPostCashinParams, InstantBankCashinParams, MAX_TOPUP_PROOF_BYTES,
-    MobileWalletCashinParams, PayoutsAuthService, PayoutsCashinService, PayoutsInquiriesService,
-    PayoutsService, PayoutsTokenResponse, PayoutsTopupsService, ReferenceInquiryParams,
-    TopupInquiryParams, TopupInquiryResponse, TopupRecord, TransactionInquiryParams,
-    TransactionInquiryResponse, UserBudgetResponse,
+    EgyptianPostCashinParams, InstantBankCashinParams, MAX_BULK_DISBURSEMENT_ITEMS,
+    MAX_INQUIRY_IDS, MAX_TOPUP_PROOF_BYTES, MobileWalletCashinParams, PayoutsAuthService,
+    PayoutsCashinService, PayoutsInquiriesService, PayoutsService, PayoutsTokenResponse,
+    PayoutsTopupsService, ReferenceInquiryParams, TopupInquiryParams, TopupInquiryResponse,
+    TopupRecord, TransactionInquiryParams, TransactionInquiryResponse, UserBudgetResponse,
 };
 
 /// Re-exports Partner Merchant Onboarding services and scoped client.

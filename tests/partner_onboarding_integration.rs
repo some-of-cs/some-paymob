@@ -137,21 +137,20 @@ async fn mount_partner_flow_mocks(server: &MockServer) {
 }
 
 async fn mount_scoped_intentions_and_inquiries_mocks(server: &MockServer) {
-    for (verb, status, state) in [
-        ("POST", 201_u16, "intended"),
-        ("PUT", 200_u16, "updated"),
-    ] {
+    for (verb, status, state) in [("POST", 201_u16, "intended"), ("PUT", 200_u16, "updated")] {
         Mock::given(method(verb))
             .and(path("/v1/intention/"))
             .and(header("x-api-key", "pk_partner_e2e_777"))
             .and(header("x-paymob-merchant-id", "777888"))
             .and(header("x-merchant-id", "777888"))
-            .respond_with(ResponseTemplate::new(status).set_body_json(serde_json::json!({
-                "id": "pi_e2e_1",
-                "intention_order_id": 9001,
-                "client_secret": "egy_csk_test_e2e",
-                "status": state
-            })))
+            .respond_with(
+                ResponseTemplate::new(status).set_body_json(serde_json::json!({
+                    "id": "pi_e2e_1",
+                    "intention_order_id": 9001,
+                    "client_secret": "egy_csk_test_e2e",
+                    "status": state
+                })),
+            )
             .mount(server)
             .await;
     }
@@ -275,7 +274,12 @@ async fn execute_partner_auth_phase(base_url: &str) -> String {
     .unwrap();
 
     let creds = PartnerLoginCredentials::try_new("partner@acme.io", "top-secret-pw").unwrap();
-    let tok_resp = unauth_client.onboarding().auth().login(creds).await.unwrap();
+    let tok_resp = unauth_client
+        .onboarding()
+        .auth()
+        .login(creds)
+        .await
+        .unwrap();
     assert_eq!(tok_resp.token(), "jwt_partner_live_001");
 
     let bearer_client = build_partner_client(base_url, "pk_bootstrap", Some(tok_resp.token()));
@@ -399,9 +403,7 @@ fn boundary_and_deserialization_security_cases() {
     assert!(serde_json::from_str::<PartnerApiKeyResponse>(r#"{"api_key":"\t"}"#).is_err());
     assert!(serde_json::from_str::<PartnerHmacBody>(r#"{"hmac_secret":""}"#).is_err());
     assert!(serde_json::from_str::<RegisteredMerchantResponse>(r#"{"paymob_mid":0}"#).is_err());
-    assert!(
-        serde_json::from_str::<PartnerMerchantInquiryResponse>(r#"{"paymob_mid":0}"#).is_err()
-    );
+    assert!(serde_json::from_str::<PartnerMerchantInquiryResponse>(r#"{"paymob_mid":0}"#).is_err());
 }
 
 async fn mount_error_status_mocks(server: &MockServer) {
@@ -450,8 +452,18 @@ async fn negative_http_status_codes_retry_after_and_malformed_json() {
         flow.merchant_inquiry(400).await.unwrap_err(),
         PaymobError::ApiError { status: 400, .. }
     ));
-    assert!(flow.merchant_inquiry(401).await.unwrap_err().is_auth_error());
-    assert!(flow.merchant_inquiry(403).await.unwrap_err().is_auth_error());
+    assert!(
+        flow.merchant_inquiry(401)
+            .await
+            .unwrap_err()
+            .is_auth_error()
+    );
+    assert!(
+        flow.merchant_inquiry(403)
+            .await
+            .unwrap_err()
+            .is_auth_error()
+    );
     assert!(matches!(
         flow.merchant_inquiry(404).await.unwrap_err(),
         PaymobError::ApiError { status: 404, .. }

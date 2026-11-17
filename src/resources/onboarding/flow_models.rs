@@ -52,9 +52,7 @@ fn is_valid_email_structure(email: &str) -> bool {
     let Some((local, domain)) = trimmed.split_once('@') else {
         return false;
     };
-    !local.is_empty()
-        && !trimmed.chars().any(char::is_whitespace)
-        && is_valid_email_domain(domain)
+    !local.is_empty() && !trimmed.chars().any(char::is_whitespace) && is_valid_email_domain(domain)
 }
 
 fn validate_email(email: &str) -> Result<(), PaymobError> {
@@ -875,8 +873,7 @@ mod tests {
             r#"{"partner":"KeyPartner","steps":[{"id":"kyc","fields":"#,
             r#"[{"name":"cr_doc","type":"file","required":true}]}]}"#
         );
-        let schema: OnboardingFlowSchema =
-            serde_json::from_str(schema_json).expect("flow schema");
+        let schema: OnboardingFlowSchema = serde_json::from_str(schema_json).expect("flow schema");
         assert_eq!(schema.steps.len(), 1);
         assert_eq!(schema.steps[0].fields[0].name, "cr_doc");
 

@@ -270,7 +270,9 @@ where
 {
     let value = u64::deserialize(deserializer)?;
     if value == 0 {
-        return Err(serde::de::Error::custom("paymob_mid must be a non-zero u64"));
+        return Err(serde::de::Error::custom(
+            "paymob_mid must be a non-zero u64",
+        ));
     }
     Ok(value)
 }

@@ -500,23 +500,22 @@ mod tests {
         };
 
         let server = MockServer::start().await;
-        for (verb, status_code, status_str) in [
-            ("POST", 201_u16, "intended"),
-            ("PUT", 200_u16, "updated"),
-        ] {
+        for (verb, status_code, status_str) in
+            [("POST", 201_u16, "intended"), ("PUT", 200_u16, "updated")]
+        {
             Mock::given(method(verb))
                 .and(path("/v1/intention/"))
                 .and(header("x-api-key", "partner_key_secret_624"))
                 .and(header("x-paymob-merchant-id", "987654"))
                 .and(header("x-merchant-id", "987654"))
-                .respond_with(ResponseTemplate::new(status_code).set_body_json(
-                    serde_json::json!({
+                .respond_with(
+                    ResponseTemplate::new(status_code).set_body_json(serde_json::json!({
                         "id": "pi_scoped_123",
                         "intention_order_id": 987654,
                         "client_secret": "egy_csk_test_scoped",
                         "status": status_str
-                    }),
-                ))
+                    })),
+                )
                 .mount(&server)
                 .await;
         }

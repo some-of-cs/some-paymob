@@ -27,6 +27,53 @@ pub enum MockHost {
     Payouts,
 }
 
+/// Configuration for [`PaymobMockServer::mount_jwt_expiry_then_ok`].
+#[derive(Debug, Clone)]
+pub struct JwtExpiryMockConfig<'a> {
+    /// HTTP method to match (e.g., `"POST"` or `"GET"`).
+    pub http_method: &'a str,
+    /// Request path to match (e.g., `"/api/ecommerce/orders/transaction_inquiry"`).
+    pub endpoint_path: &'a str,
+    /// Number of initial requests that return `401 {"detail": "incorrect credentials"}`.
+    pub fail_count: usize,
+    /// JSON body returned with `200 OK` after `fail_count` failures.
+    pub ok_body: Value,
+}
+
+/// Configuration for [`PaymobMockServer::mount_payouts_429_then_ok`].
+#[derive(Debug, Clone)]
+pub struct PayoutsRateLimitMockConfig<'a> {
+    /// HTTP method to match (e.g., `"GET"` or `"POST"`).
+    pub http_method: &'a str,
+    /// Request path to match (e.g., `"/api/secure/budget/"`).
+    pub endpoint_path: &'a str,
+    /// Number of initial requests that return `429 Too Many Requests`.
+    pub fail_count: usize,
+    /// Optional `Retry-After` header value in seconds.
+    pub retry_after_secs: Option<u64>,
+    /// Value for `"status_description"` in the `429` JSON error body.
+    pub status_description: &'a str,
+    /// Value for `"status_code"` in the `429` JSON error body.
+    pub status_code: &'a str,
+    /// JSON body returned with `200 OK` after `fail_count` failures.
+    pub ok_body: Value,
+}
+
+/// Configuration for [`PaymobMockServer::mount_json`].
+#[derive(Debug, Clone)]
+pub struct JsonEndpointMockConfig<'a> {
+    /// Target mock host (`Accept` or `Payouts`).
+    pub host: MockHost,
+    /// HTTP method to match (e.g., `"POST"` or `"GET"`).
+    pub http_method: &'a str,
+    /// Request path to match (e.g., `"/v1/intention/"`).
+    pub endpoint_path: &'a str,
+    /// HTTP status code to return (e.g., `200` or `201`).
+    pub status: u16,
+    /// JSON response body.
+    pub body: Value,
+}
+
 /// Stateful responder returning an HTTP status/body for the first `fail_count`
 /// requests, then `200 OK` with `ok_body` on subsequent requests.
 struct FailThenOkResponder {
@@ -227,38 +274,32 @@ impl PaymobMockServer {
     ///
     /// ```rust
     /// use serde_json::json;
-    /// use some_paymob::test_utils::mock_server::PaymobMockServer;
+    /// use some_paymob::test_utils::mock_server::{JwtExpiryMockConfig, PaymobMockServer};
     ///
     /// # #[tokio::main]
     /// # async fn main() {
     /// let server = PaymobMockServer::start().await;
     /// server
-    ///     .mount_jwt_expiry_then_ok(
-    ///         "POST",
-    ///         "/api/ecommerce/orders/transaction_inquiry",
-    ///         1,
-    ///         json!({ "id": 192036465, "success": true }),
-    ///     )
+    ///     .mount_jwt_expiry_then_ok(JwtExpiryMockConfig {
+    ///         http_method: "POST",
+    ///         endpoint_path: "/api/ecommerce/orders/transaction_inquiry",
+    ///         fail_count: 1,
+    ///         ok_body: json!({ "id": 192036465, "success": true }),
+    ///     })
     ///     .await;
     /// # }
     /// ```
-    pub async fn mount_jwt_expiry_then_ok(
-        &self,
-        http_method: &str,
-        endpoint_path: &str,
-        fail_count: usize,
-        ok_body: Value,
-    ) {
+    pub async fn mount_jwt_expiry_then_ok(&self, config: JwtExpiryMockConfig<'_>) {
         let responder = FailThenOkResponder {
             attempts: Arc::new(AtomicUsize::new(0)),
-            fail_count,
+            fail_count: config.fail_count,
             failure_status: 401,
             failure_body: json!({ "detail": "incorrect credentials" }),
             retry_after_secs: None,
-            ok_body,
+            ok_body: config.ok_body,
         };
-        Mock::given(method(http_method))
-            .and(path(endpoint_path))
+        Mock::given(method(config.http_method))
+            .and(path(config.endpoint_path))
             .respond_with(responder)
             .mount(&self.accept)
             .await;
@@ -272,48 +313,38 @@ impl PaymobMockServer {
     ///
     /// ```rust
     /// use serde_json::json;
-    /// use some_paymob::test_utils::mock_server::PaymobMockServer;
+    /// use some_paymob::test_utils::mock_server::{PaymobMockServer, PayoutsRateLimitMockConfig};
     ///
     /// # #[tokio::main]
     /// # async fn main() {
     /// let server = PaymobMockServer::start().await;
     /// server
-    ///     .mount_payouts_429_then_ok(
-    ///         "GET",
-    ///         "/api/secure/budget/",
-    ///         1,
-    ///         Some(0),
-    ///         "rate limit exceeded",
-    ///         "429",
-    ///         json!({ "current_balance": 500000 }),
-    ///     )
+    ///     .mount_payouts_429_then_ok(PayoutsRateLimitMockConfig {
+    ///         http_method: "GET",
+    ///         endpoint_path: "/api/secure/budget/",
+    ///         fail_count: 1,
+    ///         retry_after_secs: Some(0),
+    ///         status_description: "rate limit exceeded",
+    ///         status_code: "429",
+    ///         ok_body: json!({ "current_balance": 500000 }),
+    ///     })
     ///     .await;
     /// # }
     /// ```
-    #[allow(clippy::too_many_arguments)]
-    pub async fn mount_payouts_429_then_ok(
-        &self,
-        http_method: &str,
-        endpoint_path: &str,
-        fail_count: usize,
-        retry_after_secs: Option<u64>,
-        status_description: &str,
-        status_code: &str,
-        ok_body: Value,
-    ) {
+    pub async fn mount_payouts_429_then_ok(&self, config: PayoutsRateLimitMockConfig<'_>) {
         let responder = FailThenOkResponder {
             attempts: Arc::new(AtomicUsize::new(0)),
-            fail_count,
+            fail_count: config.fail_count,
             failure_status: 429,
             failure_body: json!({
-                "status_description": status_description,
-                "status_code": status_code
+                "status_description": config.status_description,
+                "status_code": config.status_code
             }),
-            retry_after_secs,
-            ok_body,
+            retry_after_secs: config.retry_after_secs,
+            ok_body: config.ok_body,
         };
-        Mock::given(method(http_method))
-            .and(path(endpoint_path))
+        Mock::given(method(config.http_method))
+            .and(path(config.endpoint_path))
             .respond_with(responder)
             .mount(&self.payouts)
             .await;
@@ -325,31 +356,32 @@ impl PaymobMockServer {
     ///
     /// ```rust
     /// use serde_json::json;
-    /// use some_paymob::test_utils::mock_server::{MockHost, PaymobMockServer};
+    /// use some_paymob::test_utils::mock_server::{
+    ///     JsonEndpointMockConfig, MockHost, PaymobMockServer,
+    /// };
     ///
     /// # #[tokio::main]
     /// # async fn main() {
     /// let server = PaymobMockServer::start().await;
     /// server
-    ///     .mount_json(MockHost::Accept, "POST", "/v1/intention/", 201, json!({ "id": "pi_1" }))
+    ///     .mount_json(JsonEndpointMockConfig {
+    ///         host: MockHost::Accept,
+    ///         http_method: "POST",
+    ///         endpoint_path: "/v1/intention/",
+    ///         status: 201,
+    ///         body: json!({ "id": "pi_1" }),
+    ///     })
     ///     .await;
     /// # }
     /// ```
-    pub async fn mount_json(
-        &self,
-        host: MockHost,
-        http_method: &str,
-        endpoint_path: &str,
-        status: u16,
-        body: Value,
-    ) {
-        let target = match host {
+    pub async fn mount_json(&self, config: JsonEndpointMockConfig<'_>) {
+        let target = match config.host {
             MockHost::Accept => &self.accept,
             MockHost::Payouts => &self.payouts,
         };
-        Mock::given(method(http_method))
-            .and(path(endpoint_path))
-            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+        Mock::given(method(config.http_method))
+            .and(path(config.endpoint_path))
+            .respond_with(ResponseTemplate::new(config.status).set_body_json(config.body))
             .mount(target)
             .await;
     }
@@ -383,12 +415,12 @@ mod tests {
             .mount_accept_auth_sequence(&["stale-jwt-1", "fresh-jwt-2"])
             .await;
         server
-            .mount_jwt_expiry_then_ok(
-                "POST",
-                "/api/ecommerce/orders/transaction_inquiry",
-                1,
-                json!({ "id": 192036465, "success": true }),
-            )
+            .mount_jwt_expiry_then_ok(JwtExpiryMockConfig {
+                http_method: "POST",
+                endpoint_path: "/api/ecommerce/orders/transaction_inquiry",
+                fail_count: 1,
+                ok_body: json!({ "id": 192036465, "success": true }),
+            })
             .await;
 
         let provider =
@@ -419,15 +451,15 @@ mod tests {
     async fn tc_8_2_2_payouts_429_recovers_with_exponential_backoff() {
         let server = PaymobMockServer::start().await;
         server
-            .mount_payouts_429_then_ok(
-                "GET",
-                "/api/secure/budget/",
-                1,
-                Some(0),
-                "Too many requests",
-                "429",
-                json!({ "balance_cents": 250_000 }),
-            )
+            .mount_payouts_429_then_ok(PayoutsRateLimitMockConfig {
+                http_method: "GET",
+                endpoint_path: "/api/secure/budget/",
+                fail_count: 1,
+                retry_after_secs: Some(0),
+                status_description: "Too many requests",
+                status_code: "429",
+                ok_body: json!({ "balance_cents": 250_000 }),
+            })
             .await;
 
         let cfg = HttpClientConfig {
@@ -455,13 +487,13 @@ mod tests {
             .mount_payouts_oauth("oauth-acc-1", Some("oauth-ref-1"), 3600)
             .await;
         server
-            .mount_json(
-                MockHost::Accept,
-                "POST",
-                "/v1/intention/",
-                201,
-                json!({ "id": "pi_mock_1" }),
-            )
+            .mount_json(JsonEndpointMockConfig {
+                host: MockHost::Accept,
+                http_method: "POST",
+                endpoint_path: "/v1/intention/",
+                status: 201,
+                body: json!({ "id": "pi_mock_1" }),
+            })
             .await;
 
         let region = server.custom_region();

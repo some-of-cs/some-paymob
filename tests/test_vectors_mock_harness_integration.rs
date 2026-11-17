@@ -14,9 +14,11 @@ mod suite {
     use some_paymob::core::http::{HttpClient, HttpClientConfig, HttpRequest, RetryPolicy};
     use some_paymob::core::types::MinorUnitAmount;
     use some_paymob::test_utils::{
-        MockHost, PaymobMockServer, SandboxCheckRequest, SandboxConstraintError, SandboxGuard,
-        SandboxPaymentChannel, SandboxWarning, WebhookVectorProtocol, all_official_vectors,
-        generate_signed_subscription_post, generate_signed_transaction_post,
+        JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, PaymobMockServer,
+        PayoutsRateLimitMockConfig, SandboxCheckRequest, SandboxConstraintError, SandboxGuard,
+        SandboxPaymentChannel, SandboxWarning, SignedSubscriptionRequest, SignedTransactionRequest,
+        WebhookVectorProtocol, all_official_vectors, generate_signed_subscription_post,
+        generate_signed_transaction_post,
     };
     use some_paymob::webhooks::PaymobWebhookEngine;
 
@@ -32,6 +34,16 @@ mod suite {
             .await?)
     }
 
+    fn build_mock_client(server: &PaymobMockServer) -> PaymobClient {
+        let config = ClientConfig::builder()
+            .region(server.custom_region())
+            .secret_key(SecretKey::new("egy_sk_test_820").expect("valid key"))
+            .public_key(PublicKey::new("egy_pk_test_820").expect("valid pk"))
+            .build()
+            .expect("valid config");
+        PaymobClient::new(config).expect("client initializes against mock")
+    }
+
     #[test]
     fn ac_1_official_test_vectors_roundtrip_and_redaction() {
         for (protocol, vector) in all_official_vectors() {
@@ -44,53 +56,33 @@ mod suite {
     }
 
     #[tokio::test]
-    async fn ac_2_mock_server_drives_paymob_client_jwt_refresh_and_429_backoff() {
+    async fn ac_2_mock_server_drives_paymob_client_jwt_refresh() {
         let server = PaymobMockServer::start().await;
         server
             .mount_accept_auth_sequence(&["stale-jwt", "fresh-jwt"])
             .await;
         server
-            .mount_jwt_expiry_then_ok(
-                "POST",
-                "/api/ecommerce/orders/transaction_inquiry",
-                1,
-                json!({ "id": 192036465, "success": true }),
-            )
+            .mount_jwt_expiry_then_ok(JwtExpiryMockConfig {
+                http_method: "POST",
+                endpoint_path: "/api/ecommerce/orders/transaction_inquiry",
+                fail_count: 1,
+                ok_body: json!({ "id": 192036465, "success": true }),
+            })
             .await;
         server
-            .mount_payouts_429_then_ok(
-                "GET",
-                "/api/secure/budget/",
-                1,
-                Some(0),
-                "Too many requests",
-                "429",
-                json!({ "available_cents": 100_000 }),
-            )
-            .await;
-        server
-            .mount_json(
-                MockHost::Accept,
-                "POST",
-                "/v1/intention/",
-                201,
-                json!({ "id": "pi_820" }),
-            )
+            .mount_json(JsonEndpointMockConfig {
+                host: MockHost::Accept,
+                http_method: "POST",
+                endpoint_path: "/v1/intention/",
+                status: 201,
+                body: json!({ "id": "pi_820" }),
+            })
             .await;
 
-        let config = ClientConfig::builder()
-            .region(server.custom_region())
-            .secret_key(SecretKey::new("egy_sk_test_820").expect("valid key"))
-            .public_key(PublicKey::new("egy_pk_test_820").expect("valid pk"))
-            .build()
-            .expect("valid config");
-        let client = PaymobClient::new(config).expect("client initializes against mock");
+        let client = build_mock_client(&server);
         let accept_url = client
             .accept_url("/api/ecommerce/orders/transaction_inquiry")
             .expect("accept url");
-        let payouts_url = client
-            .payouts_url("/api/secure/budget/")
-            .expect("payouts url");
 
         let jwt_provider =
             AcceptJwtProvider::new(&server.accept_uri(), SecretString::from("test_api_key"))
@@ -105,6 +97,27 @@ mod suite {
             .await
             .expect("401 triggers refresh and succeeds");
         assert_eq!(jwt_resp.status().as_u16(), 200);
+    }
+
+    #[tokio::test]
+    async fn ac_2_mock_server_drives_payouts_429_backoff() {
+        let server = PaymobMockServer::start().await;
+        server
+            .mount_payouts_429_then_ok(PayoutsRateLimitMockConfig {
+                http_method: "GET",
+                endpoint_path: "/api/secure/budget/",
+                fail_count: 1,
+                retry_after_secs: Some(0),
+                status_description: "Too many requests",
+                status_code: "429",
+                ok_body: json!({ "available_cents": 100_000 }),
+            })
+            .await;
+
+        let client = build_mock_client(&server);
+        let payouts_url = client
+            .payouts_url("/api/secure/budget/")
+            .expect("payouts url");
 
         let http = HttpClient::new(HttpClientConfig {
             allow_insecure_http: true,
@@ -155,19 +168,23 @@ mod suite {
         let secret = SecretString::from("integration_hmac_secret");
         let tx = generate_signed_transaction_post(
             &secret,
-            192036465,
-            217503754,
-            MinorUnitAmount::new(100_000),
-            "EGP",
-            true,
+            &SignedTransactionRequest {
+                transaction_id: 192036465,
+                order_id: 217503754,
+                amount: MinorUnitAmount::new(100_000),
+                currency: "EGP",
+                success: true,
+            },
         )
         .expect("signed tx");
         let sub = generate_signed_subscription_post(
             &secret,
-            "req-int-1",
-            1264,
-            "suspended",
-            MinorUnitAmount::new(330),
+            &SignedSubscriptionRequest {
+                paymob_request_id: "req-int-1",
+                subscription_id: 1264,
+                trigger_type: "suspended",
+                amount: MinorUnitAmount::new(330),
+            },
         )
         .expect("signed sub");
 

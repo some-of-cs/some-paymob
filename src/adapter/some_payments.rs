@@ -116,7 +116,10 @@ impl PaymentProvider for PaymobClient {
     ) -> Result<UnifiedPaymentSession, Self::Error> {
         let params = build_intention_params(req)?;
         let resp = self.intentions().create(params).await?;
-        let checkout_url = self.checkout().unified_url(&resp.client_secret)?.to_string();
+        let checkout_url = self
+            .checkout()
+            .unified_url(&resp.client_secret)?
+            .to_string();
         Ok(UnifiedPaymentSession {
             session_id: resp.id,
             order_id: resp.intention_order_id.to_string(),
@@ -299,7 +302,8 @@ mod tests {
             .build()
             .expect("config");
         let client = PaymobClient::new(config).expect("client");
-        let req = UnifiedPayoutRequest::new("", MinorUnitAmount::new(1000), Currency::EGP, "vodafone");
+        let req =
+            UnifiedPayoutRequest::new("", MinorUnitAmount::new(1000), Currency::EGP, "vodafone");
         assert!(matches!(
             client.execute_payout(&req).await,
             Err(PaymobError::ValidationError {

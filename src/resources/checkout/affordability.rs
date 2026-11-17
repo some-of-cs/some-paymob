@@ -7,12 +7,13 @@
 //! methods for wiring selected installment plan IDs into
 //! `CreateIntentionParams::pre_selected_plan`.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::client::PaymobClient;
 use crate::core::credentials::PublicKey;
 use crate::core::error::PaymobError;
 use crate::core::types::{Currency, MinorUnitAmount};
+use crate::resources::intentions::params::CreateIntentionParamsBuilder;
 
 /// Frontend configuration for Paymob's bank installment Affordability Widget.
 ///
@@ -40,7 +41,7 @@ use crate::core::types::{Currency, MinorUnitAmount};
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AffordabilityWidgetConfig {
     /// Client-side Paymob public key (`pk_*`).
     pub public_key: String,
@@ -63,9 +64,59 @@ pub struct AffordabilityWidgetConfig {
     pub down_payment: Option<MinorUnitAmount>,
 }
 
+#[derive(Deserialize)]
+struct RawAffordabilityWidgetConfig {
+    public_key: String,
+    #[serde(rename = "amount_cents")]
+    amount: MinorUnitAmount,
+    currency: Currency,
+    #[serde(default)]
+    pre_selected_plan: Option<u64>,
+    #[serde(default)]
+    supported_banks: Vec<String>,
+    #[serde(default)]
+    tenure_months: Option<u16>,
+    #[serde(default)]
+    down_payment: Option<MinorUnitAmount>,
+}
+
+impl<'de> Deserialize<'de> for AffordabilityWidgetConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawAffordabilityWidgetConfig::deserialize(deserializer)?;
+        let config = Self {
+            public_key: raw.public_key,
+            amount: raw.amount,
+            currency: raw.currency,
+            pre_selected_plan: raw.pre_selected_plan,
+            supported_banks: raw.supported_banks,
+            tenure_months: raw.tenure_months,
+            down_payment: raw.down_payment,
+        };
+        validate_affordability_inputs(&config).map_err(serde::de::Error::custom)?;
+        Ok(config)
+    }
+}
+
 impl AffordabilityWidgetConfig {
     /// Creates an [`AffordabilityWidgetConfigBuilder`] from a [`PublicKey`],
     /// integer [`MinorUnitAmount`], and [`Currency`].
+    ///
+    /// # Compile-Time Key Role Separation
+    ///
+    /// Passing a [`SecretKey`](crate::core::credentials::SecretKey) instead of a
+    /// [`PublicKey`] fails at compile time:
+    ///
+    /// ```compile_fail
+    /// use some_paymob::core::credentials::SecretKey;
+    /// use some_paymob::core::types::{Currency, MinorUnitAmount};
+    /// use some_paymob::resources::checkout::affordability::AffordabilityWidgetConfig;
+    ///
+    /// let sk = SecretKey::new("egy_sk_test_123").unwrap();
+    /// let _ = AffordabilityWidgetConfig::builder(&sk, MinorUnitAmount::new(50_000), Currency::EGP);
+    /// ```
     #[must_use]
     pub fn builder(
         public_key: &PublicKey,
@@ -150,6 +201,19 @@ impl AffordabilityWidgetConfig {
         Ok(())
     }
 
+    /// Wires `self.pre_selected_plan` directly into a [`CreateIntentionParamsBuilder`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `pre_selected_plan` is `None` or `0`.
+    pub fn apply_to_intention_builder(
+        &self,
+        builder: CreateIntentionParamsBuilder,
+    ) -> Result<CreateIntentionParamsBuilder, PaymobError> {
+        let plan_id = self.require_selected_plan_id()?;
+        Ok(builder.pre_selected_plan(plan_id))
+    }
+
     /// Serializes this widget configuration into a JSON string.
     ///
     /// # Errors
@@ -226,12 +290,11 @@ impl AffordabilityWidgetConfigBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `public_key` is empty,
-    /// `amount` is zero, `down_payment` exceeds `amount`, `pre_selected_plan`
-    /// is `Some(0)`, or `tenure_months` is `Some(0)`.
+    /// Returns [`PaymobError::ValidationError`] if `public_key` is empty or uses
+    /// an `sk_*` prefix, `amount` is zero, `down_payment` exceeds `amount`,
+    /// `pre_selected_plan` is `Some(0)`, or `tenure_months` is `Some(0)`.
     pub fn build(self) -> Result<AffordabilityWidgetConfig, PaymobError> {
-        validate_affordability_inputs(&self)?;
-        Ok(AffordabilityWidgetConfig {
+        let config = AffordabilityWidgetConfig {
             public_key: self.public_key,
             amount: self.amount,
             currency: self.currency,
@@ -239,7 +302,9 @@ impl AffordabilityWidgetConfigBuilder {
             supported_banks: self.supported_banks,
             tenure_months: self.tenure_months,
             down_payment: self.down_payment,
-        })
+        };
+        validate_affordability_inputs(&config)?;
+        Ok(config)
     }
 }
 
@@ -253,33 +318,51 @@ fn validate_plan_id(plan_id: u64) -> Result<(), PaymobError> {
     Ok(())
 }
 
-fn validate_affordability_inputs(
-    builder: &AffordabilityWidgetConfigBuilder,
+fn validate_affordability_inputs(config: &AffordabilityWidgetConfig) -> Result<(), PaymobError> {
+    validate_affordability_core(&config.public_key, config.amount)?;
+    validate_affordability_options(config)
+}
+
+fn validate_affordability_core(
+    public_key: &str,
+    amount: MinorUnitAmount,
 ) -> Result<(), PaymobError> {
-    if builder.public_key.trim().is_empty() {
+    let trimmed = public_key.trim();
+    if trimmed.is_empty() {
         return Err(PaymobError::ValidationError {
             field: "public_key",
             reason: "public_key must not be empty".to_owned(),
         });
     }
-    if builder.amount.is_zero() {
+    if super::unified::is_secret_key_like(&trimmed.to_ascii_lowercase()) {
+        return Err(PaymobError::ValidationError {
+            field: "public_key",
+            reason: "secret key (`sk_*`) cannot be used in AffordabilityWidgetConfig".to_owned(),
+        });
+    }
+    if amount.is_zero() {
         return Err(PaymobError::ValidationError {
             field: "amount",
             reason: "amount must be greater than zero minor units".to_owned(),
         });
     }
-    if let Some(plan_id) = builder.pre_selected_plan {
-        validate_plan_id(plan_id)?;
+    Ok(())
+}
+
+fn validate_affordability_options(config: &AffordabilityWidgetConfig) -> Result<(), PaymobError> {
+    if config.pre_selected_plan == Some(0) {
+        return Err(PaymobError::ValidationError {
+            field: "pre_selected_plan",
+            reason: "pre_selected_plan must be greater than zero".to_owned(),
+        });
     }
-    if builder.tenure_months == Some(0) {
+    if config.tenure_months == Some(0) {
         return Err(PaymobError::ValidationError {
             field: "tenure_months",
             reason: "tenure_months must be greater than zero".to_owned(),
         });
     }
-    if let Some(dp) = builder.down_payment
-        && dp > builder.amount
-    {
+    if config.down_payment.unwrap_or(MinorUnitAmount::ZERO) > config.amount {
         return Err(PaymobError::ValidationError {
             field: "down_payment",
             reason: "down_payment must not exceed total amount".to_owned(),
@@ -294,6 +377,7 @@ mod tests {
     use crate::core::config::ClientConfig;
     use crate::core::credentials::SecretKey;
     use crate::core::region::PaymobRegion;
+    use crate::resources::intentions::{BillingData, CreateIntentionParams, PaymentMethodInput};
 
     #[test]
     fn tc_2_2_3_affordability_widget_builds_and_wires_plan_id() {
@@ -401,5 +485,72 @@ mod tests {
         let updated = widget.with_selected_plan(99).expect("valid plan");
         assert_eq!(updated.selected_plan_id(), Some(99));
         assert!(updated.with_selected_plan(0).is_err());
+    }
+
+    #[test]
+    fn tc_2_2_3_cycle2_deserialize_enforces_bounds_and_rejects_sk() {
+        let valid_json = r#"{
+            "public_key": "egy_pk_test_ABC",
+            "amount_cents": 150000,
+            "currency": "EGP",
+            "pre_selected_plan": 12,
+            "tenure_months": 6,
+            "down_payment": 25000
+        }"#;
+        let parsed: AffordabilityWidgetConfig = serde_json::from_str(valid_json)
+            .expect("valid AffordabilityWidgetConfig JSON should deserialize");
+        assert_eq!(parsed.amount_cents(), 150_000);
+        assert_eq!(parsed.selected_plan_id(), Some(12));
+
+        let invalid_payloads = [
+            r#"{"public_key":"","amount_cents":10000,"currency":"EGP"}"#,
+            r#"{"public_key":"egy_sk_test_123","amount_cents":10000,"currency":"EGP"}"#,
+            r#"{"public_key":"egy_pk_test_123","amount_cents":0,"currency":"EGP"}"#,
+            r#"{"public_key":"egy_pk_test_123","amount_cents":10000,"currency":"EGP","pre_selected_plan":0}"#,
+            r#"{"public_key":"egy_pk_test_123","amount_cents":10000,"currency":"EGP","tenure_months":0}"#,
+            r#"{"public_key":"egy_pk_test_123","amount_cents":10000,"currency":"EGP","down_payment":20000}"#,
+        ];
+        for payload in invalid_payloads {
+            assert!(
+                serde_json::from_str::<AffordabilityWidgetConfig>(payload).is_err(),
+                "expected AffordabilityWidgetConfig deserialization to reject: {payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn tc_2_2_3_cycle2_checkout_facade_and_apply_to_intention_builder() {
+        let cfg = ClientConfig::builder()
+            .region(PaymobRegion::Egypt)
+            .public_key(PublicKey::new("egy_pk_test_WIDGET").expect("valid pk"))
+            .build()
+            .expect("valid config");
+        let client = PaymobClient::new(cfg).expect("valid client");
+        let widget = client
+            .checkout()
+            .affordability_widget(200_000_u64, Currency::EGP)
+            .expect("affordability_widget builder")
+            .pre_selected_plan(55)
+            .build()
+            .expect("valid widget");
+
+        let billing = BillingData::builder()
+            .first_name("Maher")
+            .last_name("Mansour")
+            .email("maher@example.com")
+            .phone_number("+201000000000")
+            .build()
+            .expect("valid billing");
+        let intention_builder = CreateIntentionParams::builder()
+            .amount(200_000_u64)
+            .currency(Currency::EGP)
+            .payment_methods(vec![PaymentMethodInput::IntegrationId(123)])
+            .billing_data(billing);
+        let wired_params = widget
+            .apply_to_intention_builder(intention_builder)
+            .expect("apply_to_intention_builder should succeed")
+            .build()
+            .expect("valid CreateIntentionParams");
+        assert_eq!(wired_params.pre_selected_plan(), Some(55));
     }
 }

@@ -27,10 +27,22 @@ fn make_client(base_url: &str) -> PaymobClient {
     PaymobClient::new(cfg).expect("valid client")
 }
 
-#[tokio::test]
-async fn us_5_1_0_end_to_end_oauth_and_all_7_issuers_plus_aman_cancel() {
-    let server = MockServer::start().await;
+async fn mount_disburse_mock(server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/api/secure/disburse/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "transaction_id": "tx_e2e_1",
+            "issuer": "vodafone",
+            "amount": 150,
+            "disbursement_status": "successful"
+        })))
+        .mount(server)
+        .await;
+}
 
+#[tokio::test]
+async fn us_5_1_0_oauth_token_generation() {
+    let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/secure/o/token/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -43,17 +55,44 @@ async fn us_5_1_0_end_to_end_oauth_and_all_7_issuers_plus_aman_cancel() {
         .mount(&server)
         .await;
 
-    Mock::given(method("POST"))
-        .and(path("/api/secure/disburse/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "transaction_id": "tx_e2e_1",
-            "issuer": "vodafone",
-            "amount": 150,
-            "disbursement_status": "successful"
-        })))
-        .mount(&server)
-        .await;
+    let client = make_client(&server.uri());
+    let tok = client.payouts().auth().generate_token().await.unwrap();
+    assert_eq!(tok.expires_in, 3600);
+}
 
+#[tokio::test]
+async fn us_5_1_0_mobile_and_bank_wallet_issuers() {
+    let server = MockServer::start().await;
+    mount_disburse_mock(&server).await;
+    let client = make_client(&server.uri());
+    client.auth().payouts_cache().store(
+        some_paymob::core::auth::CachedToken::with_default_ttl("jwt", None),
+    );
+    let cashin = client.payouts().cashin();
+
+    let vf = cashin
+        .vodafone(MobileWalletCashinParams::new("01023456789", 150))
+        .await
+        .unwrap();
+    assert_eq!(vf.issuer, Some(DisburseIssuer::Vodafone));
+    cashin
+        .etisalat(MobileWalletCashinParams::new("01123456789", 150))
+        .await
+        .unwrap();
+    cashin
+        .orange(MobileWalletCashinParams::new("01223456789", 150))
+        .await
+        .unwrap();
+    cashin
+        .bank_wallet(MobileWalletCashinParams::new("01523456789", 150))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn us_5_1_0_bank_post_and_aman_cancel() {
+    let server = MockServer::start().await;
+    mount_disburse_mock(&server).await;
     Mock::given(method("POST"))
         .and(path("/api/secure/transaction/aman/cancel/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -64,34 +103,11 @@ async fn us_5_1_0_end_to_end_oauth_and_all_7_issuers_plus_aman_cancel() {
         .await;
 
     let client = make_client(&server.uri());
-    let tok = client.payouts().auth().generate_token().await.unwrap();
-    assert_eq!(tok.expires_in, 3600);
-
+    client.auth().payouts_cache().store(
+        some_paymob::core::auth::CachedToken::with_default_ttl("jwt", None),
+    );
     let cashin = client.payouts().cashin();
-    assert_eq!(
-        cashin
-            .vodafone(MobileWalletCashinParams::new("01023456789", 150))
-            .await
-            .unwrap()
-            .transaction_id,
-        "tx_e2e_1"
-    );
-    assert_eq!(
-        cashin
-            .etisalat(MobileWalletCashinParams::new("01123456789", 150))
-            .await
-            .unwrap()
-            .issuer,
-        Some(DisburseIssuer::Vodafone)
-    );
-    cashin
-        .orange(MobileWalletCashinParams::new("01223456789", 150))
-        .await
-        .unwrap();
-    cashin
-        .bank_wallet(MobileWalletCashinParams::new("01523456789", 150))
-        .await
-        .unwrap();
+
     cashin
         .bank_card(BankCardCashinParams {
             amount: 500,

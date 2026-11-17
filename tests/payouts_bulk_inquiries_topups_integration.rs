@@ -30,9 +30,8 @@ fn seeded_client(base_url: &str) -> PaymobClient {
 }
 
 #[tokio::test]
-async fn us_5_2_0_end_to_end_bulk_inquiries_budget_and_topups() {
+async fn us_5_2_0_bulk_disbursement_and_inquiries() {
     let server = MockServer::start().await;
-
     Mock::given(method("POST"))
         .and(path("/disburse/api/v1/disburse/bulk_transaction/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -41,7 +40,6 @@ async fn us_5_2_0_end_to_end_bulk_inquiries_budget_and_topups() {
         })))
         .mount(&server)
         .await;
-
     Mock::given(method("POST"))
         .and(path("/disburse/api/v1/bulk_transaction/inquire/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -49,45 +47,17 @@ async fn us_5_2_0_end_to_end_bulk_inquiries_budget_and_topups() {
         })))
         .mount(&server)
         .await;
-
     Mock::given(method("POST"))
-        .and(path("/disburse/api/v1/bulk_transaction/inquire_by_reference/"))
+        .and(path(
+            "/disburse/api/v1/bulk_transaction/inquire_by_reference/",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "results": [{"transaction_id": "tx_b1", "disbursement_status": "successful"}]
         })))
         .mount(&server)
         .await;
 
-    Mock::given(method("GET"))
-        .and(path("/api/secure/budget/inquire/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "current_budget": "Your current budget is 888.25 LE"
-        })))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("GET"))
-        .and(path("/api/secure/topup/inquire/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "count": 1,
-            "results": [{"id": 10, "amount": 500, "status": "approved"}]
-        })))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("POST"))
-        .and(path("/api/secure/topup/request/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": 11,
-            "amount": 500,
-            "status": "pending",
-            "type": "from_accept_balance"
-        })))
-        .mount(&server)
-        .await;
-
     let client = seeded_client(&server.uri());
-
     let bulk = client
         .payouts()
         .cashin()
@@ -125,7 +95,38 @@ async fn us_5_2_0_end_to_end_bulk_inquiries_budget_and_topups() {
         .await
         .unwrap();
     assert_eq!(ref_inq.results[0].transaction_id, "tx_b1");
+}
 
+#[tokio::test]
+async fn us_5_2_0_budget_and_topup_flows() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/secure/budget/inquire/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "current_budget": "Your current budget is 888.25 LE"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/secure/topup/inquire/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "count": 1,
+            "results": [{"id": 10, "amount": 500, "status": "approved"}]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/secure/topup/request/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 11,
+            "amount": 500,
+            "status": "pending",
+            "type": "from_accept_balance"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = seeded_client(&server.uri());
     let budget = client.payouts().inquiries().user_budget().await.unwrap();
     assert!(budget.current_budget.contains("888.25"));
 

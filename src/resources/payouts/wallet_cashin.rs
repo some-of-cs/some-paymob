@@ -260,7 +260,10 @@ mod tests {
             .expect_err("empty msisdn must fail");
         assert!(matches!(
             err_msisdn,
-            PaymobError::ValidationError { field: "msisdn", .. }
+            PaymobError::ValidationError {
+                field: "msisdn",
+                ..
+            }
         ));
 
         let err_amt = client
@@ -271,7 +274,10 @@ mod tests {
             .expect_err("zero amount must fail");
         assert!(matches!(
             err_amt,
-            PaymobError::ValidationError { field: "amount", .. }
+            PaymobError::ValidationError {
+                field: "amount",
+                ..
+            }
         ));
     }
 }

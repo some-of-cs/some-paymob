@@ -234,6 +234,29 @@ impl<'a> ScopedIntentions<'a> {
     ) -> Result<crate::resources::intentions::IntentionResponse, PaymobError> {
         self.scoped.send_put("/v1/intention/", params).await
     }
+
+    /// Updates a specific v1 Payment Intention identified by `client_secret` on behalf of the
+    /// scoped sub-merchant (`PUT /v1/intention/{client_secret}/`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `client_secret` is empty or contains
+    /// control characters, or [`PaymobError::AuthenticationError`], [`PaymobError::ApiError`],
+    /// or [`PaymobError::TransportError`] on failure.
+    pub async fn update_by_client_secret(
+        &self,
+        client_secret: &str,
+        params: &crate::resources::intentions::UpdateIntentionParams,
+    ) -> Result<crate::resources::intentions::IntentionResponse, PaymobError> {
+        crate::resources::onboarding::validate_non_empty_trimmed(
+            "client_secret",
+            client_secret,
+            "client_secret must not be empty",
+        )?;
+        crate::resources::onboarding::validate_no_control_chars("client_secret", client_secret)?;
+        let path = format!("/v1/intention/{}/", client_secret.trim());
+        self.scoped.send_put(&path, params).await
+    }
 }
 
 /// Scoped Transaction & Order Inquiries operations bound to a [`MerchantScopedClient`].
@@ -537,12 +560,40 @@ mod tests {
         let resp = scoped.intentions().create(&params).await.unwrap();
         assert_eq!(resp.id, "pi_scoped_123");
 
+        Mock::given(method("PUT"))
+            .and(path("/v1/intention/egy_csk_test_scoped/"))
+            .and(header("x-api-key", "partner_key_secret_624"))
+            .and(header("x-paymob-merchant-id", "987654"))
+            .and(header("x-merchant-id", "987654"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "pi_scoped_123",
+                "intention_order_id": 987654,
+                "client_secret": "egy_csk_test_scoped",
+                "status": "updated_by_secret"
+            })))
+            .mount(&server)
+            .await;
+
         let update_params = UpdateIntentionParams::builder()
             .amount(15_000_u64)
             .build()
             .expect("valid update params");
         let updated = scoped.intentions().update(&update_params).await.unwrap();
         assert_eq!(updated.status, "updated");
+
+        let by_secret = scoped
+            .intentions()
+            .update_by_client_secret("egy_csk_test_scoped", &update_params)
+            .await
+            .unwrap();
+        assert_eq!(by_secret.status, "updated_by_secret");
+        assert!(
+            scoped
+                .intentions()
+                .update_by_client_secret("   ", &update_params)
+                .await
+                .is_err()
+        );
     }
 
     #[cfg(feature = "inquiries")]

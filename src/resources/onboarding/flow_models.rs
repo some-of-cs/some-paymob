@@ -70,17 +70,26 @@ fn validate_email(email: &str) -> Result<(), PaymobError> {
 fn zeroize_json_value(value: &mut Value) {
     match value {
         Value::String(s) => s.zeroize(),
-        Value::Array(items) => items.iter_mut().for_each(zeroize_json_value),
+        Value::Array(items) => {
+            items.iter_mut().for_each(zeroize_json_value);
+            items.clear();
+        }
         Value::Object(map) => zeroize_json_map(map),
-        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+        Value::Bool(flag) => flag.zeroize(),
+        Value::Number(num) => {
+            *num = serde_json::Number::from(0_u8);
+            *value = Value::Null;
+        }
+        Value::Null => {}
     }
 }
 
 fn zeroize_json_map(map: &mut Map<String, Value>) {
-    for value in map.values_mut() {
-        zeroize_json_value(value);
+    let entries = std::mem::take(map);
+    for (mut key, mut value) in entries {
+        key.zeroize();
+        zeroize_json_value(&mut value);
     }
-    map.clear();
 }
 
 /// Parameters for registering a new sub-merchant under a Paymob Partner (`POST /api/onboarding/register`).
@@ -822,6 +831,7 @@ mod tests {
             "iban".into(),
             Value::String("EG380019000500000000263180002".into()),
         );
+        data.insert("tax_id".into(), Value::Number(123_456_789_u64.into()));
         let mut params = SubmitOnboardingStepParams::new(987_654, "bank_details", data)
             .expect("valid step params")
             .with_partner("KeyPartner");

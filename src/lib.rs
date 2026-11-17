@@ -70,17 +70,28 @@ pub use crate::resources::legacy::{
 #[cfg(feature = "webhooks")]
 pub use webhooks::{PaymobWebhookEngine, WebhookError, WebhookEvent, WebhookResult};
 
-/// Crate-root re-export of the payment lifecycle management service (`refund`, `void`, `capture`).
+/// Crate-root re-exports of the payment lifecycle management service (`refund`, `void`, `capture`).
 #[cfg(feature = "manage")]
-pub use resources::manage::ManageService;
+pub use resources::manage::{CaptureParams, ManageService, RefundParams, VoidParams};
 
-/// Crate-root re-export of the transaction, order, and saved card token inquiry service.
+/// Crate-root re-exports of the transaction, order, and saved card token inquiry service.
 #[cfg(feature = "inquiries")]
-pub use resources::inquiries::InquiriesService;
+pub use resources::inquiries::{
+    CardTokenEnvelope, InquiriesService, OrderInquiryResponse, OrderShippingData,
+    OrderTransactionAttempt,
+};
 
-/// Crate-root re-export of the QuickLinks payment links service (`create`, `cancel`).
+/// Crate-root re-exports of the QuickLinks payment links service (`create`, `cancel`).
 #[cfg(feature = "quicklinks")]
-pub use resources::quicklinks::QuickLinksService;
+pub use resources::quicklinks::{CreateQuickLinkParams, QuickLinkResponse, QuickLinksService};
+
+/// Crate-root re-exports of marketplace split recipient rules, multi-card split checkout, and convenience fee calculator.
+#[cfg(feature = "splits")]
+pub use resources::splits::{
+    BASIS_POINTS_DENOMINATOR, CardFeeContext, CardFeeRule, ConvenienceFeeConfig,
+    FeeCalculationMode, MAX_BASIS_POINTS, MAX_SPLIT_CARDS, SplitCardPortion, SplitDescription,
+    SplitPaymentConfig, SplitRecipientRule,
+};
 
 /// Crate-root re-export of saved-card tokenization and headless payment services.
 #[cfg(feature = "saved-cards")]
@@ -127,7 +138,7 @@ pub use resources::onboarding::ScopedIntentions;
 #[cfg(all(feature = "onboarding", feature = "manage"))]
 pub use resources::onboarding::ScopedManage;
 
-/// Crate-root re-exports of the northbound `some-payments` unified adapter traits and `PaymobExt`.
+/// Crate-root re-exports of the `some-payments` cross-gateway unified adapter traits and DTOs.
 #[cfg(feature = "some-payments-adapter")]
 pub use adapter::{
     HeadlessExecutionOption, PaymentProvider, PaymobExt, PayoutProvider, ProviderExt,
@@ -139,10 +150,13 @@ pub use adapter::{
     WebhookVerifier, build_intention_params, normalize_webhook_event,
 };
 
-/// Crate-root re-exports of the deterministic test harness, official vectors, and sandbox guards.
+/// Crate-root re-exports of offline test vectors, `PaymobMockServer`, and `SandboxGuard`.
 #[cfg(feature = "test-utils")]
 pub use test_utils::{
-    MockHost, OfficialWebhookVector, PaymobMockServer, SandboxCheckRequest, SandboxConstraintError,
-    SandboxGuard, SandboxPaymentChannel, SandboxReport, SandboxWarning, WebhookVectorProtocol,
-    all_official_vectors,
+    JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, OfficialWebhookVector, PaymobMockServer,
+    PayoutsRateLimitMockConfig, SandboxCheckRequest, SandboxConstraintError, SandboxGuard,
+    SandboxPaymentChannel, SandboxReport, SandboxWarning, SignedSubscriptionRequest,
+    SignedTransactionRequest, SignedWebhookToolPayload, WebhookVectorProtocol,
+    all_official_vectors, generate_signed_subscription_post, generate_signed_transaction_post,
+    sign_hmac_sha512,
 };

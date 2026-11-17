@@ -8,16 +8,18 @@
 
 use std::fmt;
 
-use reqwest::Client;
 use reqwest::header::AUTHORIZATION;
 use secrecy::SecretString;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
 
-use crate::core::auth::accept_jwt::{AcceptJwtError, AcceptJwtProvider, format_bearer_header};
+use crate::core::auth::accept_jwt::{
+    AcceptJwtProvider, format_bearer_header, is_incorrect_credentials_401,
+};
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
+use crate::core::http::{HttpRequest, HttpResponse};
 
 const CREATE_PAYMENT_LINK_PATH: &str = "/api/ecommerce/payment-links";
 const CANCEL_PAYMENT_LINK_PATH: &str = "/api/ecommerce/payment-links/cancel";
@@ -137,7 +139,8 @@ impl CreateQuickLinkParams {
     ///
     /// Returns [`PaymobError::ValidationError`] if `amount_cents == 0`,
     /// `currency` is not a 3-letter ASCII alphabetic ISO-4217 code,
-    /// `integrations` is empty, or `redirection_url` is malformed.
+    /// `integrations` is empty or contains `0`, any optional text field contains
+    /// control characters, or `redirection_url` is malformed.
     pub fn validate(&self) -> Result<(), PaymobError> {
         if self.amount_cents == 0 {
             return Err(validation_err(
@@ -146,11 +149,20 @@ impl CreateQuickLinkParams {
             ));
         }
         validate_currency_code(&self.currency)?;
-        if self.integrations.is_empty() {
-            return Err(validation_err(
-                "integrations",
-                "at least one integration ID is required",
-            ));
+        validate_integrations(&self.integrations)?;
+        self.validate_optional_fields()
+    }
+
+    fn validate_optional_fields(&self) -> Result<(), PaymobError> {
+        for (field, opt_val) in [
+            ("description", &self.description),
+            ("full_name", &self.full_name),
+            ("email", &self.email),
+            ("phone_number", &self.phone_number),
+        ] {
+            if let Some(val) = opt_val {
+                validate_no_control_chars(field, val)?;
+            }
         }
         if let Some(raw_url) = &self.redirection_url {
             validate_redirection_url(raw_url)?;
@@ -233,77 +245,68 @@ impl<'a> QuickLinksService<'a> {
     ) -> Result<QuickLinkResponse, PaymobError> {
         params.validate()?;
         let target_url = self.client.accept_url(CREATE_PAYMENT_LINK_PATH)?;
-        let (status, retry_after, body) = self.post_bearer_json(&target_url, params).await?;
-        if !status.is_success() {
-            return Err(PaymobError::from_response(
-                status.as_u16(),
-                &body,
-                retry_after,
-            ));
+        let response = self.post_bearer_json(&target_url, params).await?;
+        if !response.status.is_success() {
+            return Err(PaymobError::from_http_response(&response));
         }
-        serde_json::from_str(&body).map_err(|err| {
-            PaymobError::TransportError(format!("failed to decode QuickLinkResponse: {err}"))
-        })
+        response
+            .json::<QuickLinkResponse>()
+            .map_err(PaymobError::from)
     }
 
     /// Cancels an active QuickLink payment link via `POST /api/ecommerce/payment-links/cancel`.
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `link_id` is empty/whitespace or
-    /// `api_key` is missing, or [`PaymobError`] on authentication or API errors.
+    /// Returns [`PaymobError::ValidationError`] if `link_id` is empty/whitespace,
+    /// contains control characters, or `api_key` is missing, or [`PaymobError`] on
+    /// authentication or API errors.
     pub async fn cancel(&self, link_id: &str) -> Result<(), PaymobError> {
         let trimmed = link_id.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || link_id.chars().any(char::is_control) {
             return Err(validation_err(
                 "link_id",
-                "payment link identifier must not be empty",
+                "payment link identifier must be non-empty and free of control characters",
             ));
         }
         let target_url = self.client.accept_url(CANCEL_PAYMENT_LINK_PATH)?;
         let payload = CancelQuickLinkRequest {
             payment_link_id: trimmed,
         };
-        let (status, retry_after, body) = self.post_bearer_json(&target_url, &payload).await?;
-        if !status.is_success() {
-            return Err(PaymobError::from_response(
-                status.as_u16(),
-                &body,
-                retry_after,
-            ));
+        let response = self.post_bearer_json(&target_url, &payload).await?;
+        if !response.status.is_success() {
+            return Err(PaymobError::from_http_response(&response));
         }
         Ok(())
     }
 
-    async fn post_bearer_json<T: Serialize + Sync>(
+    async fn post_bearer_json<T: Serialize>(
         &self,
         url: &Url,
         payload: &T,
-    ) -> Result<(reqwest::StatusCode, Option<u64>, String), PaymobError> {
+    ) -> Result<HttpResponse, PaymobError> {
         let provider = self.accept_jwt_provider()?;
-        let http = self.build_tls_client()?;
-        let response = provider
-            .execute_with_retry(|token| {
-                let http = &http;
-                let url = url.clone();
-                async move {
-                    let header = format_bearer_header(&token)?;
-                    http.post(url)
-                        .header(AUTHORIZATION, header)
-                        .json(payload)
-                        .send()
-                        .await
-                        .map_err(AcceptJwtError::from)
-                }
-            })
-            .await?;
-        let status = response.status();
-        let retry_after = parse_retry_after_secs(response.headers());
-        let body = response
-            .text()
-            .await
-            .map_err(|err| PaymobError::TransportError(err.to_string()))?;
-        Ok((status, retry_after, body))
+        let token = provider.token().await.map_err(PaymobError::from)?;
+        let first = self.send_bearer_once(url, payload, &token).await?;
+        if !is_incorrect_credentials_401(first.status, &first.body) {
+            return Ok(first);
+        }
+        provider.cache().evict_if_matches(&token).await;
+        let fresh = provider.token().await.map_err(PaymobError::from)?;
+        self.send_bearer_once(url, payload, &fresh).await
+    }
+
+    async fn send_bearer_once<T: Serialize>(
+        &self,
+        url: &Url,
+        payload: &T,
+        token: &SecretString,
+    ) -> Result<HttpResponse, PaymobError> {
+        let header = format_bearer_header(token).map_err(PaymobError::from)?;
+        let request = HttpRequest::post(url.as_str())?
+            .with_header(AUTHORIZATION, header)
+            .with_json(payload)?;
+        self.client.execute_request(&request).await
     }
 
     fn accept_jwt_provider(&self) -> Result<AcceptJwtProvider, PaymobError> {
@@ -317,17 +320,6 @@ impl<'a> QuickLinksService<'a> {
         let base_url = self.client.endpoints().accept_base_url.as_str();
         let cache = self.client.auth().accept_cache_arc();
         AcceptJwtProvider::with_cache(base_url, secret, cache).map_err(PaymobError::from)
-    }
-
-    fn build_tls_client(&self) -> Result<Client, PaymobError> {
-        let builder = Client::builder().timeout(self.client.config().timeout());
-        #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
-        let builder = builder.min_tls_version(reqwest::tls::Version::TLS_1_3);
-        #[cfg(feature = "rustls-tls")]
-        let builder = builder.use_rustls_tls();
-        builder
-            .build()
-            .map_err(|err| PaymobError::TransportError(err.to_string()))
     }
 }
 
@@ -354,6 +346,32 @@ fn validation_err(field: &'static str, reason: impl Into<String>) -> PaymobError
     }
 }
 
+fn validate_no_control_chars(field: &'static str, value: &str) -> Result<(), PaymobError> {
+    if value.chars().any(char::is_control) {
+        return Err(validation_err(
+            field,
+            format!("{field} must not contain control characters"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_integrations(integrations: &[u64]) -> Result<(), PaymobError> {
+    if integrations.is_empty() {
+        return Err(validation_err(
+            "integrations",
+            "at least one integration ID is required",
+        ));
+    }
+    if integrations.contains(&0) {
+        return Err(validation_err(
+            "integrations",
+            "integration IDs must be non-zero",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_currency_code(currency: &str) -> Result<(), PaymobError> {
     let trimmed = currency.trim();
     if trimmed.len() == 3 && trimmed.chars().all(|c| c.is_ascii_alphabetic()) {
@@ -366,25 +384,22 @@ fn validate_currency_code(currency: &str) -> Result<(), PaymobError> {
 }
 
 fn validate_redirection_url(raw_url: &str) -> Result<(), PaymobError> {
+    validate_no_control_chars("redirection_url", raw_url)?;
     let parsed = Url::parse(raw_url.trim())
         .map_err(|err| validation_err("redirection_url", format!("invalid URL: {err}")))?;
-    if matches!(parsed.scheme(), "https" | "http") && parsed.host_str().is_some() {
-        return Ok(());
+    if !matches!(parsed.scheme(), "https" | "http") || parsed.host_str().is_none() {
+        return Err(validation_err(
+            "redirection_url",
+            "redirection_url must use http or https with a valid host",
+        ));
     }
-    Err(validation_err(
-        "redirection_url",
-        "redirection_url must use http or https with a valid host",
-    ))
-}
-
-fn parse_retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
-    headers
-        .get(reqwest::header::RETRY_AFTER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse::<u64>()
-        .ok()
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(validation_err(
+            "redirection_url",
+            "redirection_url must not contain embedded credentials",
+        ));
+    }
+    Ok(())
 }
 
 fn deserialize_string_or_u64<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -438,6 +453,7 @@ mod tests {
                 payouts_staging_base_url: uri.clone(),
             })
             .api_key(ApiKey::new("test_api_key_secret_123").expect("valid api key"))
+            .max_retries(0)
             .build()
             .expect("valid config");
         PaymobClient::new(config).expect("valid client")
@@ -527,12 +543,41 @@ mod tests {
             })
         ));
 
+        let zero_int = CreateQuickLinkParams::new(100, "EGP", vec![4097558, 0]);
+        assert!(matches!(
+            zero_int.validate(),
+            Err(PaymobError::ValidationError {
+                field: "integrations",
+                ..
+            })
+        ));
+
         let bad_url =
             CreateQuickLinkParams::new(100, "EGP", vec![1]).with_redirection_url("not-a-url");
         assert!(matches!(
             bad_url.validate(),
             Err(PaymobError::ValidationError {
                 field: "redirection_url",
+                ..
+            })
+        ));
+
+        let cred_url = CreateQuickLinkParams::new(100, "EGP", vec![1])
+            .with_redirection_url("https://user:pass@example.com/return");
+        assert!(matches!(
+            cred_url.validate(),
+            Err(PaymobError::ValidationError {
+                field: "redirection_url",
+                ..
+            })
+        ));
+
+        let ctrl_desc =
+            CreateQuickLinkParams::new(100, "EGP", vec![1]).with_description("bad\0desc");
+        assert!(matches!(
+            ctrl_desc.validate(),
+            Err(PaymobError::ValidationError {
+                field: "description",
                 ..
             })
         ));
@@ -544,6 +589,13 @@ mod tests {
         let client = mock_client(&server);
         assert!(matches!(
             client.quicklinks().cancel("   ").await,
+            Err(PaymobError::ValidationError {
+                field: "link_id",
+                ..
+            })
+        ));
+        assert!(matches!(
+            client.quicklinks().cancel("ql_1\r\n").await,
             Err(PaymobError::ValidationError {
                 field: "link_id",
                 ..
@@ -563,6 +615,60 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn tc_3_3_1_evicts_and_retries_once_on_401_incorrect_credentials() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/auth/tokens"))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_json(serde_json::json!({ "token": "jwt_stale" })),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/auth/tokens"))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_json(serde_json::json!({ "token": "jwt_fresh" })),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/ecommerce/payment-links"))
+            .and(header("Authorization", "Bearer jwt_stale"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .set_body_json(serde_json::json!({ "detail": "incorrect credentials" })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/ecommerce/payment-links"))
+            .and(header("Authorization", "Bearer jwt_fresh"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "id": 777,
+                "url": "https://accept.paymob.com/standalone/?ref=777",
+                "client_url": "https://accept.paymob.com/api/acceptance/post_pay?ref=777"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let params = CreateQuickLinkParams::new(50_000, "EGP", vec![4097558]);
+        let resp = client
+            .quicklinks()
+            .create(&params)
+            .await
+            .expect("retries with fresh JWT");
+        assert_eq!(resp.id, "777");
     }
 
     #[tokio::test]

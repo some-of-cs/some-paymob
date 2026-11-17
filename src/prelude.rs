@@ -3,8 +3,8 @@
 //!
 //! Import all essential client, configuration, credential, region, auth,
 //! HTTP transport, money, error, pagination, intentions, checkout, legacy-v2,
-//! management, inquiries, quicklinks, saved-cards, subscriptions, payouts,
-//! onboarding, adapter, test-utils, and webhook types with a single wildcard import:
+//! management, inquiries, quicklinks, splits, saved-cards, subscriptions,
+//! payouts, onboarding, adapter, test-utils, and webhook types with a single wildcard import:
 //!
 //! ```
 //! use some_paymob::prelude::*;
@@ -59,17 +59,30 @@ pub use crate::resources::legacy::{
 #[cfg(feature = "webhooks")]
 pub use crate::webhooks::*;
 
-/// Re-exports payment lifecycle management service (`refund`, `void`, `capture`).
+/// Re-exports payment lifecycle management service (`refund`, `void`, `capture`) and parameter types.
 #[cfg(feature = "manage")]
-pub use crate::resources::manage::ManageService;
+pub use crate::resources::manage::{CaptureParams, ManageService, RefundParams, VoidParams};
 
-/// Re-exports transaction, order, and saved card token inquiry service.
+/// Re-exports transaction, order, and saved card token inquiry service and models.
 #[cfg(feature = "inquiries")]
-pub use crate::resources::inquiries::InquiriesService;
+pub use crate::resources::inquiries::{
+    CardTokenEnvelope, InquiriesService, OrderInquiryResponse, OrderShippingData,
+    OrderTransactionAttempt,
+};
 
-/// Re-exports QuickLinks payment links service.
+/// Re-exports QuickLinks payment links service and models.
 #[cfg(feature = "quicklinks")]
-pub use crate::resources::quicklinks::QuickLinksService;
+pub use crate::resources::quicklinks::{
+    CreateQuickLinkParams, QuickLinkResponse, QuickLinksService,
+};
+
+/// Re-exports marketplace split recipient rules, multi-card split checkout, and convenience fee calculator.
+#[cfg(feature = "splits")]
+pub use crate::resources::splits::{
+    BASIS_POINTS_DENOMINATOR, CardFeeContext, CardFeeRule, ConvenienceFeeConfig,
+    FeeCalculationMode, MAX_BASIS_POINTS, MAX_SPLIT_CARDS, SplitCardPortion, SplitDescription,
+    SplitPaymentConfig, SplitRecipientRule,
+};
 
 /// Re-exports all public saved-card tokenization and headless payment types.
 #[cfg(feature = "saved-cards")]
@@ -125,7 +138,7 @@ pub use crate::resources::onboarding::ScopedIntentions;
 #[cfg(all(feature = "onboarding", feature = "manage"))]
 pub use crate::resources::onboarding::ScopedManage;
 
-/// Re-exports all public `some-payments` unified adapter traits, DTOs, and `PaymobExt` types.
+/// Re-exports the `some-payments` cross-gateway unified adapter traits and DTOs.
 #[cfg(feature = "some-payments-adapter")]
 pub use crate::adapter::{
     HeadlessExecutionOption, PaymentProvider, PaymobExt, PayoutProvider, ProviderExt,
@@ -137,7 +150,7 @@ pub use crate::adapter::{
     WebhookVerifier, build_intention_params, normalize_webhook_event,
 };
 
-/// Re-exports all public deterministic test vectors, `PaymobMockServer`, and sandbox constraint guards.
+/// Re-exports offline test vectors, `PaymobMockServer`, and `SandboxGuard`.
 #[cfg(feature = "test-utils")]
 pub use crate::test_utils::{
     JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, OfficialWebhookVector, PaymobMockServer,

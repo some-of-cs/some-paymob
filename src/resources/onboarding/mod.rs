@@ -17,14 +17,13 @@ use reqwest::header::HeaderMap;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde::de::{DeserializeOwned, Deserializer};
-use url::Url;
 
 use crate::core::auth::partner::PartnerAuthContext;
 use crate::core::auth::strategy::AuthStrategy;
 use crate::core::client::PaymobClient;
 use crate::core::credentials::PartnerCredentials;
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpClient, HttpClientConfig, HttpRequest, HttpResponse, RetryPolicy};
+use crate::core::http::{HttpRequest, HttpResponse};
 
 pub use auth_models::{
     CreatePartnerApiKeyParams, PartnerApiKeyResponse, PartnerAuthTokenResponse, PartnerHmacBody,
@@ -124,33 +123,11 @@ impl PaymobClient {
     }
 }
 
-fn is_loopback_http(url: &Url) -> bool {
-    url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
-}
-
 pub(crate) async fn execute_onboarding_request(
     client: &PaymobClient,
     request: &HttpRequest,
 ) -> Result<HttpResponse, PaymobError> {
-    if !is_loopback_http(request.url()) {
-        return client
-            .http()
-            .execute(request)
-            .await
-            .map_err(PaymobError::from);
-    }
-    let cfg = client.config();
-    let local_http = HttpClient::new(HttpClientConfig {
-        connect_timeout: cfg.timeout(),
-        request_timeout: cfg.timeout(),
-        max_response_bytes: client.http().config().max_response_bytes,
-        retry: RetryPolicy {
-            max_retries: cfg.max_retries(),
-            ..RetryPolicy::default()
-        },
-        allow_insecure_http: true,
-    })?;
-    local_http.execute(request).await.map_err(PaymobError::from)
+    client.execute_request(request).await
 }
 
 pub(crate) fn decode_onboarding_json<T: DeserializeOwned>(

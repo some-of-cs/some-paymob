@@ -40,15 +40,13 @@ pub use topups::{
 pub use wallet_cashin::{MobileWalletCashinParams, PAYOUTS_DISBURSE_PATH};
 
 use reqwest::header::{AUTHORIZATION, HeaderValue};
-use secrecy::ExposeSecret;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::core::auth::accept_jwt::format_bearer_header;
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::http::{
-    HttpClient, HttpClientConfig, HttpError, HttpRequest, HttpResponse, RetryPolicy,
-};
+use crate::core::http::{HttpError, HttpRequest, HttpResponse};
 
 /// Top-level Paymob Send Payouts service handle (`paymob.payouts()`).
 #[derive(Debug, Clone, Copy)]
@@ -148,14 +146,8 @@ pub(crate) async fn resolve_payouts_bearer_header(
         .payouts_cache()
         .get_or_refresh(|| auth::acquire_or_refresh_cached_token(client))
         .await?;
-    build_bearer_header(cached.access_token.expose_secret())
-}
-
-fn build_bearer_header(token: &str) -> Result<HeaderValue, PaymobError> {
-    let mut header = HeaderValue::from_str(&format!("Bearer {token}"))
-        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-    header.set_sensitive(true);
-    Ok(header)
+    format_bearer_header(&cached.access_token)
+        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))
 }
 
 #[derive(Serialize)]
@@ -215,27 +207,7 @@ pub(crate) async fn execute_payouts_request(
     client: &PaymobClient,
     request: &HttpRequest,
 ) -> Result<HttpResponse, PaymobError> {
-    let is_loopback_http = request.url().scheme() == "http"
-        && matches!(
-            request.url().host_str(),
-            Some("127.0.0.1" | "localhost" | "[::1]")
-        );
-    if !is_loopback_http {
-        return client.http().execute(request).await.map_err(map_http_error);
-    }
-    let cfg = client.config();
-    let local_http = HttpClient::new(HttpClientConfig {
-        connect_timeout: cfg.timeout(),
-        request_timeout: cfg.timeout(),
-        max_response_bytes: client.http().config().max_response_bytes,
-        retry: RetryPolicy {
-            max_retries: cfg.max_retries(),
-            ..RetryPolicy::default()
-        },
-        allow_insecure_http: true,
-    })
-    .map_err(map_http_error)?;
-    local_http.execute(request).await.map_err(map_http_error)
+    client.execute_request(request).await
 }
 
 pub(crate) fn map_http_error(err: HttpError) -> PaymobError {

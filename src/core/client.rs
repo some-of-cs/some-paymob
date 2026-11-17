@@ -14,7 +14,7 @@ use url::Url;
 use crate::core::auth::AuthManager;
 use crate::core::config::ClientConfig;
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpClient, HttpClientConfig, RetryPolicy};
+use crate::core::http::{HttpClient, HttpClientConfig, HttpRequest, HttpResponse, RetryPolicy};
 use crate::core::region::RegionalEndpoints;
 
 /// Shared microkernel state backing [`PaymobClient`].
@@ -372,6 +372,40 @@ impl PaymobClient {
     pub const fn payouts(&self) -> crate::resources::payouts::PayoutsService<'_> {
         crate::resources::payouts::PayoutsService::new(self)
     }
+
+    /// Executes an [`HttpRequest`] through the client's resilient [`HttpClient`],
+    /// permitting plaintext `http://` only for local loopback mock servers (`127.0.0.1`,
+    /// `localhost`, or `[::1]`) while enforcing HTTPS for all remote hosts.
+    #[allow(dead_code)]
+    pub(crate) async fn execute_request(
+        &self,
+        request: &HttpRequest,
+    ) -> Result<HttpResponse, PaymobError> {
+        if !is_loopback_http(request.url()) {
+            return self
+                .http()
+                .execute(request)
+                .await
+                .map_err(PaymobError::from);
+        }
+        let cfg = self.config();
+        let local_http = HttpClient::new(HttpClientConfig {
+            connect_timeout: cfg.timeout(),
+            request_timeout: cfg.timeout(),
+            max_response_bytes: self.http().config().max_response_bytes,
+            retry: RetryPolicy {
+                max_retries: cfg.max_retries(),
+                ..RetryPolicy::default()
+            },
+            allow_insecure_http: true,
+        })?;
+        local_http.execute(request).await.map_err(PaymobError::from)
+    }
+}
+
+#[allow(dead_code)]
+fn is_loopback_http(url: &Url) -> bool {
+    url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
 }
 
 fn has_forbidden_chars_or_authority(path: &str, trimmed: &str) -> bool {
@@ -578,5 +612,18 @@ mod tests {
             url.as_str(),
             "https://stagingpayouts.paymobsolutions.com/api/secure/disburse/"
         );
+    }
+
+    #[tokio::test]
+    async fn tc_1_1_4_execute_request_rejects_remote_plaintext_http() {
+        let client = sample_client(PaymobRegion::Egypt);
+        let req = HttpRequest::get("http://evil.example.com/v1/intention/").expect("valid request");
+        assert!(matches!(
+            client.execute_request(&req).await,
+            Err(PaymobError::ValidationError {
+                field: "http_config",
+                ..
+            })
+        ));
     }
 }

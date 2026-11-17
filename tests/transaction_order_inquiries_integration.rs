@@ -247,6 +247,24 @@ async fn ac4_tc_3_2_4_tc_3_2_5_order_inquiry_and_redaction() {
     assert!(!dbg.contains("+201000000000"));
 }
 
+fn sample_transaction_json() -> serde_json::Value {
+    json!({
+        "id": 192036465,
+        "pending": false,
+        "amount_cents": 10000,
+        "success": true,
+        "currency": "EGP",
+        "created_at": "2026-11-16T10:00:00Z",
+        "order": {
+            "id": 212245716,
+            "amount_cents": 10000,
+            "currency": "EGP",
+            "merchant_order_id": "order_estatestack_2026_001",
+            "payment_status": "PAID"
+        }
+    })
+}
+
 #[tokio::test]
 async fn inquiries_evict_stale_jwt_and_retry_once_on_401_incorrect_credentials() {
     let server = MockServer::start().await;

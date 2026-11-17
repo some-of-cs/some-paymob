@@ -394,6 +394,7 @@ mod tests {
             .and(header("x-paymob-merchant-id", "987654"))
             .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
                 "id": "pi_scoped_123",
+                "intention_order_id": 987654,
                 "client_secret": "egy_csk_test_scoped",
                 "status": "intended"
             })))

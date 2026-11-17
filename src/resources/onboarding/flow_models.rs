@@ -608,14 +608,8 @@ mod tests {
             }
         ));
 
-        let err = RegisterMerchantParams::new(
-            "KeyPartner",
-            "",
-            "+201116491564",
-            "Amira",
-            "Hassan",
-        )
-        .expect_err("empty email must fail");
+        let err = RegisterMerchantParams::new("KeyPartner", "", "+201116491564", "Amira", "Hassan")
+            .expect_err("empty email must fail");
         assert!(matches!(
             err,
             PaymobError::ValidationError { field: "email", .. }

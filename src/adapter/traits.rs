@@ -177,7 +177,10 @@ impl UnifiedPaymentSessionRequest {
             });
         }
         if self.payment_methods.is_empty()
-            || self.payment_methods.iter().any(is_invalid_payment_method)
+            || self
+                .payment_methods
+                .iter()
+                .any(|m| is_invalid_payment_method(m))
         {
             return Err(PaymobError::ValidationError {
                 field: "payment_methods",
@@ -219,7 +222,7 @@ impl UnifiedPaymentSessionRequest {
     }
 }
 
-fn is_invalid_payment_method(entry: &String) -> bool {
+fn is_invalid_payment_method(entry: &str) -> bool {
     let trimmed = entry.trim();
     trimmed.is_empty() || trimmed == "0"
 }

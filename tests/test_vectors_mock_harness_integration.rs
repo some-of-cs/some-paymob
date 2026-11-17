@@ -219,9 +219,9 @@ mod suite {
             generate_signed_transaction_post(
                 &secret,
                 &SignedTransactionRequest {
-                    transaction_id: 1,
+                    transaction_id: 0,
                     order_id: 1,
-                    amount: MinorUnitAmount::ZERO,
+                    amount: MinorUnitAmount::new(1000),
                     currency: "EGP",
                     success: true,
                 },

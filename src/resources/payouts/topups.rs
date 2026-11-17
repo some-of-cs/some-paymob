@@ -180,7 +180,7 @@ impl<'a> PayoutsTopupsService<'a> {
 
 fn validate_proof_filename(raw: &str) -> Result<&str, PaymobError> {
     let trimmed = validate_clean_field("proof_filename", raw)?;
-    if trimmed.contains('/') || trimmed.contains('\') || trimmed.contains("..") {
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
         return Err(PaymobError::ValidationError {
             field: "proof_filename",
             reason: String::from("proof_filename must not contain path separators or '..'"),

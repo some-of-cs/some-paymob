@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 //! Unified gateway trait definitions and normalized request/response DTOs (`US-8.1.0` Unit 1).
 //!
-//! Provides the northbound `some-payments` trait surface ([`PaymentProvider`],
-//! [`WebhookVerifier`], [`SubscriptionProvider`], and [`PayoutProvider`]) along with
+//! Provides the northbound `some-payments` trait surface (`PaymentProvider`,
+//! `WebhookVerifier`, `SubscriptionProvider`, and `PayoutProvider`) along with
 //! zero-float (`MinorUnitAmount`), secret-redacting (`[REDACTED]`) normalized DTOs.
 
 use std::fmt;
@@ -612,7 +612,7 @@ pub trait WebhookVerifier: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`Self::Error`] if the signature is missing, malformed, or fails
+    /// Returns `Self::Error` if the signature is missing, malformed, or fails
     /// constant-time verification.
     fn verify_webhook(
         &self,

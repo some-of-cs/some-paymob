@@ -80,4 +80,13 @@ pub use crate::resources::subscriptions::*;
 
 /// Re-exports all public Paymob Send Payouts, Cashin, Inquiries, Budget, and Topup types.
 #[cfg(feature = "payouts")]
-pub use crate::resources::payouts::*;
+pub use crate::resources::payouts::{
+    AcceptBalanceTopupParams, AmanCashingDetails, BankCardCashinParams, BankTransactionType,
+    BankTransferTopupParams, BulkDisbursementItem, BulkDisbursementParams,
+    BulkDisbursementResponse, CancelAmanParams, DisburseIssuer, DisbursementResponse,
+    EgyptianPostCashinParams, InstantBankCashinParams, MAX_TOPUP_PROOF_BYTES,
+    MobileWalletCashinParams, PayoutsAuthService, PayoutsCashinService, PayoutsInquiriesService,
+    PayoutsService, PayoutsTokenResponse, PayoutsTopupsService, ReferenceInquiryParams,
+    TopupInquiryParams, TopupInquiryResponse, TopupRecord, TransactionInquiryParams,
+    TransactionInquiryResponse, UserBudgetResponse,
+};

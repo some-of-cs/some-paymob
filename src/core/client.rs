@@ -202,7 +202,7 @@ impl PaymobClient {
         &self.inner.http
     }
 
-    /// Returns a reference to the shared [`AuthManager`] token cache.
+    /// Returns a reference to the shared [`AuthManager`] holding single-flight token caches.
     #[must_use]
     pub fn auth(&self) -> &AuthManager {
         &self.inner.auth
@@ -349,7 +349,6 @@ impl PaymobClient {
     pub fn webhook_engine(&self) -> Result<crate::webhooks::PaymobWebhookEngine, PaymobError> {
         self.inner.config.webhook_engine()
     }
-
     /// Returns a [`SavedCardsService`](crate::resources::saved_cards::SavedCardsService)
     /// bound to this client for saved-card CIT/MIT and headless payments.
     #[cfg(feature = "saved-cards")]
@@ -441,6 +440,9 @@ mod tests {
         let client = sample_client(PaymobRegion::Egypt);
         let cloned = client.clone();
         assert!(client.ptr_eq(&cloned));
+        let token = crate::core::auth::CachedToken::with_default_ttl("shared-jwt", None);
+        client.auth().accept_cache().store(token);
+        assert!(cloned.auth().accept_cache().peek().is_some());
     }
 
     #[test]

@@ -11,10 +11,14 @@
 pub mod core;
 pub mod prelude;
 
-/// Paymob API resource modules and checkout builders.
+/// Paymob API resource modules, checkout builders, payment lifecycle management, inquiries, QuickLinks, splits, saved cards, and subscriptions.
 #[cfg(any(
     feature = "intentions",
     feature = "legacy-v2",
+    feature = "manage",
+    feature = "inquiries",
+    feature = "quicklinks",
+    feature = "splits",
     feature = "saved-cards",
     feature = "subscriptions"
 ))]
@@ -31,14 +35,46 @@ pub use crate::core::error::PaymobError;
 pub use crate::core::region::PaymobRegion;
 pub use crate::core::types::{Currency, MinorUnitAmount};
 
-/// Crate-root re-exports of saved-card tokenization and headless payment services.
-#[cfg(feature = "saved-cards")]
-pub use resources::saved_cards::SavedCardsService;
+/// Crate-root re-exports of the v1 Payment Intentions and Checkout services.
+#[cfg(feature = "intentions")]
+pub use crate::resources::checkout::{
+    AffordabilityWidgetConfig, AffordabilityWidgetConfigBuilder, CheckoutService, PixelConfig,
+    PixelConfigBuilder, PixelPaymentMethod,
+};
+#[cfg(feature = "intentions")]
+pub use crate::resources::intentions::{
+    BillingData, BillingDataBuilder, CreateIntentionParams, CreateIntentionParamsBuilder,
+    IntentionCustomer, IntentionItem, IntentionResponse, IntentionsService, PaymentMethodInput,
+    UpdateIntentionParams, UpdateIntentionParamsBuilder,
+};
 
-/// Crate-root re-exports of subscription plan and recurring billing services.
-#[cfg(feature = "subscriptions")]
-pub use resources::subscriptions::SubscriptionsService;
+/// Crate-root re-exports of the opt-in Legacy Accept v2 3-step checkout service and models.
+#[cfg(feature = "legacy-v2")]
+pub use crate::resources::legacy::{
+    CreateLegacyOrderParams, CreatePaymentKeyParams, LegacyBillingData, LegacyCheckoutParams,
+    LegacyCheckoutSession, LegacyOrder, LegacyOrderItem, LegacyV2Service, PaymentKeyResponse,
+};
 
 /// Crate-root re-exports of the core Paymob webhook engine, event, error, and result types.
 #[cfg(feature = "webhooks")]
 pub use webhooks::{PaymobWebhookEngine, WebhookError, WebhookEvent, WebhookResult};
+
+/// Crate-root re-export of the payment lifecycle management service (`refund`, `void`, `capture`).
+#[cfg(feature = "manage")]
+pub use resources::manage::ManageService;
+
+/// Crate-root re-export of the transaction, order, and saved card token inquiry service.
+#[cfg(feature = "inquiries")]
+pub use resources::inquiries::InquiriesService;
+
+/// Crate-root re-export of the QuickLinks payment links service (`create`, `cancel`).
+#[cfg(feature = "quicklinks")]
+pub use resources::quicklinks::QuickLinksService;
+
+/// Crate-root re-export of saved-card tokenization and headless payment services.
+#[cfg(feature = "saved-cards")]
+pub use resources::saved_cards::SavedCardsService;
+
+/// Crate-root re-export of subscription plan and recurring billing services.
+#[cfg(feature = "subscriptions")]
+pub use resources::subscriptions::SubscriptionsService;

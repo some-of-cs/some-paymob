@@ -612,15 +612,19 @@ impl UpdateSubscriptionParams {
 
     /// Returns `true` when no update fields have been populated.
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.amount_cents.is_none()
-            && self.plan_id.is_none()
-            && self.starts_at.is_none()
-            && self.ends_at.is_none()
-            && self.reminder_days.is_none()
-            && self.retrial_days.is_none()
-            && self.webhook_url.is_none()
-            && self.is_active.is_none()
+    pub fn is_empty(&self) -> bool {
+        [
+            self.amount_cents.is_none(),
+            self.plan_id.is_none(),
+            self.starts_at.is_none(),
+            self.ends_at.is_none(),
+            self.reminder_days.is_none(),
+            self.retrial_days.is_none(),
+            self.webhook_url.is_none(),
+            self.is_active.is_none(),
+        ]
+        .into_iter()
+        .all(std::convert::identity)
     }
 
     /// Validates that at least one field is set and all provided values are valid.
@@ -1041,11 +1045,17 @@ fn validate_positive_id(field: &'static str, id: u64) -> Result<(), PaymobError>
 }
 
 fn validate_optional_http_url(field: &'static str, raw: Option<&str>) -> Result<(), PaymobError> {
-    let Some(url) = raw else {
+    let Some(raw_url) = raw else {
         return Ok(());
     };
-    let trimmed = url.trim();
-    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+    let trimmed = raw_url.trim();
+    let has_control = trimmed.chars().any(char::is_control) || trimmed.chars().any(char::is_whitespace);
+    let parsed = url::Url::parse(trimmed).ok();
+    let valid = !has_control
+        && parsed
+            .as_ref()
+            .is_some_and(|u| matches!(u.scheme(), "http" | "https") && u.has_host());
+    if !valid {
         return Err(PaymobError::ValidationError {
             field,
             reason: format!("{field} must be a valid http:// or https:// URL"),

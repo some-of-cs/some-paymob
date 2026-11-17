@@ -2,7 +2,8 @@
 //! Convenience prelude re-exporting the core `some-paymob` primitives (`US-1.3.0/unit-4`).
 //!
 //! Import all essential client, configuration, credential, region, auth,
-//! HTTP transport, money, error, pagination, and webhook types with a single wildcard import:
+//! HTTP transport, money, error, pagination, intentions, checkout, legacy-v2,
+//! management, inquiries, quicklinks, and webhook types with a single wildcard import:
 //!
 //! ```
 //! use some_paymob::prelude::*;
@@ -27,12 +28,52 @@ pub use crate::core::http::{
 pub use crate::core::pagination::{PageQuery, PaginatedResponse};
 pub use crate::core::region::{PaymobRegion, RegionalEndpoints};
 pub use crate::core::types::{Currency, MinorUnitAmount, validate_prefixed_id};
-/// Re-exports all public saved-card tokenization and headless payment types.
-#[cfg(feature = "saved-cards")]
-pub use crate::resources::saved_cards::*;
-/// Re-exports all public subscription plan, lifecycle, card vault, and history types.
-#[cfg(feature = "subscriptions")]
-pub use crate::resources::subscriptions::*;
+
+/// Re-exports all public Unified Checkout, Pixel JS, and Affordability Widget types.
+#[cfg(feature = "intentions")]
+pub use crate::resources::checkout::{
+    AffordabilityWidgetConfig, AffordabilityWidgetConfigBuilder, ApplePaySettings, CheckoutService,
+    GooglePaySettings, PixelConfig, PixelConfigBuilder, PixelPaymentMethod,
+};
+
+/// Re-exports all public v1 Payment Intention request, response, and service types.
+#[cfg(feature = "intentions")]
+pub use crate::resources::intentions::{
+    BillingData, BillingDataBuilder, ConfiguredPaymentMethod, CreateIntentionParams,
+    CreateIntentionParamsBuilder, IntentionCustomer, IntentionDetail, IntentionItem,
+    IntentionPaymentKey, IntentionResponse, IntentionsService, PaymentMethodInput,
+    UpdateIntentionParams, UpdateIntentionParamsBuilder,
+};
+
+/// Re-exports all public Legacy Accept v2 3-step checkout types and helpers.
+#[cfg(feature = "legacy-v2")]
+pub use crate::resources::legacy::{
+    AuthenticatedLegacyOrderRequest, CreateLegacyOrderParams, CreatePaymentKeyParams,
+    DEFAULT_PAYMENT_KEY_EXPIRATION_SECS, LEGACY_ORDERS_PATH, LEGACY_PAYMENT_KEYS_PATH,
+    LegacyBillingData, LegacyCheckoutParams, LegacyCheckoutSession, LegacyOrder, LegacyOrderItem,
+    LegacyV2Service, PaymentKeyResponse, create_legacy_order, create_legacy_payment_key,
+};
+
 /// Re-exports all public webhook verification types, traits, and helpers.
 #[cfg(feature = "webhooks")]
 pub use crate::webhooks::*;
+
+/// Re-exports payment lifecycle management service (`refund`, `void`, `capture`).
+#[cfg(feature = "manage")]
+pub use crate::resources::manage::ManageService;
+
+/// Re-exports transaction, order, and saved card token inquiry service.
+#[cfg(feature = "inquiries")]
+pub use crate::resources::inquiries::InquiriesService;
+
+/// Re-exports QuickLinks payment links service.
+#[cfg(feature = "quicklinks")]
+pub use crate::resources::quicklinks::QuickLinksService;
+
+/// Re-exports all public saved-card tokenization and headless payment types.
+#[cfg(feature = "saved-cards")]
+pub use crate::resources::saved_cards::*;
+
+/// Re-exports all public subscription plan, lifecycle, card vault, and history types.
+#[cfg(feature = "subscriptions")]
+pub use crate::resources::subscriptions::*;

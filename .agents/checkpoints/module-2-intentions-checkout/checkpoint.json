@@ -1,0 +1,23 @@
+{
+  "module": "module-2-intentions-checkout",
+  "branch": "feat/module-2-intentions-checkout",
+  "base": "main",
+  "status": "in_progress",
+  "stories": {
+    "US-2.1.0": {
+      "branch": "feat/us-2.1.0-intention-create-update",
+      "status": "in_progress",
+      "units": 4
+    },
+    "US-2.2.0": {
+      "branch": "feat/us-2.2.0-checkout-pixel-affordability",
+      "status": "in_progress",
+      "units": 3
+    },
+    "US-2.3.0": {
+      "branch": "feat/us-2.3.0-legacy-v2-checkout",
+      "status": "in_progress",
+      "units": 3
+    }
+  }
+}

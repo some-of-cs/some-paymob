@@ -11,8 +11,10 @@
 pub mod core;
 pub mod prelude;
 
-/// Paymob resource services for payment lifecycle management, inquiries, QuickLinks, and splits.
+/// Paymob API resource modules, checkout builders, payment lifecycle management, inquiries, QuickLinks, and splits.
 #[cfg(any(
+    feature = "intentions",
+    feature = "legacy-v2",
     feature = "manage",
     feature = "inquiries",
     feature = "quicklinks",
@@ -20,7 +22,7 @@ pub mod prelude;
 ))]
 pub mod resources;
 
-/// Constant-time cryptographic webhook verification engine (Protocols A-E & Idempotency Guard).
+/// Constant-time cryptographic webhook verification engine (Protocols A–E & Idempotency Guard).
 #[cfg(feature = "webhooks")]
 pub mod webhooks;
 

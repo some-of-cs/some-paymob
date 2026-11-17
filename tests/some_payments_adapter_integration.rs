@@ -84,61 +84,33 @@ async fn ac1_and_ac3_paymob_ext_wires_into_intention_params_and_redacts_session(
     assert!(dbg.contains("[REDACTED]"));
 }
 
-#[tokio::test]
-async fn ac1_capture_refund_and_void_delegate_to_manage_service() {
+async fn start_manage_mock(
+    endpoint: &str,
+    expected_body: serde_json::Value,
+    response_body: serde_json::Value,
+) -> (MockServer, PaymobClient) {
     let server = MockServer::start().await;
-
     Mock::given(method("POST"))
-        .and(path("/api/acceptance/capture"))
-        .and(body_json(serde_json::json!({
-            "transaction_id": 1001,
-            "amount_cents": 5000
-        })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": 1002,
-            "pending": false,
-            "amount_cents": 5000,
-            "success": true,
-            "is_capture": true,
-            "is_captured": true
-        })))
+        .and(path(endpoint))
+        .and(body_json(expected_body))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
         .mount(&server)
         .await;
-
-    Mock::given(method("POST"))
-        .and(path("/api/acceptance/void_refund/refund"))
-        .and(body_json(serde_json::json!({
-            "transaction_id": 1002,
-            "amount_cents": 2500
-        })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": 1003,
-            "pending": false,
-            "amount_cents": 2500,
-            "success": true,
-            "is_refund": true,
-            "is_refunded": true
-        })))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("POST"))
-        .and(path("/api/acceptance/void_refund/void"))
-        .and(body_json(serde_json::json!({
-            "transaction_id": 1004
-        })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": 1005,
-            "pending": false,
-            "amount_cents": 5000,
-            "success": true,
-            "is_void": true,
-            "is_voided": true
-        })))
-        .mount(&server)
-        .await;
-
     let client = build_mock_client(&server.uri());
+    (server, client)
+}
+
+#[tokio::test]
+async fn ac1_capture_delegates_to_manage_service() {
+    let (_server, client) = start_manage_mock(
+        "/api/acceptance/capture",
+        serde_json::json!({ "transaction_id": 1001, "amount_cents": 5000 }),
+        serde_json::json!({
+            "id": 1002, "pending": false, "amount_cents": 5000,
+            "success": true, "is_capture": true, "is_captured": true
+        }),
+    )
+    .await;
 
     let cap = client
         .capture_payment(&UnifiedCaptureRequest::new(
@@ -150,6 +122,19 @@ async fn ac1_capture_refund_and_void_delegate_to_manage_service() {
     assert_eq!(cap.transaction_id, 1002);
     assert_eq!(cap.amount.as_u64(), 5000);
     assert!(cap.success);
+}
+
+#[tokio::test]
+async fn ac1_refund_delegates_to_manage_service() {
+    let (_server, client) = start_manage_mock(
+        "/api/acceptance/void_refund/refund",
+        serde_json::json!({ "transaction_id": 1002, "amount_cents": 2500 }),
+        serde_json::json!({
+            "id": 1003, "pending": false, "amount_cents": 2500,
+            "success": true, "is_refund": true, "is_refunded": true
+        }),
+    )
+    .await;
 
     let refund = client
         .refund_payment(&UnifiedRefundRequest::new(1002, MinorUnitAmount::new(2500)))
@@ -158,6 +143,19 @@ async fn ac1_capture_refund_and_void_delegate_to_manage_service() {
     assert_eq!(refund.refund_id, 1003);
     assert_eq!(refund.amount.as_u64(), 2500);
     assert!(refund.is_refunded);
+}
+
+#[tokio::test]
+async fn ac1_void_delegates_to_manage_service() {
+    let (_server, client) = start_manage_mock(
+        "/api/acceptance/void_refund/void",
+        serde_json::json!({ "transaction_id": 1004 }),
+        serde_json::json!({
+            "id": 1005, "pending": false, "amount_cents": 5000,
+            "success": true, "is_void": true, "is_voided": true
+        }),
+    )
+    .await;
 
     let voided = client
         .void_payment(&UnifiedVoidRequest::new(1004))

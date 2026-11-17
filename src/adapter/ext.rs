@@ -207,15 +207,12 @@ impl PaymobExt {
         &self,
         payment_token: impl Into<SecretString>,
     ) -> Result<WalletPayParams, PaymobError> {
-        match &self.headless_execution {
-            Some(HeadlessExecutionOption::MobileWallet { phone_number }) => {
-                WalletPayParams::new(payment_token, phone_number.clone())
+        self.resolve_headless_params("MobileWallet", |opt| match opt {
+            HeadlessExecutionOption::MobileWallet { phone_number } => {
+                Some(WalletPayParams::new(payment_token, phone_number.clone()))
             }
-            _ => Err(PaymobError::ValidationError {
-                field: "headless_execution",
-                reason: "MobileWallet headless option is not configured".to_owned(),
-            }),
-        }
+            HeadlessExecutionOption::Kiosk => None,
+        })
     }
 
     /// Builds [`KioskPayParams`] when [`HeadlessExecutionOption::Kiosk`] is set.
@@ -228,13 +225,25 @@ impl PaymobExt {
         &self,
         payment_token: impl Into<SecretString>,
     ) -> Result<KioskPayParams, PaymobError> {
-        match &self.headless_execution {
-            Some(HeadlessExecutionOption::Kiosk) => KioskPayParams::new(payment_token),
-            _ => Err(PaymobError::ValidationError {
-                field: "headless_execution",
-                reason: "Kiosk headless option is not configured".to_owned(),
-            }),
-        }
+        self.resolve_headless_params("Kiosk", |opt| match opt {
+            HeadlessExecutionOption::Kiosk => Some(KioskPayParams::new(payment_token)),
+            HeadlessExecutionOption::MobileWallet { .. } => None,
+        })
+    }
+
+    fn resolve_headless_params<T, F>(&self, option_name: &str, build: F) -> Result<T, PaymobError>
+    where
+        F: FnOnce(&HeadlessExecutionOption) -> Option<Result<T, PaymobError>>,
+    {
+        self.headless_execution
+            .as_ref()
+            .and_then(build)
+            .unwrap_or_else(|| {
+                Err(PaymobError::ValidationError {
+                    field: "headless_execution",
+                    reason: format!("{option_name} headless option is not configured"),
+                })
+            })
     }
 }
 

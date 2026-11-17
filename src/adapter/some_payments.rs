@@ -97,24 +97,55 @@ fn build_mit_params(req: &UnifiedSavedMethodChargeRequest) -> Result<MitPayParam
     Ok(params)
 }
 
+fn classify_core_webhook_kind(event: &WebhookEvent) -> Option<UnifiedWebhookKind> {
+    match event {
+        WebhookEvent::TransactionProcessed(_) => Some(UnifiedWebhookKind::TransactionProcessed),
+        WebhookEvent::TransactionResponseRedirect(_) => {
+            Some(UnifiedWebhookKind::TransactionRedirect)
+        }
+        WebhookEvent::CardTokenSaved(_) => Some(UnifiedWebhookKind::CardTokenSaved),
+        _ => None,
+    }
+}
+
+fn classify_extended_webhook_kind(event: &WebhookEvent) -> UnifiedWebhookKind {
+    match event {
+        WebhookEvent::SubscriptionLifecycle(_) => UnifiedWebhookKind::SubscriptionLifecycle,
+        WebhookEvent::PayoutDisbursement(_) => UnifiedWebhookKind::PayoutDisbursement,
+        _ => UnifiedWebhookKind::PayoutTopup,
+    }
+}
+
+fn classify_webhook_kind(event: &WebhookEvent) -> UnifiedWebhookKind {
+    classify_core_webhook_kind(event).unwrap_or_else(|| classify_extended_webhook_kind(event))
+}
+
 /// Normalizes a verified [`WebhookEvent`] into a [`UnifiedWebhookOutcome`].
 #[must_use]
 pub fn normalize_webhook_event(event: &WebhookEvent) -> UnifiedWebhookOutcome {
-    let kind = match event {
-        WebhookEvent::TransactionProcessed(_) => UnifiedWebhookKind::TransactionProcessed,
-        WebhookEvent::TransactionResponseRedirect(_) => UnifiedWebhookKind::TransactionRedirect,
-        WebhookEvent::CardTokenSaved(_) => UnifiedWebhookKind::CardTokenSaved,
-        WebhookEvent::SubscriptionLifecycle(_) => UnifiedWebhookKind::SubscriptionLifecycle,
-        WebhookEvent::PayoutDisbursement(_) => UnifiedWebhookKind::PayoutDisbursement,
-        WebhookEvent::PayoutTopup(_) => UnifiedWebhookKind::PayoutTopup,
-    };
     let (idempotency_key, correlation_id) = event.idempotency_tuple();
     UnifiedWebhookOutcome {
-        kind,
+        kind: classify_webhook_kind(event),
         event_type: event.event_type(),
         idempotency_key,
         correlation_id,
     }
+}
+
+async fn run_manage_call<P, T, R, F, Fut, M>(
+    client: PaymobClient,
+    params_res: Result<P, PaymobError>,
+    op: F,
+    map_receipt: M,
+) -> Result<R, PaymobError>
+where
+    F: FnOnce(PaymobClient, P) -> Fut,
+    Fut: Future<Output = Result<T, PaymobError>>,
+    M: FnOnce(T) -> R,
+{
+    let params = params_res?;
+    let tx = op(client, params).await?;
+    Ok(map_receipt(tx))
 }
 
 impl PaymentProvider for PaymobClient {
@@ -148,54 +179,51 @@ impl PaymentProvider for PaymobClient {
         &self,
         req: &UnifiedCaptureRequest,
     ) -> impl Future<Output = Result<UnifiedCaptureReceipt, Self::Error>> + Send + '_ {
-        let params_res = CaptureParams::try_new(req.transaction_id, req.amount.as_u64());
-        let client = self.clone();
-        async move {
-            let params = params_res?;
-            let tx = client.manage().capture(params).await?;
-            Ok(UnifiedCaptureReceipt {
+        run_manage_call(
+            self.clone(),
+            CaptureParams::try_new(req.transaction_id, req.amount.as_u64()),
+            |client, params| async move { client.manage().capture(params).await },
+            |tx| UnifiedCaptureReceipt {
                 transaction_id: tx.id,
                 amount: MinorUnitAmount::new(tx.amount_cents),
                 success: tx.success,
                 pending: tx.pending,
-            })
-        }
+            },
+        )
     }
 
     fn refund_payment(
         &self,
         req: &UnifiedRefundRequest,
     ) -> impl Future<Output = Result<UnifiedRefundReceipt, Self::Error>> + Send + '_ {
-        let params_res = RefundParams::try_new(req.transaction_id, req.amount.as_u64());
-        let client = self.clone();
-        async move {
-            let params = params_res?;
-            let tx = client.manage().refund(params).await?;
-            Ok(UnifiedRefundReceipt {
+        run_manage_call(
+            self.clone(),
+            RefundParams::try_new(req.transaction_id, req.amount.as_u64()),
+            |client, params| async move { client.manage().refund(params).await },
+            |tx| UnifiedRefundReceipt {
                 refund_id: tx.id,
                 amount: MinorUnitAmount::new(tx.amount_cents),
                 success: tx.success,
                 pending: tx.pending,
                 is_refunded: tx.is_refunded,
-            })
-        }
+            },
+        )
     }
 
     fn void_payment(
         &self,
         req: &UnifiedVoidRequest,
     ) -> impl Future<Output = Result<UnifiedVoidReceipt, Self::Error>> + Send + '_ {
-        let params_res = VoidParams::try_new(req.transaction_id);
-        let client = self.clone();
-        async move {
-            let params = params_res?;
-            let tx = client.manage().void(params).await?;
-            Ok(UnifiedVoidReceipt {
+        run_manage_call(
+            self.clone(),
+            VoidParams::try_new(req.transaction_id),
+            |client, params| async move { client.manage().void(params).await },
+            |tx| UnifiedVoidReceipt {
                 transaction_id: tx.id,
                 success: tx.success,
                 is_voided: tx.is_voided,
-            })
-        }
+            },
+        )
     }
 
     fn charge_saved_method(

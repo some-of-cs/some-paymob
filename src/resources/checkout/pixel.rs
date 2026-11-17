@@ -491,7 +491,10 @@ fn validate_apple_pay(settings: &ApplePaySettings) -> Result<(), PaymobError> {
         "apple_pay.domain_verification",
         settings.domain_verification.as_deref(),
     )?;
-    validate_optional_non_empty("apple_pay.certificate_id", settings.certificate_id.as_deref())
+    validate_optional_non_empty(
+        "apple_pay.certificate_id",
+        settings.certificate_id.as_deref(),
+    )
 }
 
 fn validate_google_pay(settings: &GooglePaySettings) -> Result<(), PaymobError> {

@@ -25,11 +25,12 @@ pub use budget::{
 };
 pub use bulk::{
     BulkDisbursementItem, BulkDisbursementParams, BulkDisbursementResponse,
-    PAYOUTS_BULK_DISBURSE_PATH,
+    MAX_BULK_DISBURSEMENT_ITEMS, PAYOUTS_BULK_DISBURSE_PATH,
 };
 pub use inquiries::{
-    PAYOUTS_BULK_INQUIRE_BY_REF_PATH, PAYOUTS_BULK_INQUIRE_PATH, PAYOUTS_TX_INQUIRE_PATH,
-    ReferenceInquiryParams, TransactionInquiryParams, TransactionInquiryResponse,
+    MAX_INQUIRY_IDS, PAYOUTS_BULK_INQUIRE_BY_REF_PATH, PAYOUTS_BULK_INQUIRE_PATH,
+    PAYOUTS_TX_INQUIRE_PATH, ReferenceInquiryParams, TransactionInquiryParams,
+    TransactionInquiryResponse,
 };
 pub use models::{AmanCashingDetails, BankTransactionType, DisburseIssuer, DisbursementResponse};
 pub use topups::{
@@ -38,10 +39,11 @@ pub use topups::{
 };
 pub use wallet_cashin::{MobileWalletCashinParams, PAYOUTS_DISBURSE_PATH};
 
-use reqwest::header::HeaderValue;
+use reqwest::header::{AUTHORIZATION, HeaderValue};
 use secrecy::ExposeSecret;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
-use crate::core::auth::payouts_oauth::{PayoutsCredentials, PayoutsOAuthProvider};
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
 use crate::core::http::{
@@ -133,31 +135,20 @@ impl<'a> PayoutsInquiriesService<'a> {
 }
 
 /// Resolves a Regime 3 `Authorization: Bearer <access_token>` header using the
-/// client's Payouts cache or configured [`PayoutsCredentials`].
+/// client's Payouts cache or single-flight renewal/password acquisition via [`PayoutsAuthService`].
+///
+/// Uses [`crate::core::auth::TokenCache::get_or_refresh`] so expired or approaching-expiry
+/// tokens are renewed via `grant_type=refresh_token` (or `grant_type=password` fallback)
+/// without spawning an unconfigured `reqwest::Client`.
 pub(crate) async fn resolve_payouts_bearer_header(
     client: &PaymobClient,
 ) -> Result<HeaderValue, PaymobError> {
-    if let Some(cached) = client.auth().payouts_cache().peek() {
-        return build_bearer_header(cached.access_token.expose_secret());
-    }
-    let core_creds = client.config().payouts_credentials().ok_or_else(|| {
-        PaymobError::AuthenticationError(String::from(
-            "payouts_credentials are required for Paymob Send Payouts endpoints",
-        ))
-    })?;
-    let base_url = client.payouts_url("/")?;
-    let provider = PayoutsOAuthProvider::with_client_and_cache(
-        base_url.as_str(),
-        PayoutsCredentials::from(core_creds),
-        reqwest::Client::new(),
-        client.auth().payouts_cache_arc(),
-    )
-    .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-    let token = provider
-        .access_token()
-        .await
-        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-    build_bearer_header(token.expose_secret())
+    let cached = client
+        .auth()
+        .payouts_cache()
+        .get_or_refresh(|| auth::acquire_or_refresh_cached_token(client))
+        .await?;
+    build_bearer_header(cached.access_token.expose_secret())
 }
 
 fn build_bearer_header(token: &str) -> Result<HeaderValue, PaymobError> {
@@ -165,6 +156,59 @@ fn build_bearer_header(token: &str) -> Result<HeaderValue, PaymobError> {
         .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
     header.set_sensitive(true);
     Ok(header)
+}
+
+#[derive(Serialize)]
+struct TaggedDisburseWire<'a, T: Serialize> {
+    issuer: &'static str,
+    #[serde(flatten)]
+    inner: &'a T,
+}
+
+/// Shared Regime 3 authenticated JSON `POST` transport helper across all Payouts endpoints.
+pub(crate) async fn post_payouts_json<P, R>(
+    client: &PaymobClient,
+    endpoint_path: &str,
+    payload: &P,
+) -> Result<R, PaymobError>
+where
+    P: Serialize,
+    R: DeserializeOwned,
+{
+    let bearer = resolve_payouts_bearer_header(client).await?;
+    let url = client.payouts_url(endpoint_path)?;
+    let request = HttpRequest::post(url.as_str())
+        .map_err(map_http_error)?
+        .with_header(AUTHORIZATION, bearer)
+        .with_json(payload)
+        .map_err(map_http_error)?;
+    let response = execute_payouts_request(client, &request).await?;
+    parse_payouts_response(&response)
+}
+
+/// Shared Regime 3 authenticated `POST /api/secure/disburse/` helper tagging `issuer`.
+pub(crate) async fn post_tagged_disburse<P: Serialize>(
+    client: &PaymobClient,
+    issuer: models::DisburseIssuer,
+    params: &P,
+) -> Result<models::DisbursementResponse, PaymobError> {
+    let payload = TaggedDisburseWire {
+        issuer: issuer.as_str(),
+        inner: params,
+    };
+    post_payouts_json(client, wallet_cashin::PAYOUTS_DISBURSE_PATH, &payload).await
+}
+
+/// Shared Regime 3 authenticated `GET` transport helper returning raw [`HttpResponse`].
+pub(crate) async fn get_payouts_raw(
+    client: &PaymobClient,
+    url: &url::Url,
+) -> Result<HttpResponse, PaymobError> {
+    let bearer = resolve_payouts_bearer_header(client).await?;
+    let request = HttpRequest::get(url.as_str())
+        .map_err(map_http_error)?
+        .with_header(AUTHORIZATION, bearer);
+    execute_payouts_request(client, &request).await
 }
 
 pub(crate) async fn execute_payouts_request(
@@ -198,11 +242,54 @@ pub(crate) fn map_http_error(err: HttpError) -> PaymobError {
     PaymobError::from(err)
 }
 
-pub(crate) fn parse_payouts_response<T: serde::de::DeserializeOwned>(
+pub(crate) fn parse_payouts_response<T: DeserializeOwned>(
     response: &HttpResponse,
 ) -> Result<T, PaymobError> {
     if !response.status.is_success() {
         return Err(PaymobError::from_http_response(response));
     }
     response.json::<T>().map_err(map_http_error)
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use crate::core::auth::CachedToken;
+    use crate::core::client::PaymobClient;
+    use crate::core::config::ClientConfig;
+    use crate::core::credentials::PayoutsCredentials;
+    use crate::core::region::PaymobRegion;
+
+    pub(crate) fn seeded_payouts_client(base_url: &str, token: &str) -> PaymobClient {
+        let cfg = ClientConfig::builder()
+            .region(PaymobRegion::Custom {
+                accept_base_url: base_url.to_owned(),
+                checkout_base_url: base_url.to_owned(),
+                payouts_base_url: base_url.to_owned(),
+                payouts_staging_base_url: base_url.to_owned(),
+            })
+            .build()
+            .expect("valid test config");
+        let client = PaymobClient::new(cfg).expect("valid test client");
+        client
+            .auth()
+            .payouts_cache()
+            .store(CachedToken::with_default_ttl(token, None));
+        client
+    }
+
+    pub(crate) fn credentials_payouts_client(base_url: &str) -> PaymobClient {
+        let creds = PayoutsCredentials::new("cid_1", "csec_1", "user_1", "pass_1")
+            .expect("valid payouts creds");
+        let cfg = ClientConfig::builder()
+            .region(PaymobRegion::Custom {
+                accept_base_url: base_url.to_owned(),
+                checkout_base_url: base_url.to_owned(),
+                payouts_base_url: base_url.to_owned(),
+                payouts_staging_base_url: base_url.to_owned(),
+            })
+            .payouts_credentials(creds)
+            .build()
+            .expect("valid test config");
+        PaymobClient::new(cfg).expect("valid test client")
+    }
 }

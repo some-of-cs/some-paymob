@@ -65,9 +65,12 @@ async fn us_5_1_0_mobile_and_bank_wallet_issuers() {
     let server = MockServer::start().await;
     mount_disburse_mock(&server).await;
     let client = make_client(&server.uri());
-    client.auth().payouts_cache().store(
-        some_paymob::core::auth::CachedToken::with_default_ttl("jwt", None),
-    );
+    client
+        .auth()
+        .payouts_cache()
+        .store(some_paymob::core::auth::CachedToken::with_default_ttl(
+            "jwt", None,
+        ));
     let cashin = client.payouts().cashin();
 
     let vf = cashin
@@ -103,9 +106,12 @@ async fn us_5_1_0_bank_post_and_aman_cancel() {
         .await;
 
     let client = make_client(&server.uri());
-    client.auth().payouts_cache().store(
-        some_paymob::core::auth::CachedToken::with_default_ttl("jwt", None),
-    );
+    client
+        .auth()
+        .payouts_cache()
+        .store(some_paymob::core::auth::CachedToken::with_default_ttl(
+            "jwt", None,
+        ));
     let cashin = client.payouts().cashin();
 
     cashin

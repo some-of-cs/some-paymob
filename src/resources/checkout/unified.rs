@@ -283,9 +283,7 @@ fn validate_public_key(public_key: &PublicKey) -> Result<&str, PaymobError> {
     Ok(raw)
 }
 
-fn resolve_client_secret_if_env(
-    client_secret: &SecretString,
-) -> Result<SecretString, PaymobError> {
+fn resolve_client_secret_if_env(client_secret: &SecretString) -> Result<SecretString, PaymobError> {
     if client_secret.expose_secret().trim().starts_with('$') {
         return crate::core::credentials::resolve_secret_or_env(
             "client_secret",

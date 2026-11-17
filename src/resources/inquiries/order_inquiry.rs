@@ -204,8 +204,6 @@ impl<'a> InquiriesService<'a> {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use wiremock::matchers::{header, method, path};

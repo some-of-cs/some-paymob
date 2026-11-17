@@ -296,8 +296,8 @@ pub fn inject_secret_key_token(
         return Err(StrategyError::InvalidHeaderValue);
     }
 
-    let value =
-        format_sensitive_auth_header("Token", &resolved).ok_or(StrategyError::InvalidHeaderValue)?;
+    let value = format_sensitive_auth_header("Token", &resolved)
+        .ok_or(StrategyError::InvalidHeaderValue)?;
     headers.insert(AUTHORIZATION, value);
     Ok(())
 }

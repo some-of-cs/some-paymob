@@ -154,8 +154,6 @@ impl<'a> InquiriesService<'a> {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use secrecy::ExposeSecret;

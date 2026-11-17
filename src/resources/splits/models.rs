@@ -386,7 +386,7 @@ impl SplitPaymentConfig {
 
 fn validate_split_mode(
     amount_cents: Option<u64>,
-    percentage_bps: Option<u16>,
+    percentage_bps: Option<u32>,
 ) -> Result<(), PaymobError> {
     match (amount_cents, percentage_bps) {
         (Some(amt), None) => validate_positive_split_amount(amt),
@@ -408,7 +408,7 @@ fn validate_positive_split_amount(amount_cents: u64) -> Result<(), PaymobError> 
     Ok(())
 }
 
-fn validate_split_bps_range(bps: u16) -> Result<(), PaymobError> {
+fn validate_split_bps_range(bps: u32) -> Result<(), PaymobError> {
     if !(1..=MAX_BASIS_POINTS).contains(&bps) {
         return Err(validation_err(
             "percentage_bps",

@@ -429,20 +429,15 @@ pub fn parse_dotenv_content(content: &str, var_name: &str) -> Option<String> {
 }
 
 fn lookup_env_or_dotenv_files(var_name: &str) -> Option<String> {
-    if let Ok(val) = std::env::var(var_name)
-        && !val.trim().is_empty()
-    {
-        return Some(val);
-    }
-    for path in DEFAULT_DOTENV_PATHS {
-        if let Ok(content) = std::fs::read_to_string(path)
-            && let Some(val) = parse_dotenv_content(&content, var_name)
-            && !val.trim().is_empty()
-        {
-            return Some(val);
-        }
-    }
-    None
+    std::env::var(var_name)
+        .ok()
+        .filter(|val| !val.trim().is_empty())
+        .or_else(|| DEFAULT_DOTENV_PATHS.iter().find_map(|p| read_dotenv_var(p, var_name)))
+}
+
+fn read_dotenv_var(path: &str, var_name: &str) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    parse_dotenv_content(&content, var_name).filter(|val| !val.trim().is_empty())
 }
 
 /// Resolves a secret string or `$ENV_VARNAME` / `${ENV_VARNAME}` reference using a custom lookup closure.
@@ -1222,7 +1217,14 @@ mod tests {
 
     #[test]
     fn tc_env_secret_resolver_rejects_malformed_missing_or_empty_env_vars() {
-        for bad_syntax in ["$", "${}", "${UNCLOSED", "$123_INVALID", "$BAD-NAME", "$BAD SPACE"] {
+        for bad_syntax in [
+            "$",
+            "${}",
+            "${UNCLOSED",
+            "$123_INVALID",
+            "$BAD-NAME",
+            "$BAD SPACE",
+        ] {
             let err = resolve_secret_or_env_with("secret_key", bad_syntax, |_| {
                 Some("egy_sk_test_123".to_owned())
             })
@@ -1247,10 +1249,9 @@ mod tests {
             }
         ));
 
-        let empty_err = resolve_secret_or_env_with("hmac_secret", "$EMPTY_VAR", |_| {
-            Some("   ".to_owned())
-        })
-        .expect_err("empty resolved env var must fail");
+        let empty_err =
+            resolve_secret_or_env_with("hmac_secret", "$EMPTY_VAR", |_| Some("   ".to_owned()))
+                .expect_err("empty resolved env var must fail");
         assert!(matches!(
             empty_err,
             PaymobError::ValidationError {

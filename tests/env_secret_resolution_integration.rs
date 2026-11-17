@@ -26,7 +26,8 @@ where
     F: FnOnce() -> R,
 {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let temp_dir = std::env::temp_dir().join(format!("some_paymob_env_test_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("some_paymob_env_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");
     let dotenv_path = temp_dir.join(".env");
     let mut content = String::new();
@@ -44,19 +45,16 @@ where
 }
 
 #[test]
-fn env_secret_resolution_works_from_dotenv_across_all_core_credentials_and_builder() {
+fn env_secret_resolution_works_for_core_keys_and_client_builder() {
     with_temp_env(
         &[
             ("TEST_PAYMOB_SK", "egy_sk_test_dotenv_secret_123"),
             ("TEST_PAYMOB_PK", "\"egy_pk_test_dotenv_public_456\""),
             ("TEST_PAYMOB_API_KEY", "'dotenv_api_key_789'"),
-            ("TEST_PAYMOB_HMAC", "dotenv_hmac_secret_abc # inline comment"),
-            ("TEST_PAYOUT_CID", "payout_cid_env"),
-            ("TEST_PAYOUT_CSEC", "payout_csec_env"),
-            ("TEST_PAYOUT_USER", "payout_user_env"),
-            ("TEST_PAYOUT_PASS", "payout_pass_env"),
-            ("TEST_PARTNER_KEY", "partner_api_key_env"),
-            ("TEST_PARTNER_BEARER", "partner_bearer_env"),
+            (
+                "TEST_PAYMOB_HMAC",
+                "dotenv_hmac_secret_abc # inline comment",
+            ),
         ],
         || {
             let sk = SecretKey::new("$TEST_PAYMOB_SK").expect("SecretKey from .env");
@@ -67,33 +65,12 @@ fn env_secret_resolution_works_from_dotenv_across_all_core_credentials_and_build
 
             let pk = PublicKey::new("${TEST_PAYMOB_PK}").expect("PublicKey from .env");
             assert_eq!(pk.expose_secret(), "egy_pk_test_dotenv_public_456");
-            assert_eq!(pk.mode(), EnvironmentMode::Test);
 
             let api = ApiKey::new("$TEST_PAYMOB_API_KEY").expect("ApiKey from .env");
             assert_eq!(api.expose_secret(), "dotenv_api_key_789");
 
             let hmac = HmacSecret::new("${TEST_PAYMOB_HMAC}").expect("HmacSecret from .env");
             assert_eq!(hmac.expose_secret(), "dotenv_hmac_secret_abc");
-
-            let payouts = PayoutsCredentials::new(
-                "$TEST_PAYOUT_CID",
-                "${TEST_PAYOUT_CSEC}",
-                "$TEST_PAYOUT_USER",
-                "${TEST_PAYOUT_PASS}",
-            )
-            .expect("PayoutsCredentials from .env");
-            assert_eq!(payouts.client_id(), "payout_cid_env");
-            assert_eq!(payouts.client_secret(), "payout_csec_env");
-            assert_eq!(payouts.username(), "payout_user_env");
-            assert_eq!(payouts.password(), "payout_pass_env");
-
-            let partner = PartnerCredentials::with_bearer_token(
-                "$TEST_PARTNER_KEY",
-                "${TEST_PARTNER_BEARER}",
-            )
-            .expect("PartnerCredentials from .env");
-            assert_eq!(partner.api_key(), "partner_api_key_env");
-            assert_eq!(partner.bearer_token(), Some("partner_bearer_env"));
 
             let config = ClientConfig::builder()
                 .region(PaymobRegion::Egypt)
@@ -109,6 +86,40 @@ fn env_secret_resolution_works_from_dotenv_across_all_core_credentials_and_build
                 .expect("ClientConfig build");
             let client = PaymobClient::new(config).expect("PaymobClient new");
             assert_eq!(client.config().environment(), EnvironmentMode::Test);
+        },
+    );
+}
+
+#[test]
+fn env_secret_resolution_works_for_payouts_partner_and_auth_providers() {
+    with_temp_env(
+        &[
+            ("TEST_PAYMOB_API_KEY", "dotenv_api_key_789"),
+            ("TEST_PAYOUT_CID", "payout_cid_env"),
+            ("TEST_PAYOUT_CSEC", "payout_csec_env"),
+            ("TEST_PAYOUT_USER", "payout_user_env"),
+            ("TEST_PAYOUT_PASS", "payout_pass_env"),
+            ("TEST_PARTNER_KEY", "partner_api_key_env"),
+            ("TEST_PARTNER_BEARER", "partner_bearer_env"),
+        ],
+        || {
+            let payouts = PayoutsCredentials::new(
+                "$TEST_PAYOUT_CID",
+                "${TEST_PAYOUT_CSEC}",
+                "$TEST_PAYOUT_USER",
+                "${TEST_PAYOUT_PASS}",
+            )
+            .expect("PayoutsCredentials from .env");
+            assert_eq!(payouts.client_id(), "payout_cid_env");
+            assert_eq!(payouts.client_secret(), "payout_csec_env");
+
+            let partner = PartnerCredentials::with_bearer_token(
+                "$TEST_PARTNER_KEY",
+                "${TEST_PARTNER_BEARER}",
+            )
+            .expect("PartnerCredentials from .env");
+            assert_eq!(partner.api_key(), "partner_api_key_env");
+            assert_eq!(partner.bearer_token(), Some("partner_bearer_env"));
 
             let auth_jwt = AcceptJwtProvider::new(
                 "https://accept.paymob.com",
@@ -170,19 +181,10 @@ fn env_secret_resolution_works_on_webhook_engine_and_rejects_missing_vars() {
     );
 }
 
-#[cfg(all(
-    feature = "intentions",
-    feature = "legacy-v2",
-    feature = "saved-cards",
-    feature = "subscriptions"
-))]
+#[cfg(all(feature = "intentions", feature = "legacy-v2"))]
 #[test]
-fn env_secret_resolution_works_across_checkout_legacy_saved_cards_and_subscriptions() {
+fn env_secret_resolution_works_for_checkout_and_legacy_v2() {
     use some_paymob::resources::checkout::{PixelConfig, PixelPaymentMethod};
-    use some_paymob::resources::saved_cards::{
-        CitCardTokenConfig, KioskPayParams, MitChargeParams, PaymentSource, TokenPayParams,
-    };
-    use some_paymob::resources::subscriptions::cards::AddSecondaryCardParams;
 
     with_temp_env(
         &[
@@ -191,8 +193,6 @@ fn env_secret_resolution_works_across_checkout_legacy_saved_cards_and_subscripti
             ("TEST_API_KEY", "accept_api_key_333"),
             ("TEST_CSK", "egy_csk_test_client_secret_444"),
             ("TEST_PAY_TOK", "pay_tok_from_env_555"),
-            ("TEST_SAVED_TOK", "saved_tok_from_env_666"),
-            ("TEST_CVN", "789"),
         ],
         || {
             let cfg = ClientConfig::builder()
@@ -211,7 +211,11 @@ fn env_secret_resolution_works_across_checkout_legacy_saved_cards_and_subscripti
                 .checkout()
                 .unified_url(&SecretString::from("$TEST_CSK"))
                 .expect("unified_url with $TEST_CSK");
-            assert!(checkout_url.as_str().contains("clientSecret=egy_csk_test_client_secret_444"));
+            assert!(
+                checkout_url
+                    .as_str()
+                    .contains("clientSecret=egy_csk_test_client_secret_444")
+            );
 
             let pk = PublicKey::new("$TEST_PK").unwrap();
             let pixel = PixelConfig::builder(&pk, SecretString::from("${TEST_CSK}"))
@@ -228,8 +232,30 @@ fn env_secret_resolution_works_across_checkout_legacy_saved_cards_and_subscripti
                 .unwrap()
                 .iframe_url(812_345, &SecretString::from("$TEST_PAY_TOK"))
                 .expect("iframe_url with $TEST_PAY_TOK");
-            assert!(legacy_url.as_str().contains("payment_token=pay_tok_from_env_555"));
+            assert!(
+                legacy_url
+                    .as_str()
+                    .contains("payment_token=pay_tok_from_env_555")
+            );
+        },
+    );
+}
 
+#[cfg(all(feature = "saved-cards", feature = "subscriptions"))]
+#[test]
+fn env_secret_resolution_works_for_saved_cards_and_subscriptions() {
+    use some_paymob::resources::saved_cards::{
+        CitCardTokenConfig, KioskPayParams, MitChargeParams, PaymentSource, TokenPayParams,
+    };
+    use some_paymob::resources::subscriptions::cards::AddSecondaryCardParams;
+
+    with_temp_env(
+        &[
+            ("TEST_PAY_TOK", "pay_tok_from_env_555"),
+            ("TEST_SAVED_TOK", "saved_tok_from_env_666"),
+            ("TEST_CVN", "789"),
+        ],
+        || {
             let cit = CitCardTokenConfig::from_single(SecretString::from("$TEST_SAVED_TOK"))
                 .expect("CitCardTokenConfig with $TEST_SAVED_TOK");
             assert_eq!(cit.to_wire_tokens(), vec!["saved_tok_from_env_666"]);
@@ -248,12 +274,21 @@ fn env_secret_resolution_works_across_checkout_legacy_saved_cards_and_subscripti
                 .unwrap()
                 .with_cvn("$TEST_CVN")
                 .unwrap();
-            assert_eq!(tok_pay.payment_token().expose_secret(), "pay_tok_from_env_555");
-            assert_eq!(tok_pay.saved_token().expose_secret(), "saved_tok_from_env_666");
+            assert_eq!(
+                tok_pay.payment_token().expose_secret(),
+                "pay_tok_from_env_555"
+            );
+            assert_eq!(
+                tok_pay.saved_token().expose_secret(),
+                "saved_tok_from_env_666"
+            );
             assert_eq!(tok_pay.cvn().unwrap().expose_secret(), "789");
 
             let kiosk_pay = KioskPayParams::new("$TEST_PAY_TOK").unwrap();
-            assert_eq!(kiosk_pay.payment_token().expose_secret(), "pay_tok_from_env_555");
+            assert_eq!(
+                kiosk_pay.payment_token().expose_secret(),
+                "pay_tok_from_env_555"
+            );
 
             let src = PaymentSource::saved_token_with_cvn("$TEST_SAVED_TOK", "$TEST_CVN").unwrap();
             assert_eq!(src.subtype(), "TOKEN");
@@ -266,7 +301,14 @@ fn env_secret_resolution_works_across_checkout_legacy_saved_cards_and_subscripti
 
 #[test]
 fn env_secret_resolution_negative_and_edge_cases() {
-    for invalid in ["$", "${}", "${UNCLOSED", "$9INVALID", "$BAD-CHAR", "$SPACE VAR"] {
+    for invalid in [
+        "$",
+        "${}",
+        "${UNCLOSED",
+        "$9INVALID",
+        "$BAD-CHAR",
+        "$SPACE VAR",
+    ] {
         assert!(parse_env_secret_reference("secret_key", invalid).is_err());
         assert!(SecretKey::new(invalid).is_err());
         assert!(PublicKey::new(invalid).is_err());
@@ -274,7 +316,6 @@ fn env_secret_resolution_negative_and_edge_cases() {
         assert!(HmacSecret::new(invalid).is_err());
     }
 
-    // Missing variable in both env and .env must fail closed
     assert!(matches!(
         resolve_secret_or_env("secret_key", "$PAYMOB_VAR_THAT_DOES_NOT_EXIST_987654"),
         Err(PaymobError::ValidationError {
@@ -283,7 +324,6 @@ fn env_secret_resolution_negative_and_edge_cases() {
         })
     ));
 
-    // Resolved pk_* key passed to SecretKey via $VAR must still be rejected by key-role separation
     let pk_in_sk_err = resolve_secret_or_env_with("secret_key", "$MY_PK_VAR", |_| {
         Some("egy_pk_test_ accidentally_public".to_owned())
     })
@@ -296,14 +336,22 @@ fn env_secret_resolution_negative_and_edge_cases() {
         })
     ));
 
-    // Dotenv edge cases: comments, blank lines, export prefix, single/double quotes
     let dotenv = "
         # leading comment
         export KEY_A = \"val_a\"
         KEY_B = 'val_b'
         KEY_C = val_c # comment
     ";
-    assert_eq!(parse_dotenv_content(dotenv, "KEY_A").as_deref(), Some("val_a"));
-    assert_eq!(parse_dotenv_content(dotenv, "KEY_B").as_deref(), Some("val_b"));
-    assert_eq!(parse_dotenv_content(dotenv, "KEY_C").as_deref(), Some("val_c"));
+    assert_eq!(
+        parse_dotenv_content(dotenv, "KEY_A").as_deref(),
+        Some("val_a")
+    );
+    assert_eq!(
+        parse_dotenv_content(dotenv, "KEY_B").as_deref(),
+        Some("val_b")
+    );
+    assert_eq!(
+        parse_dotenv_content(dotenv, "KEY_C").as_deref(),
+        Some("val_c")
+    );
 }

@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::error::PaymobError;
 use crate::core::http::{HttpRequest, HttpResponse};
-use crate::resources::manage::{ManageService, execute_manage_request, map_http_error};
 use crate::resources::manage::models::Transaction;
+use crate::resources::manage::{ManageService, execute_manage_request, map_http_error};
 
 const REFUND_PATH: &str = "/api/acceptance/void_refund/refund";
 const PERMISSIBLE_REFUND_SNIPPET: &str = "maximum refund amount permissible";
@@ -189,8 +189,6 @@ fn extract_permissible_refund_message(response: &HttpResponse) -> Option<String>
     }
     None
 }
-
-
 
 #[cfg(test)]
 mod tests {

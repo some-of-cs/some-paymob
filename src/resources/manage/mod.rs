@@ -49,11 +49,10 @@ impl<'a> ManageService<'a> {
         &self,
         missing_secret_reason: &'static str,
     ) -> Result<HeaderValue, PaymobError> {
-        let secret_key = self
-            .client()
-            .config()
-            .secret_key()
-            .ok_or_else(|| PaymobError::AuthenticationError(String::from(missing_secret_reason)))?;
+        let secret_key =
+            self.client().config().secret_key().ok_or_else(|| {
+                PaymobError::AuthenticationError(String::from(missing_secret_reason))
+            })?;
         let mut headers = HeaderMap::new();
         let secret = SecretString::from(secret_key.expose_secret().to_owned());
         inject_secret_key_token(&mut headers, &secret)

@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::error::PaymobError;
 use crate::core::http::HttpRequest;
-use crate::resources::manage::{ManageService, execute_manage_request, map_http_error};
 use crate::resources::manage::models::Transaction;
+use crate::resources::manage::{ManageService, execute_manage_request, map_http_error};
 
 const VOID_PATH: &str = "/api/acceptance/void_refund/void";
 const CAPTURE_PATH: &str = "/api/acceptance/capture";
@@ -248,11 +248,7 @@ impl<'a> ManageService<'a> {
             .json::<Transaction>()
             .map_err(|err| PaymobError::TransportError(err.to_string()))
     }
-
-
 }
-
-
 
 #[cfg(test)]
 mod tests {

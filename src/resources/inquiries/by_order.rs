@@ -256,8 +256,6 @@ impl<'a> InquiriesService<'a> {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use wiremock::matchers::{body_partial_json, method, path};

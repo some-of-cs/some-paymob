@@ -77,3 +77,7 @@ pub use crate::resources::saved_cards::*;
 /// Re-exports all public subscription plan, lifecycle, card vault, and history types.
 #[cfg(feature = "subscriptions")]
 pub use crate::resources::subscriptions::*;
+
+/// Re-exports all public Paymob Send Payouts, Cashin, Inquiries, Budget, and Topup types.
+#[cfg(feature = "payouts")]
+pub use crate::resources::payouts::*;

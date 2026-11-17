@@ -20,7 +20,8 @@ pub mod prelude;
     feature = "quicklinks",
     feature = "splits",
     feature = "saved-cards",
-    feature = "subscriptions"
+    feature = "subscriptions",
+    feature = "payouts"
 ))]
 pub mod resources;
 
@@ -79,3 +80,7 @@ pub use resources::saved_cards::SavedCardsService;
 /// Crate-root re-export of subscription plan and recurring billing services.
 #[cfg(feature = "subscriptions")]
 pub use resources::subscriptions::SubscriptionsService;
+
+/// Crate-root re-export of the Paymob Send Payouts & Disbursement service.
+#[cfg(feature = "payouts")]
+pub use resources::payouts::PayoutsService;

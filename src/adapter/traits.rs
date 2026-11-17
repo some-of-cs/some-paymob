@@ -22,7 +22,7 @@ use crate::core::types::{Currency, MinorUnitAmount};
 /// use some_paymob::adapter::traits::UnifiedPaymentSessionRequest;
 /// use some_paymob::core::types::{Currency, MinorUnitAmount};
 ///
-/// let req = UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(15_000), Currency::Egp)
+/// let req = UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(15_000), Currency::EGP)
 ///     .with_payment_methods(vec!["4097558".to_owned()])
 ///     .with_special_reference("ORD-2026-001");
 /// assert_eq!(req.amount.as_u64(), 15_000);
@@ -650,7 +650,7 @@ mod tests {
 
     #[test]
     fn session_request_validates_positive_amount_and_methods() {
-        let req = UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(5_000), Currency::Egp)
+        let req = UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(5_000), Currency::EGP)
             .with_payment_methods(vec!["4097558".to_owned()])
             .with_special_reference("ORD-100")
             .with_pre_selected_plan(12);
@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn session_request_rejects_zero_amount_and_empty_methods() {
-        let zero_amt = UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(0), Currency::Egp)
+        let zero_amt = UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(0), Currency::EGP)
             .with_payment_methods(vec!["4097558".to_owned()]);
         assert!(matches!(
             zero_amt.validate(),
@@ -670,7 +670,7 @@ mod tests {
         ));
 
         let no_methods =
-            UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(100), Currency::Egp);
+            UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(100), Currency::EGP);
         assert!(matches!(
             no_methods.validate(),
             Err(PaymobError::ValidationError {
@@ -679,7 +679,7 @@ mod tests {
             })
         ));
 
-        let zero_plan = UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(100), Currency::Egp)
+        let zero_plan = UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(100), Currency::EGP)
             .with_payment_methods(vec!["4097558".to_owned()])
             .with_pre_selected_plan(0);
         assert!(matches!(
@@ -693,7 +693,7 @@ mod tests {
 
     #[test]
     fn debug_redacts_secrets_and_pii() {
-        let req = UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(1000), Currency::Egp)
+        let req = UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(1000), Currency::EGP)
             .with_payment_methods(vec!["card".to_owned()])
             .with_customer_contact("secret@example.com", "+201001234567")
             .with_customer_name("Oscar", "Arena");
@@ -736,7 +736,7 @@ mod tests {
         let valid = UnifiedPayoutRequest::new(
             "01001234567",
             MinorUnitAmount::new(25_000),
-            Currency::Egp,
+            Currency::EGP,
             "vodafone",
         );
         assert!(valid.validate().is_ok());
@@ -745,7 +745,7 @@ mod tests {
         assert!(dbg.contains("[REDACTED]"));
 
         let empty_recipient =
-            UnifiedPayoutRequest::new("   ", MinorUnitAmount::new(100), Currency::Egp, "vodafone");
+            UnifiedPayoutRequest::new("   ", MinorUnitAmount::new(100), Currency::EGP, "vodafone");
         assert!(matches!(
             empty_recipient.validate(),
             Err(PaymobError::ValidationError {

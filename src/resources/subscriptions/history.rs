@@ -377,14 +377,11 @@ impl SubscriptionHistoryService {
     ) -> Result<Vec<SubscriptionTransaction>, PaymobError> {
         validate_positive_id("sub_id", sub_id)?;
         let path = format!("/api/acceptance/subscriptions/{sub_id}/transactions");
-        let envelope: TransactionListEnvelope =
-            execute_subscription_bearer_json::<(), TransactionListEnvelope>(
-                &self.client,
-                Method::GET,
-                &path,
-                None,
-            )
-            .await?;
+        let envelope: TransactionListEnvelope = execute_subscription_bearer_json::<
+            (),
+            TransactionListEnvelope,
+        >(&self.client, Method::GET, &path, None)
+        .await?;
         Ok(envelope.into_vec())
     }
 }
@@ -537,7 +534,6 @@ fn validate_webhook_url(raw: &str) -> Result<String, PaymobError> {
     }
     Ok(trimmed.to_owned())
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -512,7 +512,6 @@ fn build_http_for_base_url(
     HttpClient::new(cfg).map_err(|err| PaymobError::TransportError(err.to_string()))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

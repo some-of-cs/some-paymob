@@ -478,7 +478,6 @@ fn validate_email(email: &str) -> Result<(), PaymobError> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

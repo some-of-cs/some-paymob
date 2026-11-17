@@ -226,11 +226,13 @@ async fn inquiries_method_aliases_and_adapter_receipt_debug_redaction() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
         .and(wiremock::matchers::path("/api/ecommerce/orders/212245716"))
-        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": 212245716,
-            "amount_cents": 50000,
-            "currency": "EGP"
-        })))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 212245716,
+                "amount_cents": 50000,
+                "currency": "EGP"
+            })),
+        )
         .mount(&server)
         .await;
 

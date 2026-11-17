@@ -473,7 +473,6 @@ fn validate_order_items(items: &[LegacyOrderItem]) -> Result<(), PaymobError> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

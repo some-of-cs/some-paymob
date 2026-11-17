@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use some_paymob::core::error::PaymobError;
 
 pub(crate) fn assert_redacted(rendered: &str, forbidden_secrets: &[&str]) {

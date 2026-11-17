@@ -219,3 +219,45 @@ async fn legacy_v2_rejects_non_loopback_http_and_shares_accept_jwt_cache() {
         .expect("should read shared accept_cache without network call");
     assert_eq!(cached_tok.expose_secret(), "shared_accept_jwt");
 }
+
+#[cfg(all(feature = "inquiries", feature = "some-payments-adapter"))]
+#[tokio::test]
+async fn inquiries_method_aliases_and_adapter_receipt_debug_redaction() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/api/ecommerce/orders/212245716"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 212245716,
+                "amount_cents": 50000,
+                "currency": "EGP"
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let client = try_custom_http_client(&server.uri()).expect("valid loopback client");
+    client
+        .auth()
+        .accept_cache()
+        .store(CachedToken::with_default_ttl("inq_jwt", None));
+
+    let order = client
+        .inquiries()
+        .order_inquiry(212_245_716)
+        .await
+        .expect("order_inquiry alias succeeds");
+    assert_eq!(order.id, 212_245_716);
+
+    let receipt = UnifiedSavedMethodChargeReceipt {
+        transaction_id: 77,
+        amount: MinorUnitAmount::new(10_000),
+        success: true,
+        pending: false,
+        redirect_url: None,
+        kiosk_bill_reference: Some("KIOSK-SECRET-8899".to_owned()),
+    };
+    let receipt_dbg = format!("{receipt:?}");
+    assert!(receipt_dbg.contains("[REDACTED]"));
+    assert!(!receipt_dbg.contains("KIOSK-SECRET-8899"));
+}

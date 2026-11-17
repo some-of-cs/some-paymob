@@ -10,6 +10,7 @@ use std::fmt;
 
 use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::core::error::PaymobError;
 use crate::core::types::MinorUnitAmount;
@@ -65,7 +66,7 @@ const REDACTED: &str = "[REDACTED]";
 ///     state: None,
 /// };
 /// ```
-#[derive(Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Zeroize, ZeroizeOnDrop)]
 pub struct BillingData {
     phone_number: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -263,7 +264,7 @@ impl fmt::Debug for BillingData {
 }
 
 /// Builder for [`BillingData`] enforcing non-empty `phone_number` at `.build()` time.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Zeroize, ZeroizeOnDrop)]
 pub struct BillingDataBuilder {
     phone_number: Option<String>,
     first_name: Option<String>,
@@ -384,27 +385,27 @@ impl BillingDataBuilder {
     ///
     /// Returns [`PaymobError::ValidationError`] if `phone_number` was omitted
     /// or contains only whitespace.
-    pub fn build(self) -> Result<BillingData, PaymobError> {
+    pub fn build(mut self) -> Result<BillingData, PaymobError> {
         let phone = require_non_empty(
-            self.phone_number,
+            self.phone_number.take(),
             "billing_data.phone_number",
             "billing_data.phone_number is required and cannot be empty",
         )?;
 
         Ok(BillingData {
             phone_number: phone,
-            first_name: self.first_name,
-            last_name: self.last_name,
-            email: self.email,
-            apartment: self.apartment,
-            floor: self.floor,
-            street: self.street,
-            building: self.building,
-            shipping_method: self.shipping_method,
-            postal_code: self.postal_code,
-            city: self.city,
-            country: self.country,
-            state: self.state,
+            first_name: self.first_name.take(),
+            last_name: self.last_name.take(),
+            email: self.email.take(),
+            apartment: self.apartment.take(),
+            floor: self.floor.take(),
+            street: self.street.take(),
+            building: self.building.take(),
+            shipping_method: self.shipping_method.take(),
+            postal_code: self.postal_code.take(),
+            city: self.city.take(),
+            country: self.country.take(),
+            state: self.state.take(),
         })
     }
 }

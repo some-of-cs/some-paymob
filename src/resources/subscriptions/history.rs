@@ -14,16 +14,14 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use reqwest::Method;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-use crate::core::client::{PaymobClient, build_bearer_json_request};
+use super::{SubscriptionsService, execute_subscription_bearer_json, validate_positive_id};
+use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::http::HttpResponse;
 use crate::core::region::is_strict_loopback_http_url;
-use crate::resources::subscriptions::SubscriptionsService;
 
 const SUBSCRIPTION_API_SOURCE: &str = "SUBSCRIPTION";
 
@@ -336,10 +334,10 @@ impl SubscriptionHistoryService {
         sub_id: u64,
         url: &str,
     ) -> Result<SubscriptionWebhookRegistration, PaymobError> {
-        validate_sub_id(sub_id)?;
+        validate_positive_id("sub_id", sub_id)?;
         let payload = RegisterWebhookParams::new(url)?;
         let path = format!("/api/acceptance/subscriptions/{sub_id}/webhook");
-        execute_regime2_json(&self.client, Method::POST, &path, Some(&payload)).await
+        execute_subscription_bearer_json(&self.client, Method::POST, &path, Some(&payload)).await
     }
 
     /// Fetches the latest deduction transaction for subscription `sub_id`
@@ -354,10 +352,15 @@ impl SubscriptionHistoryService {
         &self,
         sub_id: u64,
     ) -> Result<SubscriptionTransaction, PaymobError> {
-        validate_sub_id(sub_id)?;
+        validate_positive_id("sub_id", sub_id)?;
         let path = format!("/api/acceptance/subscriptions/{sub_id}/last-transaction");
-        execute_regime2_json::<(), SubscriptionTransaction>(&self.client, Method::GET, &path, None)
-            .await
+        execute_subscription_bearer_json::<(), SubscriptionTransaction>(
+            &self.client,
+            Method::GET,
+            &path,
+            None,
+        )
+        .await
     }
 
     /// Lists all deduction transactions for subscription `sub_id`
@@ -372,16 +375,13 @@ impl SubscriptionHistoryService {
         &self,
         sub_id: u64,
     ) -> Result<Vec<SubscriptionTransaction>, PaymobError> {
-        validate_sub_id(sub_id)?;
+        validate_positive_id("sub_id", sub_id)?;
         let path = format!("/api/acceptance/subscriptions/{sub_id}/transactions");
-        let envelope: TransactionListEnvelope =
-            execute_regime2_json::<(), TransactionListEnvelope>(
-                &self.client,
-                Method::GET,
-                &path,
-                None,
-            )
-            .await?;
+        let envelope: TransactionListEnvelope = execute_subscription_bearer_json::<
+            (),
+            TransactionListEnvelope,
+        >(&self.client, Method::GET, &path, None)
+        .await?;
         Ok(envelope.into_vec())
     }
 }
@@ -499,16 +499,6 @@ impl SubscriptionsService {
     }
 }
 
-fn validate_sub_id(sub_id: u64) -> Result<(), PaymobError> {
-    if sub_id == 0 {
-        return Err(PaymobError::ValidationError {
-            field: "sub_id",
-            reason: String::from("subscription id must be greater than zero"),
-        });
-    }
-    Ok(())
-}
-
 fn is_control_or_whitespace(b: u8) -> bool {
     b.is_ascii_control() || b.is_ascii_whitespace()
 }
@@ -543,40 +533,6 @@ fn validate_webhook_url(raw: &str) -> Result<String, PaymobError> {
         });
     }
     Ok(trimmed.to_owned())
-}
-
-async fn execute_regime2_json<Req, Resp>(
-    client: &PaymobClient,
-    method: Method,
-    path: &str,
-    body: Option<&Req>,
-) -> Result<Resp, PaymobError>
-where
-    Req: Serialize + ?Sized,
-    Resp: DeserializeOwned,
-{
-    let url = client.accept_url(path)?;
-    let response = client
-        .execute_regime2_with_retry(
-            || PaymobError::ValidationError {
-                field: "api_key",
-                reason: String::from("api_key is required for Regime 2 subscription operations"),
-            },
-            |token| build_bearer_json_request(method.clone(), url.as_str(), token, body),
-        )
-        .await?;
-    decode_regime2_response(&response)
-}
-
-fn decode_regime2_response<Resp: DeserializeOwned>(
-    response: &HttpResponse,
-) -> Result<Resp, PaymobError> {
-    if !response.status.is_success() {
-        return Err(PaymobError::from_http_response(response));
-    }
-    response
-        .json::<Resp>()
-        .map_err(|err| PaymobError::TransportError(format!("invalid JSON response: {err}")))
 }
 
 #[cfg(test)]

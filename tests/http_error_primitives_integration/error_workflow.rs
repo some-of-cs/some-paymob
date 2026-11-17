@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use reqwest::StatusCode;
 use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
 use uuid::Uuid;

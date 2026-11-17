@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Integration tests for User Story `US-7.2.0`:
 //! Card Token (Protocol C), Subscription Lifecycle (Protocol D), Payouts (Protocol E),
 //! Auto-Dispatcher (`construct_event`), and `IdempotentWebhookGuard` / `InMemoryWebhookDeduplicator`.

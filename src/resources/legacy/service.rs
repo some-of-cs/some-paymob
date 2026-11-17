@@ -17,11 +17,13 @@ use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 use zeroize::Zeroizing;
 
-use crate::core::auth::accept_jwt::{ACCEPT_AUTH_TOKENS_PATH, AcceptJwtError, AcceptJwtProvider};
+use super::map_jwt_err;
+use crate::core::auth::TokenCache;
+use crate::core::auth::accept_jwt::{ACCEPT_AUTH_TOKENS_PATH, AcceptJwtProvider};
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
 use crate::core::http::HttpClient;
-use crate::core::types::Currency;
+use crate::core::types::{Currency, validate_non_zero_u64};
 use crate::resources::legacy::orders::{
     CreateLegacyOrderParams, LEGACY_ORDERS_PATH, LegacyOrder, LegacyOrderItem, create_legacy_order,
 };
@@ -230,9 +232,9 @@ impl LegacyV2Service {
     ) -> Result<Self, PaymobError> {
         let api_key = extract_trimmed_api_key(&client)?;
         let base_url = base_url.into().trim_end_matches('/').to_owned();
+        let cache = select_accept_cache(&client, &base_url);
         let jwt_provider =
-            AcceptJwtProvider::with_cache(&base_url, api_key, client.auth().accept_cache_arc())
-                .map_err(map_jwt_err)?;
+            AcceptJwtProvider::with_cache(&base_url, api_key, cache).map_err(map_jwt_err)?;
         let http = build_http_for_base_url(&client, &base_url)?;
         Ok(Self {
             client,
@@ -431,13 +433,20 @@ impl PaymobClient {
 }
 
 fn require_nonzero(field: &'static str, value: u64) -> Result<(), PaymobError> {
-    if value == 0 {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must be greater than zero"),
-        });
+    validate_non_zero_u64(field, value, "value must be greater than zero")
+}
+
+fn select_accept_cache(client: &PaymobClient, base_url: &str) -> std::sync::Arc<TokenCache> {
+    let default_accept = client
+        .endpoints()
+        .accept_base_url
+        .as_str()
+        .trim_end_matches('/');
+    if base_url.eq_ignore_ascii_case(default_accept) {
+        client.auth().accept_cache_arc()
+    } else {
+        std::sync::Arc::new(TokenCache::default())
     }
-    Ok(())
 }
 
 fn extract_trimmed_api_key(client: &PaymobClient) -> Result<SecretString, PaymobError> {
@@ -501,26 +510,6 @@ fn build_http_for_base_url(
         .clone()
         .with_allow_insecure_http(true);
     HttpClient::new(cfg).map_err(|err| PaymobError::TransportError(err.to_string()))
-}
-
-fn map_jwt_err(err: AcceptJwtError) -> PaymobError {
-    match err {
-        AcceptJwtError::EmptyApiKey | AcceptJwtError::InvalidCredentials => {
-            PaymobError::AuthenticationError(err.to_string())
-        }
-        AcceptJwtError::InvalidBaseUrl(_) | AcceptJwtError::InvalidJsonBody => {
-            PaymobError::ValidationError {
-                field: "auth_token",
-                reason: err.to_string(),
-            }
-        }
-        AcceptJwtError::UnexpectedStatus { status, detail } => PaymobError::ApiError {
-            status,
-            message: detail,
-            code: None,
-        },
-        _ => PaymobError::TransportError(err.to_string()),
-    }
 }
 
 #[cfg(test)]

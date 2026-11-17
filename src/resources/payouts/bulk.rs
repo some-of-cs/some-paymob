@@ -24,6 +24,12 @@ pub const MAX_BULK_DISBURSEMENT_ITEMS: usize = 1_000;
 /// Single item within a [`BulkDisbursementParams`] batch.
 ///
 /// Redacts `msisdn` and `full_name` in [`fmt::Debug`].
+///
+/// # Memory Hygiene & Field Moves (`ZeroizeOnDrop`)
+///
+/// Implements [`ZeroizeOnDrop`] (`Drop`) to scrub `msisdn` and `full_name` on drop;
+/// borrow (`&item.msisdn`) or clone (`item.msisdn.clone()`) fields rather than moving
+/// fields out of an owned value (`E0509`).
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct BulkDisbursementItem {
     /// Disbursement issuer.

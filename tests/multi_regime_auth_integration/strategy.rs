@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use reqwest::{Client, Method, StatusCode};
 use secrecy::SecretString;

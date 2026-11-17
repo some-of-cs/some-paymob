@@ -30,6 +30,11 @@ pub struct CardTokenEnvelope {
 ///
 /// [`Self::token`] is stored in [`SecretString`] (`ZeroizeOnDrop`) and both
 /// `token` and `email` print `"[REDACTED]"` in `Debug` output.
+///
+/// # Memory Hygiene & Field Moves (`ZeroizeOnDrop`)
+///
+/// Implements [`ZeroizeOnDrop`] (`Drop`) to scrub `token` and `email` on drop; borrow or
+/// clone fields rather than moving fields out of an owned value (`E0509`).
 #[derive(Clone, Deserialize, ZeroizeOnDrop)]
 pub struct CardTokenObject {
     /// Paymob saved card token record identifier.
@@ -112,6 +117,16 @@ impl<'a> InquiriesService<'a> {
         validate_non_zero_u64("order_id", order_id, "order_id must be greater than zero")?;
         let body = json!({ "order_id": order_id });
         execute_inquiry_body_post(self, "/api/acceptance/order_card_tokens", &body).await
+    }
+
+    /// Ergonomic alias for [`Self::card_tokens_by_order`] (`POST /api/acceptance/order_card_tokens`).
+    ///
+    /// # Errors
+    ///
+    /// Propagates validation, authentication, API, and transport errors from
+    /// [`Self::card_tokens_by_order`].
+    pub async fn card_tokens(&self, order_id: u64) -> Result<Vec<CardTokenEnvelope>, PaymobError> {
+        self.card_tokens_by_order(order_id).await
     }
 }
 

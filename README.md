@@ -60,6 +60,7 @@ Integrating [Paymob](https://developers.paymob.com/paymob-docs) across Egypt (`E
 | `inquiries` | **Yes** | `core` | `client.inquiries()` — Transaction inquiry by ID, by `order_id` / `merchant_order_id`, full order record, and saved card tokens |
 | `quicklinks` | **Yes** | `core` | `client.quicklinks()` — Hosted payment link creation (`POST /api/ecommerce/payment-links`) and cancellation |
 | `splits` | **Yes** | `core` | `resources::splits` — Marketplace `SplitRecipientRule`, 3-card `SplitPaymentConfig`, and integer basis-point `ConvenienceFeeConfig` |
+| `transactions` | No | `manage`, `inquiries` | Convenience meta-feature enabling both payment lifecycle management (`manage`) and transaction/order inquiries (`inquiries`) |
 | `saved-cards` (`tokens`) | **Yes** | `core` | `client.saved_cards()` — CIT/MIT saved-card charges, Mobile Wallet, Kiosk aggregator, and raw `POST /api/acceptance/payments/pay` |
 | `subscriptions` | **Yes** | `core` | `client.subscriptions()` — Subscription plans CRUD, subscription lifecycle (`suspend`, `resume`, `cancel`), card vault, and `refund_last_transaction` |
 | `payouts` | **Yes** | `core` | `client.payouts()` — Paymob Send OAuth 2.0 (`auth()`), 7-issuer Instant & Bulk Cashin (`cashin()`), Inquiries & User Budget (`inquiries()`), and Topups (`topups()`) |
@@ -67,6 +68,8 @@ Integrating [Paymob](https://developers.paymob.com/paymob-docs) across Egypt (`E
 | `some-payments-adapter` (`some-payment-trait`) | No | `core`, `webhooks`, `intentions`, `manage`, `saved-cards`, `subscriptions`, `splits`, `payouts` | Implements `PaymentProvider`, `WebhookVerifier`, `SubscriptionProvider`, `PayoutProvider`, and `PaymobExt` escape hatch |
 | `test-utils` | No | `core`, `webhooks`, `wiremock` | `PaymobMockServer` (Accept & Payouts offline harness), official HMAC test vectors, and `SandboxGuard` |
 | `full` | No | All of the above | Enables every module, legacy flow, unified adapter, and test harness |
+| `rustls-tls` | **Yes** | `reqwest/rustls-tls` | Pure-Rust TLS 1.3 transport via `rustls` |
+| `native-tls` | No | `reqwest/native-tls` | Platform-native TLS backend for `reqwest` |
 
 ---
 
@@ -214,12 +217,15 @@ fn handle_paymob_webhook(
 | Service Namespace | Accessor | Endpoints & Capabilities | Official Documentation |
 | :--- | :--- | :--- | :--- |
 | **Unified Intentions & Checkout** | `client.intentions()`, `client.checkout()` | `POST /v1/intention/`, `PUT /v1/intention/`, Unified Checkout & Pixel session builders, [Affordability Widget](https://developers.paymob.com/paymob-docs/developers/checkout-experiences/affordability-widget) plans | [Create Intention](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) |
+| **Legacy Accept v2 Checkout** | `client.legacy_v2()`, `client.legacy()` | Opt-in 3-step checkout (`POST /api/auth/tokens` -> `POST /api/ecommerce/orders` -> `POST /api/acceptance/payment_keys` -> `iframe_url`) | [Paymob Accept APIs](https://developers.paymob.com/paymob-docs/integration-paths/apis) |
 | **Payment Lifecycle Management** | `client.manage()` | `POST /api/acceptance/void_refund/refund`, `POST /api/acceptance/void_refund/void`, `POST /api/acceptance/capture` | [Paymob Egypt Hub](https://developers.paymob.com/hub/egypt) |
 | **Inquiries & QuickLinks** | `client.inquiries()`, `client.quicklinks()` | `GET /api/acceptance/transactions/{id}`, `POST /api/ecommerce/orders/transaction_inquiry`, `GET /api/ecommerce/orders/{id}`, `POST /api/acceptance/order_card_tokens`, `POST /api/ecommerce/payment-links` | [Transaction Inquiries](https://developers.paymob.com/hub/egypt) |
-| **Saved Cards & CIT/MIT** | `client.saved_cards()` | `POST /api/acceptance/payments/pay` (`TOKEN`, `WALLET`, `AGGREGATOR` Kiosk, raw `source`) and `use_cvc_with_moto` validation | [HMAC Card Token Callback](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-for-card-tokens) |
+| **Marketplace Splits & Convenience Fees** | `some_paymob::resources::splits` | `SplitRecipientRule` (`amount_cents` XOR `percentage_bps`), 3-card `SplitPaymentConfig`, and basis-point `ConvenienceFeeConfig` | [Split Features](https://developers.paymob.com/paymob-docs/payments-and-features/core-features/split-features) |
+| **Saved Cards & CIT/MIT** | `client.saved_cards()`, `client.tokens()` | `POST /api/acceptance/payments/pay` (`TOKEN`, `WALLET`, `AGGREGATOR` Kiosk, raw `source`) and `use_cvc_with_moto` validation | [HMAC Card Token Callback](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-for-card-tokens) |
 | **Subscriptions** | `client.subscriptions()` | Subscription plans CRUD, subscription lifecycle (`suspend`, `resume`, `cancel`), card vault, transaction history, and `refund_last_transaction` | [Subscription Callbacks](https://developers.paymob.com/paymob-docs/developers/subscription/hmac-calculation-for-subscription-callback) |
 | **Paymob Send (Payouts)** | `client.payouts()` | OAuth 2.0 (`POST /api/secure/o/token/`), 7-issuer Instant Cashin (`POST /api/secure/disburse/`), Aman Cancel, Bulk Disbursement, Budget/Tx/Topup Inquiries, Topup Requests | [Payouts Overview](https://developers.paymob.com/paymob-docs/beyond-payments/payouts) |
-| **Partner Onboarding** | `client.onboarding()` | Partner Login, Partner API Key creation, Retrieve Partner HMAC Secret, Register Merchant, Onboarding Schema, Step Submission, `MerchantScopedClient` | [Partner Onboarding APIs](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) |
+| **Partner Onboarding** | `client.onboarding()`, `client.with_merchant(mid)` | Partner Login, Partner API Key creation, Retrieve Partner & Merchant HMAC Secret (`GET /api/partner/merchants/hmac_secret/{mid}`), Register Merchant, Onboarding Schema, Step Submission, `MerchantScopedClient` | [Partner Onboarding APIs](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) |
+| **Unified Adapter & Test Harness** | `adapter`, `test_utils` | `PaymentProvider`, `WebhookVerifier`, `SubscriptionProvider`, `PayoutProvider`, `PaymobExt`, `PaymobMockServer`, and `SandboxGuard` | [Paymob Docs](https://developers.paymob.com/paymob-docs) |
 | **Webhook HMAC Engine** | `client.webhooks()` | Constant-time `HMAC-SHA512` verification for Protocols A–E and `IdempotentWebhookGuard` | [Webhook & HMAC Overview](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/overview) |
 
 ---

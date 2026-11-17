@@ -23,6 +23,11 @@ pub const PAYOUTS_DISBURSE_PATH: &str = "/api/secure/disburse/";
 ///
 /// Redacts `msisdn` in [`fmt::Debug`].
 ///
+/// # Memory Hygiene & Field Moves (`ZeroizeOnDrop`)
+///
+/// Implements [`ZeroizeOnDrop`] (`Drop`) to scrub `msisdn` on drop; borrow (`&params.msisdn`)
+/// or clone (`params.msisdn.clone()`) fields rather than moving fields out of an owned value (`E0509`).
+///
 /// # Examples
 ///
 /// ```

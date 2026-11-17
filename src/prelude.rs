@@ -15,7 +15,7 @@
 
 pub use crate::core::auth::AuthManager;
 pub use crate::core::auth::cache::CachedToken;
-pub use crate::core::auth::strategy::AuthStrategy;
+pub use crate::core::auth::strategy::{AuthStrategy, EndpointAuthSpec, EndpointSpec};
 pub use crate::core::client::PaymobClient;
 pub use crate::core::config::{ClientConfig, ClientConfigBuilder};
 pub use crate::core::credentials::{

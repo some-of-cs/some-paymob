@@ -106,12 +106,13 @@ pub use resources::saved_cards::{
 pub use resources::subscriptions::{
     AddSecondaryCardParams, ChangePrimaryCardParams, CreateSubscriptionParams,
     CreateSubscriptionPlanParams, CreateSubscriptionPlanParamsBuilder, DeleteSecondaryCardResponse,
-    PlanFrequency, PlanType, RegisterWebhookParams, Subscription, SubscriptionCardsService,
-    SubscriptionEnrollmentResponse, SubscriptionHistoryService, SubscriptionLastTransaction,
-    SubscriptionListFilter, SubscriptionPlan, SubscriptionPlansService, SubscriptionRefundRequest,
-    SubscriptionRefundResponse, SubscriptionState, SubscriptionTransaction,
-    SubscriptionWebhookRegistration, SubscriptionsService, UpdateSubscriptionParams,
-    UpdateSubscriptionPlanParams, UpdateSubscriptionPlanParamsBuilder, prepare_refund_payload,
+    PlanFrequency, PlanType, RegisterWebhookParams, Subscription, SubscriptionCard,
+    SubscriptionCardsService, SubscriptionEnrollmentResponse, SubscriptionHistoryService,
+    SubscriptionLastTransaction, SubscriptionListFilter, SubscriptionPlan,
+    SubscriptionPlansService, SubscriptionRefundRequest, SubscriptionRefundResponse,
+    SubscriptionState, SubscriptionTransaction, SubscriptionWebhookRegistration,
+    SubscriptionsService, UpdateSubscriptionParams, UpdateSubscriptionPlanParams,
+    UpdateSubscriptionPlanParamsBuilder, prepare_refund_payload,
 };
 
 /// Crate-root re-exports of the Paymob Send Payouts, Cashin, Inquiries, Budget, and Topup services and models.

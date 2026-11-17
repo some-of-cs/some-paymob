@@ -33,7 +33,8 @@ pub use payouts_oauth::{
     PayoutsOAuthProvider, format_basic_auth_header,
 };
 pub use strategy::{
-    AuthRegime, AuthStrategy, EndpointAuthSpec, StrategyError, inject_secret_key_token,
+    AuthRegime, AuthStrategy, EndpointAuthSpec, EndpointSpec, StrategyError,
+    inject_secret_key_token,
 };
 
 const DEFAULT_AUTH_HTTP_TIMEOUT_SECS: u64 = 30;

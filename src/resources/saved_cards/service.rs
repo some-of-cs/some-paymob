@@ -356,14 +356,27 @@ impl fmt::Debug for HeadlessTransaction {
 /// assert_eq!(parsed.transaction.id, 98765);
 /// assert_eq!(parsed.kiosk_bill_reference.as_deref(), Some("44556677"));
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HeadlessPayResponse {
     /// Parsed transaction details from the gateway response.
     pub transaction: HeadlessTransaction,
     /// Optional redirect URL for Mobile Wallet or 3DS challenges.
     pub redirect_url: Option<String>,
-    /// Optional offline Kiosk bill reference number (e.g., Fawry/Aman).
+    /// Optional offline Kiosk bill reference number (e.g., Fawry/Aman; redacted in `Debug`).
     pub kiosk_bill_reference: Option<String>,
+}
+
+impl fmt::Debug for HeadlessPayResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HeadlessPayResponse")
+            .field("transaction", &self.transaction)
+            .field("redirect_url", &self.redirect_url)
+            .field(
+                "kiosk_bill_reference",
+                &self.kiosk_bill_reference.as_ref().map(|_| REDACTED),
+            )
+            .finish()
+    }
 }
 
 impl HeadlessPayResponse {

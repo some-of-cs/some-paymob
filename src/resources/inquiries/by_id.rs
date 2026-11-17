@@ -45,6 +45,12 @@ impl fmt::Debug for TransactionOrder {
 }
 
 /// Payment instrument metadata attached to a [`Transaction`].
+///
+/// # Memory Hygiene & Field Moves (`ZeroizeOnDrop`)
+///
+/// This type implements [`ZeroizeOnDrop`] (providing a [`Drop`] implementation that
+/// scrubs sensitive fields from memory on drop). Borrow (`&source.pan`) or clone
+/// (`source.pan.clone()`) fields rather than moving fields out of an owned instance (`E0509`).
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct TransactionSourceData {
     /// Payment instrument type (for example, `"card"`, `"wallet"`, `"kiosk"`).

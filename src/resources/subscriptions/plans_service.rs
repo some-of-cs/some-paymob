@@ -16,7 +16,6 @@ use crate::core::client::{PaymobClient, build_bearer_json_request};
 use crate::core::error::PaymobError;
 #[cfg(test)]
 use crate::core::http::HttpClient;
-use crate::core::http::HttpResponse;
 use crate::core::pagination::PaginatedResponse;
 
 const SUBSCRIPTION_PLANS_PATH: &str = "/api/acceptance/subscription-plans";
@@ -185,18 +184,12 @@ impl SubscriptionPlansService {
                 |token| build_bearer_json_request(method.clone(), url.as_str(), token, body),
             )
             .await?;
-        parse_json_response(&response)
+        super::decode_subscription_response(response)
     }
 }
 
 fn validate_plan_id(plan_id: u64) -> Result<(), PaymobError> {
-    if plan_id == 0 {
-        return Err(PaymobError::ValidationError {
-            field: "plan_id",
-            reason: "subscription plan id must be greater than zero".to_owned(),
-        });
-    }
-    Ok(())
+    super::validate_positive_id("plan_id", plan_id)
 }
 
 fn validate_page(page: Option<u32>) -> Result<(), PaymobError> {
@@ -214,15 +207,6 @@ fn list_path(page: Option<u32>) -> String {
         Some(n) => format!("{SUBSCRIPTION_PLANS_PATH}?page={n}"),
         None => SUBSCRIPTION_PLANS_PATH.to_owned(),
     }
-}
-
-fn parse_json_response<T: DeserializeOwned>(response: &HttpResponse) -> Result<T, PaymobError> {
-    if !response.status.is_success() {
-        return Err(PaymobError::from_http_response(response));
-    }
-    response
-        .json::<T>()
-        .map_err(|err| PaymobError::TransportError(format!("invalid JSON response: {err}")))
 }
 
 #[cfg(test)]

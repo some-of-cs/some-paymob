@@ -14,3 +14,26 @@ pub use payment_keys::{
     LegacyBillingData, PaymentKeyResponse, create_legacy_payment_key,
 };
 pub use service::{LegacyCheckoutParams, LegacyCheckoutSession, LegacyV2Service};
+
+use crate::core::auth::accept_jwt::AcceptJwtError;
+use crate::core::error::PaymobError;
+
+pub(crate) fn map_jwt_err(err: AcceptJwtError) -> PaymobError {
+    match err {
+        AcceptJwtError::EmptyApiKey | AcceptJwtError::InvalidCredentials => {
+            PaymobError::AuthenticationError(err.to_string())
+        }
+        AcceptJwtError::InvalidBaseUrl(_) | AcceptJwtError::InvalidJsonBody => {
+            PaymobError::ValidationError {
+                field: "auth_token",
+                reason: err.to_string(),
+            }
+        }
+        AcceptJwtError::UnexpectedStatus { status, detail } => PaymobError::ApiError {
+            status,
+            message: detail,
+            code: None,
+        },
+        _ => PaymobError::TransportError(err.to_string()),
+    }
+}

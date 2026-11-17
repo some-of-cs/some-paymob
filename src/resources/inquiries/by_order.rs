@@ -230,6 +230,19 @@ impl<'a> InquiriesService<'a> {
         })?;
         execute_inquiry_body_post(self, "/api/ecommerce/orders/transaction_inquiry", &body).await
     }
+
+    /// Ergonomic alias for [`Self::by_order_or_reference`] (`POST /api/ecommerce/orders/transaction_inquiry`).
+    ///
+    /// # Errors
+    ///
+    /// Propagates validation, authentication, API, and transport errors from
+    /// [`Self::by_order_or_reference`].
+    pub async fn by_order(
+        &self,
+        params: TransactionInquiryParams,
+    ) -> Result<InquiredTransaction, PaymobError> {
+        self.by_order_or_reference(params).await
+    }
 }
 
 #[cfg(test)]

@@ -20,67 +20,7 @@ use crate::core::types::serialize_secret_string;
 
 const SUBSCRIPTIONS_BASE_PATH: &str = "/api/acceptance/subscriptions";
 
-/// Saved card record associated with a Paymob subscription (`US-4.3.0`).
-///
-/// The underlying card `token` is wrapped in [`SecretString`] and redacted
-/// as `"[REDACTED]"` in [`fmt::Debug`] output to prevent credential leakage.
-///
-/// # Examples
-///
-/// ```rust
-/// use some_paymob::resources::subscriptions::cards::SubscriptionCard;
-///
-/// let payload = serde_json::json!({
-///     "id": 374,
-///     "card_data": "Visa",
-///     "token": "tok_live_secret_card_value",
-///     "created_at": "2026-11-16T10:00:00Z",
-///     "is_primary": true,
-///     "masked_pan": "xxxx-xxxx-xxxx-2346",
-///     "failed_attempts": 0
-/// });
-/// let card: SubscriptionCard = serde_json::from_value(payload).unwrap();
-/// assert_eq!(card.id, 374);
-/// assert!(card.is_primary);
-/// assert!(format!("{card:?}").contains("[REDACTED]"));
-/// assert!(!format!("{card:?}").contains("tok_live_secret_card_value"));
-/// ```
-#[derive(Clone, Deserialize, ZeroizeOnDrop)]
-pub struct SubscriptionCard {
-    /// Unique identifier of the card record on the subscription.
-    #[zeroize(skip)]
-    pub id: u64,
-    /// Optional card scheme or metadata descriptor returned by Paymob.
-    #[serde(default)]
-    pub card_data: Option<String>,
-    /// Sensitive saved-card token (automatically zeroized and redacted).
-    pub token: SecretString,
-    /// ISO-8601 creation timestamp of the subscription card record.
-    pub created_at: String,
-    /// Whether this card is currently the primary recurring billing card.
-    #[zeroize(skip)]
-    pub is_primary: bool,
-    /// Masked Primary Account Number (e.g., `xxxx-xxxx-xxxx-2346`).
-    pub masked_pan: String,
-    /// Number of consecutive failed recurring deduction attempts on this card.
-    #[serde(default)]
-    #[zeroize(skip)]
-    pub failed_attempts: u32,
-}
-
-impl fmt::Debug for SubscriptionCard {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SubscriptionCard")
-            .field("id", &self.id)
-            .field("card_data", &self.card_data)
-            .field("token", &"[REDACTED]")
-            .field("created_at", &self.created_at)
-            .field("is_primary", &self.is_primary)
-            .field("masked_pan", &self.masked_pan)
-            .field("failed_attempts", &self.failed_attempts)
-            .finish()
-    }
-}
+pub use super::models::SubscriptionCard;
 
 /// Request payload for `POST /api/acceptance/subscriptions/{id}/change-primary-card`.
 ///

@@ -272,7 +272,7 @@ async fn fetch_last_transaction(
             |token| build_bearer_json_request::<()>(Method::GET, url.as_str(), token, None),
         )
         .await?;
-    parse_json_or_error(response)
+    super::decode_subscription_response(response)
 }
 
 async fn dispatch_refund(
@@ -288,18 +288,7 @@ async fn dispatch_refund(
         .with_json(payload)
         .map_err(|err| PaymobError::TransportError(err.to_string()))?;
     let response = client.execute_request(&request).await?;
-    parse_json_or_error(response)
-}
-
-fn parse_json_or_error<T: serde::de::DeserializeOwned>(
-    response: crate::core::http::HttpResponse,
-) -> Result<T, PaymobError> {
-    if !response.status.is_success() {
-        return Err(PaymobError::from_http_response(&response));
-    }
-    response
-        .json::<T>()
-        .map_err(|err| PaymobError::TransportError(err.to_string()))
+    super::decode_subscription_response(response)
 }
 
 #[cfg(test)]

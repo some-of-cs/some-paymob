@@ -364,6 +364,14 @@ impl PaymobClient {
     pub fn subscriptions(&self) -> crate::resources::subscriptions::SubscriptionsService {
         crate::resources::subscriptions::SubscriptionsService::new(self.clone())
     }
+
+    /// Returns a [`PayoutsService`](crate::resources::payouts::PayoutsService)
+    /// bound to this client for Paymob Send Payouts OAuth2, Cashin, Inquiries, Budget, and Topups.
+    #[cfg(feature = "payouts")]
+    #[must_use]
+    pub const fn payouts(&self) -> crate::resources::payouts::PayoutsService<'_> {
+        crate::resources::payouts::PayoutsService::new(self)
+    }
 }
 
 fn has_forbidden_chars_or_authority(path: &str, trimmed: &str) -> bool {

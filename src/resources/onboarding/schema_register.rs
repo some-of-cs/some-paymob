@@ -39,11 +39,7 @@ fn partner_api_key_header(client: &PaymobClient) -> Result<(HeaderName, HeaderVa
 
 /// Returns `true` when `url` targets a local loopback HTTP mock server.
 fn is_loopback_http(url: &Url) -> bool {
-    url.scheme() == "http"
-        && matches!(
-            url.host_str(),
-            Some("127.0.0.1" | "localhost" | "[::1]")
-        )
+    url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
 }
 
 /// Executes an onboarding HTTP request, allowing loopback HTTP for `wiremock` tests.
@@ -52,7 +48,11 @@ async fn execute_onboarding_request(
     request: &HttpRequest,
 ) -> Result<HttpResponse, PaymobError> {
     if !is_loopback_http(request.url()) {
-        return client.http().execute(request).await.map_err(PaymobError::from);
+        return client
+            .http()
+            .execute(request)
+            .await
+            .map_err(PaymobError::from);
     }
     let cfg = client.config();
     let local_http = HttpClient::new(HttpClientConfig {

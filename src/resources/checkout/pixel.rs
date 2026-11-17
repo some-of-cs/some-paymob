@@ -26,6 +26,7 @@ pub enum PixelPaymentMethod {
     /// Apple Pay express checkout button.
     ApplePay,
     /// Google Pay express checkout button.
+    GooglePay,
 }
 
 /// Apple Pay domain verification and merchant certificate settings for Pixel JS.

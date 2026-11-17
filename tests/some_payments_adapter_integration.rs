@@ -10,8 +10,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use some_paymob::adapter::{
     HeadlessExecutionOption, PaymentProvider, PaymobExt, PayoutProvider, ProviderExt,
     UnifiedCaptureRequest, UnifiedPaymentSessionRequest, UnifiedPayoutRequest,
-    UnifiedRefundRequest, UnifiedSavedMethodChargeRequest, UnifiedVoidRequest,
-    UnifiedWebhookInput, WebhookVerifier,
+    UnifiedRefundRequest, UnifiedSavedMethodChargeRequest, UnifiedVoidRequest, UnifiedWebhookInput,
+    WebhookVerifier,
 };
 use some_paymob::core::client::PaymobClient;
 use some_paymob::core::config::ClientConfig;
@@ -148,7 +148,10 @@ async fn ac1_capture_refund_and_void_delegate_to_manage_service() {
     let client = build_mock_client(&server.uri());
 
     let cap = client
-        .capture_payment(&UnifiedCaptureRequest::new(1001, MinorUnitAmount::new(5000)))
+        .capture_payment(&UnifiedCaptureRequest::new(
+            1001,
+            MinorUnitAmount::new(5000),
+        ))
         .await
         .expect("capture");
     assert_eq!(cap.transaction_id, 1002);

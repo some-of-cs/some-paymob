@@ -432,7 +432,11 @@ fn lookup_env_or_dotenv_files(var_name: &str) -> Option<String> {
     std::env::var(var_name)
         .ok()
         .filter(|val| !val.trim().is_empty())
-        .or_else(|| DEFAULT_DOTENV_PATHS.iter().find_map(|p| read_dotenv_var(p, var_name)))
+        .or_else(|| {
+            DEFAULT_DOTENV_PATHS
+                .iter()
+                .find_map(|p| read_dotenv_var(p, var_name))
+        })
 }
 
 fn read_dotenv_var(path: &str, var_name: &str) -> Option<String> {

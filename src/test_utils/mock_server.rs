@@ -39,11 +39,11 @@ struct FailThenOkResponder {
 
 impl Respond for FailThenOkResponder {
     fn respond(&self, _request: &Request) -> ResponseTemplate {
-        let prev =
-            self.remaining_failures
-                .try_update(Ordering::SeqCst, Ordering::SeqCst, |curr| {
-                    curr.checked_sub(1)
-                });
+        let prev = self
+            .remaining_failures
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |curr| {
+                curr.checked_sub(1)
+            });
         if prev.is_ok() {
             let mut resp =
                 ResponseTemplate::new(self.failure_status).set_body_json(self.failure_body.clone());

@@ -363,7 +363,8 @@ impl PaymobMockServer {
         let route = MockRoute::new(MockHost::Accept, config.http_method, config.endpoint_path);
         let body = json!({ "detail": "incorrect credentials" });
         let failure = FailureResponse::new(401, body, config.fail_count, None);
-        self.mount_fail_then_ok(route, failure, config.ok_body).await;
+        self.mount_fail_then_ok(route, failure, config.ok_body)
+            .await;
     }
 
     /// Mounts a Payouts endpoint that returns `429 Too Many Requests` with
@@ -399,7 +400,8 @@ impl PaymobMockServer {
             "status_code": config.status_code
         });
         let failure = FailureResponse::new(429, body, config.fail_count, config.retry_after_secs);
-        self.mount_fail_then_ok(route, failure, config.ok_body).await;
+        self.mount_fail_then_ok(route, failure, config.ok_body)
+            .await;
     }
 
     /// Mounts a static JSON response on either the Accept or Payouts mock host.

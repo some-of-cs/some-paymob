@@ -39,11 +39,11 @@ struct FailThenOkResponder {
 
 impl Respond for FailThenOkResponder {
     fn respond(&self, _request: &Request) -> ResponseTemplate {
-        let prev = self
-            .remaining_failures
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |curr| {
-                curr.checked_sub(1)
-            });
+        let prev =
+            self.remaining_failures
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |curr| {
+                    curr.checked_sub(1)
+                });
         if prev.is_ok() {
             let mut resp =
                 ResponseTemplate::new(self.failure_status).set_body_json(self.failure_body.clone());
@@ -464,16 +464,16 @@ mod tests {
         let region = server.custom_region();
         let eps = region.endpoints().expect("valid custom region");
         assert_eq!(eps.accept_base_url, server.accept_uri());
-        assert_eq!(eps.payouts_base_url.as_deref(), Some(server.payouts_uri().as_str()));
+        assert_eq!(
+            eps.payouts_base_url.as_deref(),
+            Some(server.payouts_uri().as_str())
+        );
 
         let creds = PayoutsCredentials::new("client_id", "client_secret", "user", "pass")
             .expect("valid creds");
-        let oauth = PayoutsOAuthProvider::new(
-            server.payouts_uri(),
-            creds,
-            Duration::from_secs(3600),
-        )
-        .expect("valid oauth provider");
+        let oauth =
+            PayoutsOAuthProvider::new(server.payouts_uri(), creds, Duration::from_secs(3600))
+                .expect("valid oauth provider");
         let tok = oauth.access_token().await.expect("oauth token");
         assert_eq!(tok.expose_secret(), "oauth-acc-1");
     }

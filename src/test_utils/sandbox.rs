@@ -148,7 +148,10 @@ pub struct SignedSubscriptionRequest<'a> {
 impl SignedSubscriptionRequest<'_> {
     fn validate(&self) -> WebhookResult<()> {
         validate_required_fields(&[
-            ("paymob_request_id", self.paymob_request_id.trim().is_empty()),
+            (
+                "paymob_request_id",
+                self.paymob_request_id.trim().is_empty(),
+            ),
             ("subscription_id", self.subscription_id == 0),
             ("trigger_type", self.trigger_type.trim().is_empty()),
             ("amount_cents", self.amount.is_zero()),
@@ -574,8 +577,7 @@ mod tests {
     #[test]
     fn tc_8_2_3_signed_webhook_tool_payloads_verify_roundtrip() {
         let secret = SecretString::from("tool_secret_123");
-        let tx =
-            generate_signed_transaction_post(&secret, &sample_tx_req(777, "SAR")).expect("tx");
+        let tx = generate_signed_transaction_post(&secret, &sample_tx_req(777, "SAR")).expect("tx");
         let engine = PaymobWebhookEngine::new("tool_secret_123").unwrap();
         let parsed_tx = engine
             .verify_transaction_post(&tx.json_body, &tx.hmac_hex)
@@ -606,8 +608,7 @@ mod tests {
     #[test]
     fn tc_8_2_4_signed_payload_debug_redacts_body_and_hmac() {
         let secret = SecretString::from("tool_secret_123");
-        let tx =
-            generate_signed_transaction_post(&secret, &sample_tx_req(777, "EGP")).expect("tx");
+        let tx = generate_signed_transaction_post(&secret, &sample_tx_req(777, "EGP")).expect("tx");
         let rendered = format!("{tx:?}");
         assert!(rendered.contains("[REDACTED]"));
         assert!(!rendered.contains(&tx.hmac_hex));

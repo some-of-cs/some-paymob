@@ -80,13 +80,32 @@ struct MockRoute<'a> {
     endpoint_path: &'a str,
 }
 
-struct FailThenOkConfig<'a> {
-    route: MockRoute<'a>,
+impl<'a> MockRoute<'a> {
+    fn new(host: MockHost, http_method: &'a str, endpoint_path: &'a str) -> Self {
+        Self {
+            host,
+            http_method,
+            endpoint_path,
+        }
+    }
+}
+
+struct FailureResponse {
+    status: u16,
+    body: Value,
     fail_count: usize,
-    failure_status: u16,
-    failure_body: Value,
     retry_after_secs: Option<u64>,
-    ok_body: Value,
+}
+
+impl FailureResponse {
+    fn new(status: u16, body: Value, fail_count: usize, retry_after_secs: Option<u64>) -> Self {
+        Self {
+            status,
+            body,
+            fail_count,
+            retry_after_secs,
+        }
+    }
 }
 
 /// Stateful responder returning an HTTP status/body for the first `fail_count`
@@ -301,16 +320,21 @@ impl PaymobMockServer {
             .await;
     }
 
-    async fn mount_fail_then_ok(&self, cfg: FailThenOkConfig<'_>) {
+    async fn mount_fail_then_ok(
+        &self,
+        route: MockRoute<'_>,
+        failure: FailureResponse,
+        ok_body: Value,
+    ) {
         let responder = FailThenOkResponder {
             attempts: Arc::new(AtomicUsize::new(0)),
-            fail_count: cfg.fail_count,
-            failure_status: cfg.failure_status,
-            failure_body: cfg.failure_body,
-            retry_after_secs: cfg.retry_after_secs,
-            ok_body: cfg.ok_body,
+            fail_count: failure.fail_count,
+            failure_status: failure.status,
+            failure_body: failure.body,
+            retry_after_secs: failure.retry_after_secs,
+            ok_body,
         };
-        self.mount_responder(cfg.route, responder).await;
+        self.mount_responder(route, responder).await;
     }
 
     /// Mounts an Accept endpoint that returns `401 {"detail": "incorrect credentials"}`
@@ -336,19 +360,10 @@ impl PaymobMockServer {
     /// # }
     /// ```
     pub async fn mount_jwt_expiry_then_ok(&self, config: JwtExpiryMockConfig<'_>) {
-        self.mount_fail_then_ok(FailThenOkConfig {
-            route: MockRoute {
-                host: MockHost::Accept,
-                http_method: config.http_method,
-                endpoint_path: config.endpoint_path,
-            },
-            fail_count: config.fail_count,
-            failure_status: 401,
-            failure_body: json!({ "detail": "incorrect credentials" }),
-            retry_after_secs: None,
-            ok_body: config.ok_body,
-        })
-        .await;
+        let route = MockRoute::new(MockHost::Accept, config.http_method, config.endpoint_path);
+        let body = json!({ "detail": "incorrect credentials" });
+        let failure = FailureResponse::new(401, body, config.fail_count, None);
+        self.mount_fail_then_ok(route, failure, config.ok_body).await;
     }
 
     /// Mounts a Payouts endpoint that returns `429 Too Many Requests` with
@@ -378,22 +393,13 @@ impl PaymobMockServer {
     /// # }
     /// ```
     pub async fn mount_payouts_429_then_ok(&self, config: PayoutsRateLimitMockConfig<'_>) {
-        self.mount_fail_then_ok(FailThenOkConfig {
-            route: MockRoute {
-                host: MockHost::Payouts,
-                http_method: config.http_method,
-                endpoint_path: config.endpoint_path,
-            },
-            fail_count: config.fail_count,
-            failure_status: 429,
-            failure_body: json!({
-                "status_description": config.status_description,
-                "status_code": config.status_code
-            }),
-            retry_after_secs: config.retry_after_secs,
-            ok_body: config.ok_body,
-        })
-        .await;
+        let route = MockRoute::new(MockHost::Payouts, config.http_method, config.endpoint_path);
+        let body = json!({
+            "status_description": config.status_description,
+            "status_code": config.status_code
+        });
+        let failure = FailureResponse::new(429, body, config.fail_count, config.retry_after_secs);
+        self.mount_fail_then_ok(route, failure, config.ok_body).await;
     }
 
     /// Mounts a static JSON response on either the Accept or Payouts mock host.

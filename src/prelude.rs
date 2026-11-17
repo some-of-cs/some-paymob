@@ -27,6 +27,19 @@ pub use crate::core::http::{
 pub use crate::core::pagination::{PageQuery, PaginatedResponse};
 pub use crate::core::region::{PaymobRegion, RegionalEndpoints};
 pub use crate::core::types::{Currency, MinorUnitAmount, validate_prefixed_id};
+
 /// Re-exports all public webhook verification types, traits, and helpers.
 #[cfg(feature = "webhooks")]
 pub use crate::webhooks::*;
+
+/// Re-exports payment lifecycle management service (`refund`, `void`, `capture`).
+#[cfg(feature = "manage")]
+pub use crate::resources::manage::ManageService;
+
+/// Re-exports transaction, order, and saved card token inquiry service.
+#[cfg(feature = "inquiries")]
+pub use crate::resources::inquiries::InquiriesService;
+
+/// Re-exports QuickLinks payment links service.
+#[cfg(feature = "quicklinks")]
+pub use crate::resources::quicklinks::QuickLinksService;

@@ -586,7 +586,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
-    use crate::core::auth::ACCEPT_AUTH_TOKENS_PATH;
+    use crate::core::auth::{ACCEPT_AUTH_TOKENS_PATH, CachedToken};
     use crate::core::config::ClientConfig;
     use crate::core::credentials::ApiKey;
     use crate::core::region::PaymobRegion;

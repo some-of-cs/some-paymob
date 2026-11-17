@@ -233,6 +233,7 @@ mod tests {
 
     use super::super::plan_models::{PlanFrequency, PlanType};
     use super::*;
+    use crate::core::auth::CachedToken;
     use crate::core::config::ClientConfig;
     use crate::core::credentials::ApiKey;
     use crate::core::http::HttpClientConfig;

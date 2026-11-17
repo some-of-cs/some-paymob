@@ -19,3 +19,5 @@ pub mod saved_cards;
 pub mod splits;
 #[cfg(feature = "subscriptions")]
 pub mod subscriptions;
+#[cfg(feature = "onboarding")]
+pub mod onboarding;

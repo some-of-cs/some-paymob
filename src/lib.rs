@@ -20,7 +20,8 @@ pub mod prelude;
     feature = "quicklinks",
     feature = "splits",
     feature = "saved-cards",
-    feature = "subscriptions"
+    feature = "subscriptions",
+    feature = "onboarding"
 ))]
 pub mod resources;
 
@@ -79,3 +80,7 @@ pub use resources::saved_cards::SavedCardsService;
 /// Crate-root re-export of subscription plan and recurring billing services.
 #[cfg(feature = "subscriptions")]
 pub use resources::subscriptions::SubscriptionsService;
+
+/// Crate-root re-exports of Partner Merchant Onboarding services and scoped client.
+#[cfg(feature = "onboarding")]
+pub use resources::onboarding::{OnboardingService, PartnerAuthService, PartnerFlowService};

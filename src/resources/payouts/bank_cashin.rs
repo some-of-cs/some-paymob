@@ -31,6 +31,7 @@ pub struct BankCardCashinParams {
     /// Bank routing code (e.g. `"CIB"`, `"NBE"`).
     pub bank_code: String,
     /// Bank transaction classification.
+    #[zeroize(skip)]
     pub bank_transaction_type: BankTransactionType,
     /// Recipient full name (redacted in `Debug`).
     pub full_name: String,

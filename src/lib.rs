@@ -11,7 +11,7 @@
 pub mod core;
 pub mod prelude;
 
-/// Paymob API resource modules, checkout builders, payment lifecycle management, inquiries, QuickLinks, splits, saved cards, and subscriptions.
+/// Paymob API resource modules, checkout builders, payment lifecycle management, inquiries, QuickLinks, splits, saved cards, subscriptions, payouts, and onboarding.
 #[cfg(any(
     feature = "intentions",
     feature = "legacy-v2",
@@ -29,6 +29,14 @@ pub mod resources;
 /// Constant-time cryptographic webhook verification engine (Protocols A–E & Idempotency Guard).
 #[cfg(feature = "webhooks")]
 pub mod webhooks;
+
+/// Northbound `some-payments` cross-gateway unified adapter traits and `PaymobExt` escape hatch.
+#[cfg(feature = "some-payments-adapter")]
+pub mod adapter;
+
+/// Deterministic offline test vectors, multi-regime `wiremock` server, and sandbox constraint guards.
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
 
 /// Crate-root re-exports of the core Paymob client, configuration, region, error, and money types.
 pub use crate::core::client::PaymobClient;
@@ -118,3 +126,24 @@ pub use resources::onboarding::ScopedIntentions;
 /// Crate-root re-export of the sub-merchant scoped Payment Lifecycle Management handle.
 #[cfg(all(feature = "onboarding", feature = "manage"))]
 pub use resources::onboarding::ScopedManage;
+
+/// Crate-root re-exports of the northbound `some-payments` unified adapter traits and `PaymobExt`.
+#[cfg(feature = "some-payments-adapter")]
+pub use adapter::{
+    HeadlessExecutionOption, PaymentProvider, PaymobExt, PayoutProvider, ProviderExt,
+    SubscriptionProvider, UnifiedCaptureReceipt, UnifiedCaptureRequest, UnifiedPaymentSession,
+    UnifiedPaymentSessionRequest, UnifiedPayoutReceipt, UnifiedPayoutRequest,
+    UnifiedRefundReceipt, UnifiedRefundRequest, UnifiedSavedMethodChargeReceipt,
+    UnifiedSavedMethodChargeRequest, UnifiedSubscriptionRefundReceipt,
+    UnifiedSubscriptionRefundRequest, UnifiedVoidReceipt, UnifiedVoidRequest,
+    UnifiedWebhookInput, UnifiedWebhookKind, UnifiedWebhookOutcome, WebhookVerifier,
+    build_intention_params, normalize_webhook_event,
+};
+
+/// Crate-root re-exports of the deterministic test harness, official vectors, and sandbox guards.
+#[cfg(feature = "test-utils")]
+pub use test_utils::{
+    MockHost, OfficialWebhookVector, PaymobMockServer, SandboxCheckRequest,
+    SandboxConstraintError, SandboxGuard, SandboxPaymentChannel, SandboxReport, SandboxWarning,
+    WebhookVectorProtocol, all_official_vectors,
+};

@@ -3,7 +3,8 @@
 //!
 //! Import all essential client, configuration, credential, region, auth,
 //! HTTP transport, money, error, pagination, intentions, checkout, legacy-v2,
-//! management, inquiries, quicklinks, and webhook types with a single wildcard import:
+//! management, inquiries, quicklinks, saved-cards, subscriptions, payouts,
+//! onboarding, adapter, test-utils, and webhook types with a single wildcard import:
 //!
 //! ```
 //! use some_paymob::prelude::*;
@@ -123,3 +124,29 @@ pub use crate::resources::onboarding::ScopedIntentions;
 /// Re-exports the sub-merchant scoped Payment Lifecycle Management handle.
 #[cfg(all(feature = "onboarding", feature = "manage"))]
 pub use crate::resources::onboarding::ScopedManage;
+
+/// Re-exports all public `some-payments` unified adapter traits, DTOs, and `PaymobExt` types.
+#[cfg(feature = "some-payments-adapter")]
+pub use crate::adapter::{
+    HeadlessExecutionOption, PaymentProvider, PaymobExt, PayoutProvider, ProviderExt,
+    SubscriptionProvider, UnifiedCaptureReceipt, UnifiedCaptureRequest, UnifiedPaymentSession,
+    UnifiedPaymentSessionRequest, UnifiedPayoutReceipt, UnifiedPayoutRequest,
+    UnifiedRefundReceipt, UnifiedRefundRequest, UnifiedSavedMethodChargeReceipt,
+    UnifiedSavedMethodChargeRequest, UnifiedSubscriptionRefundReceipt,
+    UnifiedSubscriptionRefundRequest, UnifiedVoidReceipt, UnifiedVoidRequest,
+    UnifiedWebhookInput, UnifiedWebhookKind, UnifiedWebhookOutcome, WebhookVerifier,
+    build_intention_params, normalize_webhook_event,
+};
+
+/// Re-exports all public deterministic test vectors, `PaymobMockServer`, and sandbox constraint guards.
+#[cfg(feature = "test-utils")]
+pub use crate::test_utils::{
+    JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, OfficialWebhookVector,
+    PaymobMockServer, PayoutsRateLimitMockConfig, SANDBOX_CREDENTIAL_MAX_AGE_DAYS,
+    SANDBOX_CREDENTIAL_WARN_AGE_DAYS, SAMPLE_HMAC_SECRET, SandboxCheckRequest,
+    SandboxConstraintError, SandboxGuard, SandboxPaymentChannel, SandboxReport, SandboxWarning,
+    SignedSubscriptionRequest, SignedTransactionRequest, SignedWebhookToolPayload,
+    WebhookVectorProtocol, all_official_vectors, card_token_15978654,
+    generate_signed_subscription_post, generate_signed_transaction_post, sign_hmac_sha512,
+    subscription_1264, transaction_processed_192036465, transaction_response_316004,
+};

@@ -473,7 +473,7 @@ impl CustomUrlCandidate<'_> {
         if parsed.scheme() == "https" {
             return Ok(());
         }
-        if parsed.scheme() == "http" && Self::is_loopback_or_local(parsed) {
+        if is_loopback_http_url(parsed) {
             return Ok(());
         }
         Err(PaymobError::ValidationError {
@@ -499,20 +499,35 @@ impl CustomUrlCandidate<'_> {
         }
         Ok(())
     }
+}
 
-    /// Returns `true` when `parsed` targets a loopback IP (`127.0.0.0/8`, `::1`),
-    /// `localhost`, or a `.local` test host permitted for `http://`.
-    fn is_loopback_or_local(parsed: &Url) -> bool {
-        match parsed.host() {
-            Some(Host::Ipv4(ip)) => ip.is_loopback(),
-            Some(Host::Ipv6(ip)) => ip.is_loopback(),
-            Some(Host::Domain(domain)) => {
-                let lower = domain.to_ascii_lowercase();
-                lower == "localhost" || lower.ends_with(".local")
-            }
-            None => false,
+/// Returns `true` when `parsed` targets a loopback IP (`127.0.0.0/8`, `::1`),
+/// `localhost`, or a `.local` test host permitted for `http://`.
+#[must_use]
+pub(crate) fn is_loopback_or_local_url(parsed: &Url) -> bool {
+    match parsed.host() {
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(Host::Domain(domain)) => {
+            domain.eq_ignore_ascii_case("localhost")
+                || domain.to_ascii_lowercase().ends_with(".local")
         }
+        None => false,
     }
+}
+
+/// Returns `true` when `parsed` uses plaintext `http://` targeting a loopback or `.local` host.
+#[must_use]
+pub(crate) fn is_loopback_http_url(parsed: &Url) -> bool {
+    parsed.scheme() == "http" && is_loopback_or_local_url(parsed)
+}
+
+/// Returns `true` when `parsed` uses plaintext `http://` targeting a strict loopback host
+/// (`127.0.0.1`, `localhost`, or `[::1]`).
+#[must_use]
+pub(crate) fn is_strict_loopback_http_url(parsed: &Url) -> bool {
+    parsed.scheme() == "http"
+        && matches!(parsed.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
 }
 
 impl RawEndpointPath<'_> {

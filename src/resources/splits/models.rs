@@ -514,8 +514,7 @@ mod tests {
         let empty_json = r#"{"cards":[]}"#;
         assert!(serde_json::from_str::<SplitPaymentConfig>(empty_json).is_err());
 
-        let four_json =
-            r#"{"cards":[{"amount_cents":1},{"amount_cents":1},{"amount_cents":1},{"amount_cents":1}]}"#;
+        let four_json = r#"{"cards":[{"amount_cents":1},{"amount_cents":1},{"amount_cents":1},{"amount_cents":1}]}"#;
         assert!(serde_json::from_str::<SplitPaymentConfig>(four_json).is_err());
 
         let zero_amt_json = r#"{"cards":[{"amount_cents":0}]}"#;
@@ -524,8 +523,7 @@ mod tests {
         let blank_tok_json = r#"{"cards":[{"amount_cents":100,"card_token":"   "}]}"#;
         assert!(serde_json::from_str::<SplitPaymentConfig>(blank_tok_json).is_err());
 
-        let valid_json =
-            r#"{"cards":[{"amount_cents":6000,"card_token":"t1"},{"amount_cents":4000,"card_token":"t2"}]}"#;
+        let valid_json = r#"{"cards":[{"amount_cents":6000,"card_token":"t1"},{"amount_cents":4000,"card_token":"t2"}]}"#;
         let mut cfg: SplitPaymentConfig =
             serde_json::from_str(valid_json).expect("valid split payment config");
         assert!(cfg.validate_total(10_000).is_ok());

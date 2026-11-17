@@ -145,7 +145,10 @@ impl<'a> ManageService<'a> {
             .map_err(|err| PaymobError::TransportError(err.to_string()))
     }
 
-    async fn build_refund_request(&self, params: &RefundParams) -> Result<HttpRequest, PaymobError> {
+    async fn build_refund_request(
+        &self,
+        params: &RefundParams,
+    ) -> Result<HttpRequest, PaymobError> {
         let auth_header = self.resolve_refund_auth_header().await?;
         let url = self.client().accept_url(REFUND_PATH)?;
         HttpRequest::post(url.as_str())

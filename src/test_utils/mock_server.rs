@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! Stateful multi-regime `wiremock` server for offline Paymob integration tests (`US-8.2.0` Unit 2).
 //!
-//! Provides [`PaymobMockServer`], which binds ephemeral local `127.0.0.1:0` listeners
+//! Provides `PaymobMockServer`, which binds ephemeral local `127.0.0.1:0` listeners
 //! for both **Accept Acquiring** and **Payouts** hosts so CI tests can verify:
 //! - Regime 2 Accept JWT issuance (`POST /api/auth/tokens`) and programmable
 //!   1-hour JWT expiration (`401 {"detail": "incorrect credentials"}`) recovery.

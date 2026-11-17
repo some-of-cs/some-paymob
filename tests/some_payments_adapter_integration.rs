@@ -119,12 +119,18 @@ async fn ac1_capture_refund_and_void_delegate_to_manage_service() {
             "success": true, "is_capture": true, "is_captured": true
         }),
         |c| async move {
-            c.capture_payment(&UnifiedCaptureRequest::new(1001, MinorUnitAmount::new(5000)))
-                .await
+            c.capture_payment(&UnifiedCaptureRequest::new(
+                1001,
+                MinorUnitAmount::new(5000),
+            ))
+            .await
         },
     )
     .await;
-    assert_eq!((cap.transaction_id, cap.amount.as_u64(), cap.success), (1002, 5000, true));
+    assert_eq!(
+        (cap.transaction_id, cap.amount.as_u64(), cap.success),
+        (1002, 5000, true)
+    );
 
     let refund = assert_manage_op(
         "/api/acceptance/void_refund/refund",

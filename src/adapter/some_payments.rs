@@ -152,10 +152,7 @@ where
     op(client, params).await
 }
 
-async fn execute_manage_op(
-    client: PaymobClient,
-    op: ManageOp,
-) -> Result<Transaction, PaymobError> {
+async fn execute_manage_op(client: PaymobClient, op: ManageOp) -> Result<Transaction, PaymobError> {
     match op {
         ManageOp::Capture(params) => client.manage().capture(params).await,
         ManageOp::Refund(params) => client.manage().refund(params).await,
@@ -231,8 +228,8 @@ impl PaymentProvider for PaymobClient {
         &self,
         req: &UnifiedCaptureRequest,
     ) -> impl Future<Output = Result<UnifiedCaptureReceipt, Self::Error>> + Send + '_ {
-        let op = CaptureParams::try_new(req.transaction_id, req.amount.as_u64())
-            .map(ManageOp::Capture);
+        let op =
+            CaptureParams::try_new(req.transaction_id, req.amount.as_u64()).map(ManageOp::Capture);
         run_manage_call(self.clone(), op, to_capture_receipt)
     }
 

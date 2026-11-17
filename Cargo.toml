@@ -27,7 +27,10 @@ subscriptions = ["core"]
 payouts = ["core"]
 onboarding = ["core"]
 partner-onboarding = ["onboarding"]
-full = ["core", "webhooks", "intentions", "legacy-v2", "manage", "inquiries", "quicklinks", "splits", "transactions", "saved-cards", "subscriptions", "payouts", "onboarding"]
+some-payments-adapter = ["core", "webhooks", "intentions", "manage", "saved-cards", "subscriptions", "splits", "payouts"]
+some-payment-trait = ["some-payments-adapter"]
+test-utils = ["core", "webhooks", "dep:wiremock"]
+full = ["core", "webhooks", "intentions", "legacy-v2", "manage", "inquiries", "quicklinks", "splits", "transactions", "saved-cards", "subscriptions", "payouts", "onboarding", "some-payments-adapter", "test-utils"]
 rustls-tls = ["reqwest/rustls-tls"]
 native-tls = ["reqwest/native-tls"]
 
@@ -48,6 +51,7 @@ tokio = { version = "1.40", features = ["sync", "time", "macros", "rt"] }
 tracing = "0.1"
 url = "2.5"
 uuid = { version = "1.10", features = ["v4"] }
+wiremock = { version = "0.6", optional = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]

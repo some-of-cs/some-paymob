@@ -6,13 +6,18 @@ pub mod by_order;
 pub mod card_tokens;
 pub mod order_inquiry;
 
+pub use by_id::{Transaction, TransactionOrder, TransactionSourceData};
+pub use by_order::TransactionInquiryParams;
+pub use card_tokens::{CardTokenEnvelope, CardTokenObject};
+pub use order_inquiry::{OrderInquiryResponse, OrderShippingData, OrderTransactionAttempt};
+
 use secrecy::SecretString;
 use url::Url;
 
 use crate::core::auth::accept_jwt::{AcceptJwtError, AcceptJwtProvider};
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpClient, HttpClientConfig, HttpRequest, HttpResponse, RetryPolicy};
+use crate::core::http::{HttpRequest, HttpResponse};
 
 /// Service handle for Paymob transaction, order, and saved card token inquiries.
 #[derive(Debug, Clone, Copy)]
@@ -65,31 +70,10 @@ pub(crate) async fn acquire_accept_jwt(
 
 pub(crate) async fn execute_accept_request(
     service: &InquiriesService<'_>,
-    url: &Url,
+    _url: &Url,
     request: &HttpRequest,
 ) -> Result<HttpResponse, PaymobError> {
-    if url.scheme() == "https" {
-        return service
-            .client()
-            .http()
-            .execute(request)
-            .await
-            .map_err(PaymobError::from);
-    }
-
-    let cfg = service.client().config();
-    let local_http = HttpClient::new(HttpClientConfig {
-        connect_timeout: cfg.timeout(),
-        request_timeout: cfg.timeout(),
-        max_response_bytes: service.client().http().config().max_response_bytes,
-        retry: RetryPolicy {
-            max_retries: cfg.max_retries(),
-            ..RetryPolicy::default()
-        },
-        allow_insecure_http: true,
-    })
-    .map_err(PaymobError::from)?;
-    local_http.execute(request).await.map_err(PaymobError::from)
+    service.client().execute_request(request).await
 }
 
 pub(crate) fn map_accept_jwt_error(err: AcceptJwtError) -> PaymobError {

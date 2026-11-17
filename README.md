@@ -29,20 +29,21 @@
 
 Integrating [Paymob](https://developers.paymob.com/paymob-docs) across Egypt (`EGP`), Saudi Arabia (`SAR`), UAE (`AED`), Oman (`OMR`), and Pakistan (`PKR`) in high-concurrency Rust backend services involves distinct protocol complexities:
 
-1. **Dual-Generation API Surface (Unified Intention API vs Legacy 3-Step Accept Flow)**: Modern [Paymob Create Intention (`/v1/intention/`)](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) authenticates via `Authorization: Token <sk_...>` and issues a `client_secret` for Unified Checkout and Pixel components, whereas legacy [Paymob Accept APIs](https://developers.paymob.com/paymob-docs/integration-paths/apis) require chaining Auth Token -> Order Registration -> Payment Key generation. `some-paymob` unifies both behind ergonomic [`stripe-node`](https://github.com/stripe/stripe-node)-style namespaces (`paymob.intentions()`, `paymob.transactions()`, `paymob.payouts()`).
-2. **Multi-Shape HMAC-SHA512 Webhook Concatenation**: [Paymob Webhook Callbacks & HMAC](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/overview) require lexicographical field extraction and concatenation across three distinct callback shapes: [HMAC Transaction Callbacks](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-transaction-callback) (20 concatenated fields including nested `order.id` and `source_data.*`, with `hmac` in query params), [HMAC Card Token Callbacks](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-for-card-tokens), and [Subscription Callbacks](https://developers.paymob.com/paymob-docs/developers/subscription/hmac-calculation-for-subscription-callback) (where `hmac` is embedded inside the JSON body). `some-paymob` verifies all three in strict constant time.
-3. **Outbound Disbursements (`Paymob Send`)**: [Paymob Payouts](https://developers.paymob.com/paymob-docs/beyond-payments/payouts) (`/api/secure/disburse/`) uses separate OAuth2/Bearer token lifecycles and issuer codes (`vodafone`, `etisalat`, `orange`, `aman`, `bank_wallet`, `bank_card`). `some-paymob` provides a strongly typed `client.payouts()` namespace with automated token refresh.
-4. **Native Multi-Gateway Composition**: Built as a core regional provider in [`some-payment`](https://github.com/some-of-cs/some-payment) alongside [`some-stripe`](https://github.com/some-of-cs/some-stripe) and [`some-moyasar`](https://github.com/some-of-cs/some-moyasar), allowing applications to pair Stripe Identity KYC with Paymob EGP card/wallet/ValU collection and instant Vodafone Cash payouts.
+1. **Dual-Generation API Surface (Unified Intention API vs Legacy 3-Step Accept Flow)**: Modern [Paymob Create Intention (`/v1/intention/`)](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) authenticates via `Authorization: Token <sk_...>` and issues a `client_secret` for Unified Checkout and Pixel components, whereas legacy [Paymob Accept APIs](https://developers.paymob.com/paymob-docs/integration-paths/apis) require chaining Auth Token -> Order Registration -> Payment Key generation. `some-paymob` unifies both behind ergonomic [`stripe-node`](https://github.com/stripe/stripe-node)-style namespaces (`paymob.intentions()`, `paymob.checkout()`, `paymob.legacy_v2()`, `paymob.manage()`, `paymob.inquiries()`, `paymob.payouts()`).
+2. **4-Regime Single-Flight Authentication & `$ENV_VARNAME` / `.env` Resolution**: Automatically routes Regime 1 (`Authorization: Token <secret_key>`), Regime 2 (`POST /api/auth/tokens` 60-minute JWT with single-flight `401` cache eviction & retry), Regime 3 (`POST /api/secure/o/token/` OAuth 2.0 `password` & `refresh_token` grants), and Regime 4 (Partner Bearer & API Key headers), while resolving `"$ENV_VARNAME"` references from process environment variables or `.env` files at runtime with `secrecy::SecretString` and `zeroize::ZeroizeOnDrop`.
+3. **Multi-Shape HMAC-SHA512 Webhook Concatenation (Protocols A–E)**: [Paymob Webhook Callbacks & HMAC](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/overview) require lexicographical field extraction and concatenation across distinct callback shapes: [HMAC Transaction Callbacks](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-transaction-callback) (20 concatenated fields including nested `order.id` and `source_data.*`), Redirect Query Callbacks, [HMAC Card Token Callbacks](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-for-card-tokens), [Subscription Callbacks](https://developers.paymob.com/paymob-docs/developers/subscription/hmac-calculation-for-subscription-callback) (`"{trigger_type}for{subscription_data.id}"`), and Payout Disbursement/Topup Callbacks. `some-paymob` verifies all five protocols in strict constant time (`subtle::ConstantTimeEq`).
+4. **Outbound Disbursements (`Paymob Send`)**: [Paymob Payouts](https://developers.paymob.com/paymob-docs/beyond-payments/payouts) (`/api/secure/disburse/`) uses separate OAuth2/Bearer token lifecycles and issuer codes (`vodafone`, `etisalat`, `orange`, `bank_wallet`, `bank_card`, `instant_bank`, `egyptian_post`), Aman cancellation, Bulk Disbursements, Budget/Transaction/Topup Inquiries, and Topup Requests (`<= 2.8 MB` proof guard).
+5. **Native Multi-Gateway Composition**: Built as a core regional provider in [`some-payment`](https://github.com/some-of-cs/some-payment) alongside [`some-stripe`](https://github.com/some-of-cs/some-stripe) and [`some-moyasar`](https://github.com/some-of-cs/some-moyasar), implementing `PaymentProvider`, `WebhookVerifier`, `SubscriptionProvider`, and `PayoutProvider` plus the `PaymobExt` escape hatch.
 
 ---
 
 ## Key Features
 
-- **Familiar [`stripe-node`](https://github.com/stripe/stripe-node) & [`some-stripe`](https://github.com/some-of-cs/some-stripe) Hierarchy**: Thread-safe `PaymobClient` (`Arc<PaymobConfig>`) exposing `.intentions()`, `.transactions()`, `.tokens()`, `.subscriptions()`, `.payouts()`, `.partner()`, and `.webhooks()`.
-- **Unified Intention & Pixel Checkout**: First-class builder for [Create Intention (`POST /v1/intention/`)](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) and Update Intention (`PUT /v1/intention/`), supporting multi-integration IDs, [Affordability Widget](https://developers.paymob.com/paymob-docs/developers/checkout-experiences/affordability-widget) `pre_selected_plan` installments, and [Split Payment Features](https://developers.paymob.com/paymob-docs/payments-and-features/core-features/split-features).
-- **Comprehensive Regional Payment Methods**: Cards (`MIGS`/`MPGS`, `Meza`, `Mada`, `OmanNet`), Mobile Wallets (`Vodafone Cash`, `e& money`, `Orange Cash`, `WE Pay`), Kiosk Reference Bills (`Fawry` / `Aman` / `Masary`), BNPL (`ValU`, `Sympl`, `Souhoola`, `Tabby`, `Tamara`), and [Apple Pay / Google Pay](https://developers.paymob.com/).
-- **Paymob Send (Payouts & Cash-In Engine)**: Instant disbursements via [`/api/secure/disburse/`](https://developers.paymob.com/paymob-docs/developers/payouts-apis/cashin-api/vodafone-cashin) across [Vodafone Cash-In](https://developers.paymob.com/paymob-docs/developers/payouts-apis/cashin-api/vodafone-cashin), [Etisalat Cash](https://developers.paymob.com/paymob-docs/developers/payouts-apis/cashin-api/etisalat-cash), Bank Wallets, and Instant Bank transfers, plus [Disbursement Inquiries & Budget Checks](https://developers.paymob.com/paymob-docs/developers/payouts-apis/inquires).
-- **Constant-Time HMAC-SHA512 Verification Engine**: Zero-timing-attack verification (`subtle::ConstantTimeEq`) across [Transaction Processed Callbacks](https://developers.paymob.com/paymob-docs/manage-callback/transaction-callbacks), [Card Token Callbacks](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-for-card-tokens), [Subscription Callbacks](https://developers.paymob.com/paymob-docs/developers/subscription/hmac-calculation-for-subscription-callback), and [Payout Callbacks](https://developers.paymob.com/paymob-docs/developers/payouts-apis/payout-callbacks).
+- **Familiar [`stripe-node`](https://github.com/stripe/stripe-node) & [`some-stripe`](https://github.com/some-of-cs/some-stripe) Hierarchy**: Thread-safe `PaymobClient` (`Arc<PaymobCore>`) exposing `.intentions()`, `.checkout()`, `.legacy_v2()`, `.manage()`, `.inquiries()`, `.quicklinks()`, `.saved_cards()`, `.subscriptions()`, `.payouts()`, `.onboarding()`, and `.webhooks()`.
+- **Zero-Float Minor-Unit Monetary Safety & `[REDACTED]` PII Hygiene**: Enforces `#![forbid(unsafe_code)]`, integer minor-unit monetary representations (`MinorUnitAmount(u64)` / `u64`), `SecretString` + `ZeroizeOnDrop` credential storage, and automatic `[REDACTED]` masking of keys, tokens, PANs, MSISDNs, emails, and national IDs in `Debug` and `Display`.
+- **Unified Intention, Pixel & Affordability Widget Checkout**: Builders for [Create Intention (`POST /v1/intention/`)](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) and Update Intention (`PUT /v1/intention/`), Unified Checkout & Pixel JS configs (`ApplePaySettings`, `GooglePaySettings`), [Affordability Widget](https://developers.paymob.com/paymob-docs/developers/checkout-experiences/affordability-widget) `pre_selected_plan` installments, and [Split Payment & Convenience Fee](https://developers.paymob.com/paymob-docs/payments-and-features/core-features/split-features) engines.
+- **Paymob Send (Payouts & Cash-In Engine)**: Instant disbursements via [`/api/secure/disburse/`](https://developers.paymob.com/paymob-docs/developers/payouts-apis/cashin-api/vodafone-cashin) across 7 issuers (`vodafone`, `etisalat`, `orange`, `bank_wallet`, `bank_card`, `instant_bank`, `egyptian_post`), Aman cancellation, Bulk Disbursements, and [Disbursement, Budget & Topup Inquiries](https://developers.paymob.com/paymob-docs/developers/payouts-apis/inquires).
+- **Constant-Time HMAC-SHA512 Verification Engine**: Zero-timing-attack verification (`subtle::ConstantTimeEq`) across [Transaction Processed Callbacks](https://developers.paymob.com/paymob-docs/manage-callback/transaction-callbacks), Redirect Callbacks, [Card Token Callbacks](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-for-card-tokens), [Subscription Callbacks](https://developers.paymob.com/paymob-docs/developers/subscription/hmac-calculation-for-subscription-callback), and [Payout Callbacks](https://developers.paymob.com/paymob-docs/developers/payouts-apis/payout-callbacks) with replay protection (`IdempotentWebhookGuard`).
 
 ---
 
@@ -50,23 +51,28 @@ Integrating [Paymob](https://developers.paymob.com/paymob-docs) across Egypt (`E
 
 | Feature Flag | Default | Dependencies Added | Included Modules, Services & Capabilities |
 | :--- | :---: | :--- | :--- |
-| `default` | **Yes** | `reqwest`, `serde`, `uuid`, `secrecy`, `thiserror` | `core`, `intentions`, `transactions`, `webhook-engine`, `rustls-tls` ([Paymob Portal](https://developers.paymob.com/)) |
-| `core` | **Yes** | `serde`, `serde_json`, `secrecy`, `chrono` | `PaymobClient`, region-aware base URL router (`egy`, `ksa`, `uae`, `omn`, `pak`), `SecretKey` (`egy_sk_...`), `PublicKey` (`egy_pk_...`), `PaymobError` ([Glossary](https://developers.paymob.com/paymob-docs/need-help/glossary)) |
-| `intentions` | **Yes** | `core` | `client.intentions()` — [Create Intention (`POST /v1/intention/`)](https://developers.paymob.com/paymob-docs/intention-apis/create-intention), Update Intention (`PUT`), Unified Checkout & Pixel URL helpers |
-| `transactions` | **Yes** | `core` | `client.transactions()` — Capture, Void, Refund, Transaction Inquiry, and [Split Features](https://developers.paymob.com/paymob-docs/payments-and-features/core-features/split-features) ([Egypt Hub](https://developers.paymob.com/hub/egypt)) |
-| `webhook-engine` | **Yes** | `hmac`, `sha2`, `subtle`, `hex` | `PaymobHmacVerifier` — Constant-time HMAC-SHA512 verifier for [Transaction](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-transaction-callback), [Card Token](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-for-card-tokens), and [Subscription](https://developers.paymob.com/paymob-docs/developers/subscription/hmac-calculation-for-subscription-callback) webhooks |
-| `tokens` | No | `core`, `transactions` | `client.tokens()` — Saved card tokenization and Customer-Initiated / Merchant-Initiated recurring MOTO charges ([Create Intention](https://developers.paymob.com/paymob-docs/intention-apis/create-intention)) |
-| `subscriptions` | No | `core`, `tokens` | `client.subscriptions()` — Subscription plans, recurring billing lifecycles, and [Subscription HMAC Callbacks](https://developers.paymob.com/paymob-docs/developers/subscription/hmac-calculation-for-subscription-callback) |
-| `payouts` | No | `core` | `client.payouts()` — [Paymob Send Disbursements](https://developers.paymob.com/paymob-docs/beyond-payments/payouts) ([Vodafone Cash](https://developers.paymob.com/paymob-docs/developers/payouts-apis/cashin-api/vodafone-cashin), [Etisalat Cash](https://developers.paymob.com/paymob-docs/developers/payouts-apis/cashin-api/etisalat-cash), Bank Transfers) & [Inquiries](https://developers.paymob.com/paymob-docs/developers/payouts-apis/inquires) |
-| `partner-onboarding` | No | `core` | `client.partner()` — Partner Login, Partner API Key provisioning, Merchant Registration, and Partner HMAC Secret retrieval ([Partner APIs](https://developers.paymob.com/paymob-docs/intention-apis/create-intention)) |
-| `some-payment-trait` | No | `some-payment-core` | Implements `PaymentCapability`, `PayoutCapability`, and `WebhookCapability` traits for [`some-payment`](https://github.com/some-of-cs/some-payment) |
-| `full` | No | All of the above | Enables all Paymob Accept, Intention, Subscription, Payouts, Partner Onboarding, and [`some-payment`](https://github.com/some-of-cs/some-payment) modules |
+| `default` | **Yes** | `reqwest`, `serde`, `uuid`, `secrecy`, `thiserror`, `zeroize` | `core`, `webhooks`, `intentions`, `manage`, `inquiries`, `quicklinks`, `splits`, `saved-cards`, `subscriptions`, `payouts`, `onboarding`, `rustls-tls` |
+| `core` | **Yes** | `reqwest`, `serde`, `secrecy`, `zeroize`, `arc-swap` | `PaymobClient`, 5-region URL router (`Egypt`, `SaudiArabia`, `Uae`, `Oman`, `Pakistan`, `Custom`), 4-regime `AuthManager`, `$ENV_VARNAME` / `.env` credential resolution, `MinorUnitAmount`, `Currency`, `PaymobError` |
+| `webhooks` (`webhook-engine`) | **Yes** | `core`, `hmac`, `sha2`, `subtle`, `hex` | `PaymobWebhookEngine` — Constant-time HMAC-SHA512 verifier for Protocols A–E and `IdempotentWebhookGuard` |
+| `intentions` | **Yes** | `core` | `client.intentions()`, `client.checkout()` — `POST`/`PUT /v1/intention/`, Unified Checkout, Pixel JS, and Affordability Widget builders |
+| `legacy-v2` | No | `core` | `client.legacy_v2()` — Opt-in 3-step Legacy Accept v2 checkout (`auth_token` -> `order` -> `payment_key` -> `iframe`) |
+| `manage` | **Yes** | `core` | `client.manage()` — Full/partial `refund`, `void`, and two-step Auth/`capture` |
+| `inquiries` | **Yes** | `core` | `client.inquiries()` — Transaction inquiry by ID, by `order_id` / `merchant_order_id`, full order record, and saved card tokens |
+| `quicklinks` | **Yes** | `core` | `client.quicklinks()` — Hosted payment link creation (`POST /api/ecommerce/payment-links`) and cancellation |
+| `splits` | **Yes** | `core` | `resources::splits` — Marketplace `SplitRecipientRule`, 3-card `SplitPaymentConfig`, and integer basis-point `ConvenienceFeeConfig` |
+| `saved-cards` (`tokens`) | **Yes** | `core` | `client.saved_cards()` — CIT/MIT saved-card charges, Mobile Wallet, Kiosk aggregator, and raw `POST /api/acceptance/payments/pay` |
+| `subscriptions` | **Yes** | `core` | `client.subscriptions()` — Subscription plans CRUD, subscription lifecycle (`suspend`, `resume`, `cancel`), card vault, and `refund_last_transaction` |
+| `payouts` | **Yes** | `core` | `client.payouts()` — Paymob Send OAuth 2.0 (`auth()`), 7-issuer Instant & Bulk Cashin (`cashin()`), Inquiries & User Budget (`inquiries()`), and Topups (`topups()`) |
+| `onboarding` (`partner-onboarding`) | **Yes** | `core` | `client.onboarding()` — Partner login, API key provisioning, HMAC secret retrieval, merchant registration, onboarding flow schema, and `MerchantScopedClient` |
+| `some-payments-adapter` (`some-payment-trait`) | No | `core`, `webhooks`, `intentions`, `manage`, `saved-cards`, `subscriptions`, `splits`, `payouts` | Implements `PaymentProvider`, `WebhookVerifier`, `SubscriptionProvider`, `PayoutProvider`, and `PaymobExt` escape hatch |
+| `test-utils` | No | `core`, `webhooks`, `wiremock` | `PaymobMockServer` (Accept & Payouts offline harness), official HMAC test vectors, and `SandboxGuard` |
+| `full` | No | All of the above | Enables every module, legacy flow, unified adapter, and test harness |
 
 ---
 
 ## Installation
 
-### Standard Configuration (Unified Intentions, Transactions & Webhook HMAC Engine)
+### Standard Configuration
 
 ```toml
 [dependencies]
@@ -74,15 +80,14 @@ some-paymob = "0.1.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
-### Full Enterprise Configuration (With Paymob Send Payouts, Subscriptions & `some-payment` Adapter)
+### Full Enterprise Configuration (With Legacy v2, `some-payments` Adapter & Offline Test Harness)
 
 ```toml
 [dependencies]
 some-paymob = { version = "0.1.0", features = [
     "full",
-    "payouts",
-    "subscriptions",
-    "some-payment-trait"
+    "some-payments-adapter",
+    "test-utils"
 ] }
 ```
 
@@ -92,53 +97,51 @@ some-paymob = { version = "0.1.0", features = [
 
 ### 1. Creating a Unified Checkout Intention (Cards, Mobile Wallets, Kiosk & ValU BNPL)
 
-Using [Paymob's Create Intention API (`POST /v1/intention/`)](https://developers.paymob.com/paymob-docs/intention-apis/create-intention):
+Using [Paymob's Create Intention API (`POST /v1/intention/`)](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) with integer minor-unit amounts (`MinorUnitAmount`) and `$ENV_VARNAME` / `.env` credential resolution:
 
 ```rust,no_run
 use some_paymob::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), PaymobError> {
-    // Region is automatically inferred from the secret key prefix (`egy_sk_...`, `ksa_sk_...`, `are_sk_...`)
-    let paymob = PaymobClient::new("egy_sk_test_YOUR_SECRET_KEY")?;
+    // Supports direct keys or "$ENV_VARNAME" references resolved from process env or `.env`
+    let config = ClientConfig::builder()
+        .region(PaymobRegion::Egypt)
+        .secret_key(SecretKey::new("$PAYMOB_SECRET_KEY")?)
+        .public_key(PublicKey::new("$PAYMOB_PUBLIC_KEY")?)
+        .build()?;
+    let paymob = PaymobClient::new(config)?;
 
-    let intention = paymob
-        .intentions()
-        .create(&CreateIntentionParams {
-            amount: 250_000, // 2,500.00 EGP in cents (piastres)
-            currency: Currency::EGP,
-            payment_methods: vec![
-                PaymentMethodIntegration::Id(412345), // Online Card (MIGS/MPGS)
-                PaymentMethodIntegration::Id(412346), // Mobile Wallets (Vodafone/Orange/e&)
-                PaymentMethodIntegration::Id(412347), // ValU BNPL
-            ],
-            items: vec![IntentionItem {
-                name: "Enterprise Annual License".into(),
-                amount: 250_000,
-                description: Some("Annual SaaS subscription".into()),
-                quantity: 1,
-            }],
-            billing_data: BillingData {
-                first_name: "Maher".into(),
-                last_name: "Aladdin".into(),
-                email: "maher@example.com".into(),
-                phone_number: "+201012345678".into(),
-                country: Some("EG".into()),
-                city: Some("Mansoura".into()),
-                ..Default::default()
-            },
-            special_reference: Some("ORD-EG-2026-0091".into()),
-            notification_url: Some("https://api.example.com/webhooks/paymob".into()),
-            redirection_url: Some("https://app.example.com/checkout/complete".into()),
-            extras: None,
-            pre_selected_plan: None,
-        })
-        .await?;
+    let params = CreateIntentionParams::builder()
+        .amount(MinorUnitAmount::new(250_000)) // 2,500.00 EGP in piasters (zero floats)
+        .currency(Currency::EGP)
+        .payment_methods(vec![
+            PaymentMethodInput::IntegrationId(4097558),
+            PaymentMethodInput::MethodName("card".to_owned()),
+        ])
+        .items(vec![IntentionItem::new(
+            "Enterprise Annual License",
+            MinorUnitAmount::new(250_000),
+            1,
+        )?])
+        .billing_data(
+            BillingData::builder()
+                .first_name("Maher")
+                .last_name("Mansour")
+                .email("maher@example.com")
+                .phone_number("+201012345678")
+                .country("EG")
+                .city("Mansoura")
+                .build()?,
+        )
+        .special_reference("ORD-EG-2026-0091")
+        .notification_url("https://api.example.com/webhooks/paymob")
+        .redirection_url("https://app.example.com/checkout/complete")
+        .build()?;
 
-    println!(
-        "Redirect to Unified Checkout: {}",
-        paymob.intentions().unified_checkout_url("egy_pk_test_YOUR_PUBLIC_KEY", &intention.client_secret)
-    );
+    let intention = paymob.intentions().create(params).await?;
+    let checkout_url = paymob.checkout().unified_url(&intention.client_secret)?;
+    println!("Redirect customer to Unified Checkout: {checkout_url}");
     Ok(())
 }
 ```
@@ -151,22 +154,14 @@ Disburse funds directly to recipient mobile wallets or bank accounts via [Paymob
 use some_paymob::prelude::*;
 
 async fn disburse_wallet_payout(paymob: &PaymobClient) -> Result<(), PaymobError> {
-    let disbursement = paymob
-        .payouts()
-        .disburse(&CreateDisbursementParams {
-            issuer: DisbursementIssuer::Vodafone,
-            amount: 1500.00, // 1,500.00 EGP
-            msisdn: Some("01012345678".into()),
-            client_reference_id: Some("PAYOUT-DRIVER-8841".into()),
-            bank_card_number: None,
-            bank_code: None,
-            full_name: None,
-        })
-        .await?;
+    let params = MobileWalletCashinParams::new("01012345678", 150_000)
+        .with_client_reference_id("PAYOUT-DRIVER-8841")
+        .with_customer_bears_fees(false);
 
+    let receipt = paymob.payouts().cashin().vodafone(params).await?;
     println!(
-        "Disbursement transaction_id={} status={}",
-        disbursement.transaction_id, disbursement.disbursement_status
+        "Disbursement transaction_id={} status={:?}",
+        receipt.transaction_id, receipt.disbursement_status
     );
     Ok(())
 }
@@ -176,34 +171,39 @@ async fn disburse_wallet_payout(paymob: &PaymobClient) -> Result<(), PaymobError
 
 ## Constant-Time HMAC Webhook Verification Engine
 
-Per [Paymob's HMAC Transaction Callback specification](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-transaction-callback), Paymob computes an `HMAC-SHA512` hex digest over 20 lexicographically ordered fields from `obj` (`amount_cents`, `created_at`, `currency`, `error_occured`, `has_parent_transaction`, `id`, `integration_id`, `is_3d_secure`, `is_auth`, `is_capture`, `is_refunded`, `is_standalone_payment`, `is_voided`, `order.id`, `owner`, `pending`, `source_data.pan`, `source_data.sub_type`, `source_data.type`, `success`). `some-paymob` extracts these fields without intermediate heap string concatenation and compares the 64-byte SHA-512 tag in strict constant time:
+Per [Paymob's HMAC Transaction Callback specification](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-transaction-callback), Paymob computes an `HMAC-SHA512` hex digest over 20 lexicographically ordered fields from `obj`. `some-paymob` extracts these fields and compares the 64-byte SHA-512 tag in strict constant time (`subtle::ConstantTimeEq`) across all 5 Paymob webhook protocols:
 
-```rust
-use some_paymob::webhook_engine::{PaymobHmacVerifier, PaymobWebhookPayload};
+```rust,no_run
+use some_paymob::prelude::*;
 
-fn handle_paymob_webhook(raw_body: &[u8], query_hmac: Option<&str>, hmac_secret: &str) {
-    let verifier = PaymobHmacVerifier::new(hmac_secret);
+fn handle_paymob_webhook(
+    raw_body: &str,
+    query_hmac: Option<&str>,
+    hmac_secret: &str,
+) -> Result<(), WebhookError> {
+    let engine = PaymobWebhookEngine::new(hmac_secret)?;
 
-    // Automatically detects Transaction, CardToken, or Subscription callback shape
-    match verifier.verify_and_construct(raw_body, query_hmac) {
-        Ok(PaymobWebhookPayload::Transaction(tx)) => {
-            if tx.success && !tx.pending {
+    match engine.construct_event(raw_body, query_hmac)? {
+        WebhookEvent::TransactionProcessed(tx) => {
+            if tx.obj.success && !tx.obj.pending {
                 println!(
-                    "Verified Paymob payment: tx_id={}, order_id={}, amount_cents={} {}",
-                    tx.id, tx.order.id, tx.amount_cents, tx.currency
+                    "Verified Paymob payment: tx_id={}, order_id={}, amount_cents={}",
+                    tx.obj.id, tx.obj.order.id, tx.obj.amount_cents
                 );
             }
         }
-        Ok(PaymobWebhookPayload::CardToken(token)) => {
-            println!("Verified saved card token: {} (masked: {})", token.token, token.masked_pan);
+        WebhookEvent::CardTokenSaved(token) => {
+            println!("Verified saved card token id={} masked={}", token.obj.id, token.obj.masked_pan);
         }
-        Ok(PaymobWebhookPayload::Subscription(sub)) => {
-            println!("Verified subscription lifecycle update: {:?}", sub);
+        WebhookEvent::SubscriptionLifecycle(sub) => {
+            println!("Verified subscription update: sub_id={}", sub.subscription_data.id);
         }
-        Err(err) => {
-            eprintln!("SECURITY ALERT: Rejected tampered Paymob webhook: {err}");
+        WebhookEvent::PayoutDisbursement(payout) => {
+            println!("Verified payout callback: tx_id={}", payout.transaction_id);
         }
+        _ => {}
     }
+    Ok(())
 }
 ```
 
@@ -213,13 +213,14 @@ fn handle_paymob_webhook(raw_body: &[u8], query_hmac: Option<&str>, hmac_secret:
 
 | Service Namespace | Accessor | Endpoints & Capabilities | Official Documentation |
 | :--- | :--- | :--- | :--- |
-| **Unified Intentions** | `client.intentions()` | `POST /v1/intention/`, `PUT /v1/intention/`, Unified Checkout & Pixel session builders, [Affordability Widget](https://developers.paymob.com/paymob-docs/developers/checkout-experiences/affordability-widget) plans | [Create Intention](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) |
-| **Transactions & Actions** | `client.transactions()` | Auth/Capture, Void, Refund, Transaction Inquiry by ID / `merchant_order_id`, and [Split Features](https://developers.paymob.com/paymob-docs/payments-and-features/core-features/split-features) | [Paymob Egypt Hub](https://developers.paymob.com/hub/egypt) |
-| **Card Tokenization & CIT/MIT** | `client.tokens()` | Saved Card Token creation, Customer-Initiated Transactions (CIT), and recurring MOTO charges | [HMAC Card Token Callback](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-for-card-tokens) |
-| **Subscriptions** | `client.subscriptions()` | Recurring billing plans, subscription state management, and body-embedded HMAC verification | [Subscription Callbacks](https://developers.paymob.com/paymob-docs/developers/subscription/hmac-calculation-for-subscription-callback) |
-| **Paymob Send (Payouts)** | `client.payouts()` | `POST /api/secure/disburse/` ([Vodafone](https://developers.paymob.com/paymob-docs/developers/payouts-apis/cashin-api/vodafone-cashin), [Etisalat](https://developers.paymob.com/paymob-docs/developers/payouts-apis/cashin-api/etisalat-cash), Orange, Bank Card/Wallet), [Budget & Disbursement Inquiries](https://developers.paymob.com/paymob-docs/developers/payouts-apis/inquires), [Payout Callbacks](https://developers.paymob.com/paymob-docs/developers/payouts-apis/payout-callbacks) | [Payouts Overview](https://developers.paymob.com/paymob-docs/beyond-payments/payouts) |
-| **Partner Onboarding** | `client.partner()` | Partner Login, Partner API Key creation, Retrieve Partner HMAC Secret, Register Merchant, Submit Onboarding Step | [Partner Onboarding APIs](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) |
-| **Webhook HMAC Engine** | `client.webhooks()` | Constant-time `HMAC-SHA512` verification for Transaction Processed, Response Redirect, Card Token, and Subscription callbacks | [Webhook & HMAC Overview](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/overview) |
+| **Unified Intentions & Checkout** | `client.intentions()`, `client.checkout()` | `POST /v1/intention/`, `PUT /v1/intention/`, Unified Checkout & Pixel session builders, [Affordability Widget](https://developers.paymob.com/paymob-docs/developers/checkout-experiences/affordability-widget) plans | [Create Intention](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) |
+| **Payment Lifecycle Management** | `client.manage()` | `POST /api/acceptance/void_refund/refund`, `POST /api/acceptance/void_refund/void`, `POST /api/acceptance/capture` | [Paymob Egypt Hub](https://developers.paymob.com/hub/egypt) |
+| **Inquiries & QuickLinks** | `client.inquiries()`, `client.quicklinks()` | `GET /api/acceptance/transactions/{id}`, `POST /api/ecommerce/orders/transaction_inquiry`, `GET /api/ecommerce/orders/{id}`, `POST /api/acceptance/order_card_tokens`, `POST /api/ecommerce/payment-links` | [Transaction Inquiries](https://developers.paymob.com/hub/egypt) |
+| **Saved Cards & CIT/MIT** | `client.saved_cards()` | `POST /api/acceptance/payments/pay` (`TOKEN`, `WALLET`, `AGGREGATOR` Kiosk, raw `source`) and `use_cvc_with_moto` validation | [HMAC Card Token Callback](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/hmac/hmac-for-card-tokens) |
+| **Subscriptions** | `client.subscriptions()` | Subscription plans CRUD, subscription lifecycle (`suspend`, `resume`, `cancel`), card vault, transaction history, and `refund_last_transaction` | [Subscription Callbacks](https://developers.paymob.com/paymob-docs/developers/subscription/hmac-calculation-for-subscription-callback) |
+| **Paymob Send (Payouts)** | `client.payouts()` | OAuth 2.0 (`POST /api/secure/o/token/`), 7-issuer Instant Cashin (`POST /api/secure/disburse/`), Aman Cancel, Bulk Disbursement, Budget/Tx/Topup Inquiries, Topup Requests | [Payouts Overview](https://developers.paymob.com/paymob-docs/beyond-payments/payouts) |
+| **Partner Onboarding** | `client.onboarding()` | Partner Login, Partner API Key creation, Retrieve Partner HMAC Secret, Register Merchant, Onboarding Schema, Step Submission, `MerchantScopedClient` | [Partner Onboarding APIs](https://developers.paymob.com/paymob-docs/intention-apis/create-intention) |
+| **Webhook HMAC Engine** | `client.webhooks()` | Constant-time `HMAC-SHA512` verification for Protocols A–E and `IdempotentWebhookGuard` | [Webhook & HMAC Overview](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac/overview) |
 
 ---
 

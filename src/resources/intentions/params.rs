@@ -3,12 +3,16 @@
 //!
 //! Provides [`PaymentMethodInput`], [`CreateIntentionParams`], and
 //! [`UpdateIntentionParams`] with zero-float minor-unit amounts, untagged
-//! integration ID / method name serialization, and builder-time validation.
+//! integration ID / method name serialization, builder-time and
+//! deserialization-time validation, and `ZeroizeOnDrop` hygiene for saved
+//! `card_tokens`.
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::de::Error as DeError;
+use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
+use zeroize::Zeroize;
 
 use crate::core::error::PaymobError;
 use crate::core::types::{Currency, MinorUnitAmount};
@@ -96,7 +100,31 @@ impl PaymentMethodInput {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Direct struct literal construction is rejected at compile time so callers
+/// cannot bypass [`CreateIntentionParamsBuilder::build`]:
+///
+/// ```compile_fail
+/// use some_paymob::core::types::{Currency, MinorUnitAmount};
+/// use some_paymob::resources::intentions::params::CreateIntentionParams;
+///
+/// let _ = CreateIntentionParams {
+///     amount: MinorUnitAmount::ZERO,
+///     currency: Currency::EGP,
+///     payment_methods: vec![],
+///     items: None,
+///     billing_data: None,
+///     customer: None,
+///     extras: None,
+///     special_reference: None,
+///     expiration: None,
+///     notification_url: None,
+///     redirection_url: None,
+///     pre_selected_plan: None,
+///     card_tokens: None,
+/// };
+/// ```
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct CreateIntentionParams {
     amount: MinorUnitAmount,
     currency: Currency,
@@ -121,6 +149,70 @@ pub struct CreateIntentionParams {
     pre_selected_plan: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     card_tokens: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct RawCreateIntentionParams {
+    amount: MinorUnitAmount,
+    currency: Currency,
+    payment_methods: Vec<PaymentMethodInput>,
+    #[serde(default)]
+    items: Option<Vec<IntentionItem>>,
+    #[serde(default)]
+    billing_data: Option<BillingData>,
+    #[serde(default)]
+    customer: Option<IntentionCustomer>,
+    #[serde(default)]
+    extras: Option<serde_json::Value>,
+    #[serde(default)]
+    special_reference: Option<String>,
+    #[serde(default)]
+    expiration: Option<u64>,
+    #[serde(default)]
+    notification_url: Option<String>,
+    #[serde(default)]
+    redirection_url: Option<String>,
+    #[serde(default)]
+    pre_selected_plan: Option<u64>,
+    #[serde(default)]
+    card_tokens: Option<Vec<String>>,
+}
+
+impl<'de> Deserialize<'de> for CreateIntentionParams {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawCreateIntentionParams::deserialize(deserializer)?;
+        from_raw_create_params(raw).map_err(D::Error::custom)
+    }
+}
+
+fn from_raw_create_params(
+    raw: RawCreateIntentionParams,
+) -> Result<CreateIntentionParams, PaymobError> {
+    CreateIntentionParamsBuilder {
+        amount: Some(raw.amount),
+        currency: Some(raw.currency),
+        payment_methods: Some(raw.payment_methods),
+        items: raw.items,
+        billing_data: raw.billing_data,
+        customer: raw.customer,
+        extras: raw.extras,
+        special_reference: raw.special_reference.and_then(trim_opt),
+        expiration: raw.expiration,
+        notification_url: raw.notification_url.and_then(trim_opt),
+        redirection_url: raw.redirection_url.and_then(trim_opt),
+        pre_selected_plan: raw.pre_selected_plan,
+        card_tokens: raw.card_tokens,
+    }
+    .build()
+}
+
+impl Drop for CreateIntentionParams {
+    fn drop(&mut self) {
+        zeroize_card_tokens(&mut self.card_tokens);
+    }
 }
 
 impl CreateIntentionParams {
@@ -240,6 +332,12 @@ pub struct CreateIntentionParamsBuilder {
     card_tokens: Option<Vec<String>>,
 }
 
+impl Drop for CreateIntentionParamsBuilder {
+    fn drop(&mut self) {
+        zeroize_card_tokens(&mut self.card_tokens);
+    }
+}
+
 impl CreateIntentionParamsBuilder {
     /// Creates an empty [`CreateIntentionParamsBuilder`].
     #[must_use]
@@ -333,8 +431,9 @@ impl CreateIntentionParamsBuilder {
 
     /// Sets optional saved `card_tokens` for one-click / MIT checkout.
     #[must_use]
-    pub fn card_tokens(mut self, card_tokens: Vec<String>) -> Self {
-        self.card_tokens = Some(card_tokens);
+    pub fn card_tokens(mut self, mut card_tokens: Vec<String>) -> Self {
+        zeroize_card_tokens(&mut self.card_tokens);
+        self.card_tokens = Some(std::mem::take(&mut card_tokens));
         self
     }
 
@@ -344,31 +443,34 @@ impl CreateIntentionParamsBuilder {
     ///
     /// Returns [`PaymobError::ValidationError`] if `amount` is missing or zero,
     /// `currency` is missing or empty, `payment_methods` is empty or invalid,
-    /// or any optional URL or line item fails validation.
-    pub fn build(self) -> Result<CreateIntentionParams, PaymobError> {
+    /// or any optional URL, item, expiration, plan, or card token fails validation.
+    pub fn build(mut self) -> Result<CreateIntentionParams, PaymobError> {
         let amount = validate_required_amount(self.amount)?;
-        let currency = validate_required_currency(self.currency)?;
-        let payment_methods = validate_required_methods(self.payment_methods)?;
-        validate_optional_urls(
+        let currency = validate_required_currency(self.currency.take())?;
+        let payment_methods = validate_required_methods(self.payment_methods.take())?;
+        validate_common_optional_fields(
+            self.items.as_deref(),
             self.notification_url.as_deref(),
             self.redirection_url.as_deref(),
+            self.expiration,
+            self.pre_selected_plan,
+            self.card_tokens.as_deref(),
         )?;
-        validate_card_tokens(self.card_tokens.as_deref())?;
 
         Ok(CreateIntentionParams {
             amount,
             currency,
             payment_methods,
-            items: self.items,
-            billing_data: self.billing_data,
-            customer: self.customer,
-            extras: self.extras,
-            special_reference: self.special_reference,
+            items: self.items.take(),
+            billing_data: self.billing_data.take(),
+            customer: self.customer.take(),
+            extras: self.extras.take(),
+            special_reference: self.special_reference.take(),
             expiration: self.expiration,
-            notification_url: self.notification_url,
-            redirection_url: self.redirection_url,
+            notification_url: self.notification_url.take(),
+            redirection_url: self.redirection_url.take(),
             pre_selected_plan: self.pre_selected_plan,
-            card_tokens: self.card_tokens,
+            card_tokens: self.card_tokens.take(),
         })
     }
 }
@@ -405,7 +507,7 @@ impl fmt::Debug for CreateIntentionParamsBuilder {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct UpdateIntentionParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     amount: Option<MinorUnitAmount>,
@@ -433,6 +535,73 @@ pub struct UpdateIntentionParams {
     pre_selected_plan: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     card_tokens: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct RawUpdateIntentionParams {
+    #[serde(default)]
+    amount: Option<MinorUnitAmount>,
+    #[serde(default)]
+    currency: Option<Currency>,
+    #[serde(default)]
+    payment_methods: Option<Vec<PaymentMethodInput>>,
+    #[serde(default)]
+    items: Option<Vec<IntentionItem>>,
+    #[serde(default)]
+    billing_data: Option<BillingData>,
+    #[serde(default)]
+    customer: Option<IntentionCustomer>,
+    #[serde(default)]
+    extras: Option<serde_json::Value>,
+    #[serde(default)]
+    special_reference: Option<String>,
+    #[serde(default)]
+    expiration: Option<u64>,
+    #[serde(default)]
+    notification_url: Option<String>,
+    #[serde(default)]
+    redirection_url: Option<String>,
+    #[serde(default)]
+    pre_selected_plan: Option<u64>,
+    #[serde(default)]
+    card_tokens: Option<Vec<String>>,
+}
+
+impl<'de> Deserialize<'de> for UpdateIntentionParams {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawUpdateIntentionParams::deserialize(deserializer)?;
+        from_raw_update_params(raw).map_err(D::Error::custom)
+    }
+}
+
+fn from_raw_update_params(
+    raw: RawUpdateIntentionParams,
+) -> Result<UpdateIntentionParams, PaymobError> {
+    UpdateIntentionParamsBuilder {
+        amount: raw.amount,
+        currency: raw.currency,
+        payment_methods: raw.payment_methods,
+        items: raw.items,
+        billing_data: raw.billing_data,
+        customer: raw.customer,
+        extras: raw.extras,
+        special_reference: raw.special_reference.and_then(trim_opt),
+        expiration: raw.expiration,
+        notification_url: raw.notification_url.and_then(trim_opt),
+        redirection_url: raw.redirection_url.and_then(trim_opt),
+        pre_selected_plan: raw.pre_selected_plan,
+        card_tokens: raw.card_tokens,
+    }
+    .build()
+}
+
+impl Drop for UpdateIntentionParams {
+    fn drop(&mut self) {
+        zeroize_card_tokens(&mut self.card_tokens);
+    }
 }
 
 impl UpdateIntentionParams {
@@ -497,6 +666,12 @@ pub struct UpdateIntentionParamsBuilder {
     redirection_url: Option<String>,
     pre_selected_plan: Option<u64>,
     card_tokens: Option<Vec<String>>,
+}
+
+impl Drop for UpdateIntentionParamsBuilder {
+    fn drop(&mut self) {
+        zeroize_card_tokens(&mut self.card_tokens);
+    }
 }
 
 impl UpdateIntentionParamsBuilder {
@@ -592,8 +767,9 @@ impl UpdateIntentionParamsBuilder {
 
     /// Sets the updated saved `card_tokens`.
     #[must_use]
-    pub fn card_tokens(mut self, card_tokens: Vec<String>) -> Self {
-        self.card_tokens = Some(card_tokens);
+    pub fn card_tokens(mut self, mut card_tokens: Vec<String>) -> Self {
+        zeroize_card_tokens(&mut self.card_tokens);
+        self.card_tokens = Some(std::mem::take(&mut card_tokens));
         self
     }
 
@@ -603,21 +779,21 @@ impl UpdateIntentionParamsBuilder {
     ///
     /// Returns [`PaymobError::ValidationError`] if no fields are set, or if any
     /// provided field violates domain constraints.
-    pub fn build(self) -> Result<UpdateIntentionParams, PaymobError> {
+    pub fn build(mut self) -> Result<UpdateIntentionParams, PaymobError> {
         let params = UpdateIntentionParams {
             amount: self.amount,
-            currency: self.currency,
-            payment_methods: self.payment_methods,
-            items: self.items,
-            billing_data: self.billing_data,
-            customer: self.customer,
-            extras: self.extras,
-            special_reference: self.special_reference,
+            currency: self.currency.take(),
+            payment_methods: self.payment_methods.take(),
+            items: self.items.take(),
+            billing_data: self.billing_data.take(),
+            customer: self.customer.take(),
+            extras: self.extras.take(),
+            special_reference: self.special_reference.take(),
             expiration: self.expiration,
-            notification_url: self.notification_url,
-            redirection_url: self.redirection_url,
+            notification_url: self.notification_url.take(),
+            redirection_url: self.redirection_url.take(),
             pre_selected_plan: self.pre_selected_plan,
-            card_tokens: self.card_tokens,
+            card_tokens: self.card_tokens.take(),
         };
         validate_update_params(&params)?;
         Ok(params)
@@ -631,6 +807,15 @@ impl fmt::Debug for UpdateIntentionParamsBuilder {
             .field("currency", &self.currency)
             .field("card_tokens", &self.card_tokens.as_ref().map(|_| REDACTED))
             .finish_non_exhaustive()
+    }
+}
+
+fn zeroize_card_tokens(tokens: &mut Option<Vec<String>>) {
+    if let Some(list) = tokens.as_mut() {
+        for token in list.iter_mut() {
+            token.zeroize();
+        }
+        list.clear();
     }
 }
 
@@ -664,13 +849,18 @@ fn validate_required_currency(currency: Option<Currency>) -> Result<Currency, Pa
         field: "currency",
         reason: "currency is required".to_owned(),
     })?;
-    if cur.as_str().trim().is_empty() {
+    validate_currency_value(&cur)?;
+    Ok(cur)
+}
+
+fn validate_currency_value(currency: &Currency) -> Result<(), PaymobError> {
+    if currency.as_str().trim().is_empty() {
         return Err(PaymobError::ValidationError {
             field: "currency",
             reason: "currency cannot be empty".to_owned(),
         });
     }
-    Ok(cur)
+    Ok(())
 }
 
 fn validate_required_methods(
@@ -714,6 +904,16 @@ fn validate_single_method(method: &PaymentMethodInput) -> Result<(), PaymobError
     }
 }
 
+fn validate_items_slice(items: Option<&[IntentionItem]>) -> Result<(), PaymobError> {
+    let Some(list) = items else {
+        return Ok(());
+    };
+    for item in list {
+        item.validate()?;
+    }
+    Ok(())
+}
+
 fn validate_optional_urls(
     notification_url: Option<&str>,
     redirection_url: Option<&str>,
@@ -741,17 +941,50 @@ fn validate_http_url(raw: &str, field: &'static str) -> Result<(), PaymobError> 
     Ok(())
 }
 
+fn validate_expiration_and_plan(
+    expiration: Option<u64>,
+    pre_selected_plan: Option<u64>,
+) -> Result<(), PaymobError> {
+    if expiration == Some(0) {
+        return Err(PaymobError::ValidationError {
+            field: "expiration",
+            reason: "expiration must be greater than zero seconds".to_owned(),
+        });
+    }
+    if pre_selected_plan == Some(0) {
+        return Err(PaymobError::ValidationError {
+            field: "pre_selected_plan",
+            reason: "pre_selected_plan must be greater than zero".to_owned(),
+        });
+    }
+    Ok(())
+}
+
 fn validate_card_tokens(tokens: Option<&[String]>) -> Result<(), PaymobError> {
     let Some(list) = tokens else {
         return Ok(());
     };
-    if list.iter().any(|t| t.trim().is_empty()) {
+    if list.is_empty() || list.iter().any(|t| t.trim().is_empty()) {
         return Err(PaymobError::ValidationError {
             field: "card_tokens",
-            reason: "card_tokens entries cannot be empty".to_owned(),
+            reason: "card_tokens must be non-empty and contain no blank entries".to_owned(),
         });
     }
     Ok(())
+}
+
+fn validate_common_optional_fields(
+    items: Option<&[IntentionItem]>,
+    notification_url: Option<&str>,
+    redirection_url: Option<&str>,
+    expiration: Option<u64>,
+    pre_selected_plan: Option<u64>,
+    card_tokens: Option<&[String]>,
+) -> Result<(), PaymobError> {
+    validate_items_slice(items)?;
+    validate_optional_urls(notification_url, redirection_url)?;
+    validate_expiration_and_plan(expiration, pre_selected_plan)?;
+    validate_card_tokens(card_tokens)
 }
 
 fn has_any_update_field(p: &UpdateIntentionParams) -> bool {
@@ -774,6 +1007,22 @@ fn has_any_update_field(p: &UpdateIntentionParams) -> bool {
     .any(|present| present)
 }
 
+fn validate_optional_amount_and_currency(
+    amount: Option<MinorUnitAmount>,
+    currency: Option<&Currency>,
+) -> Result<(), PaymobError> {
+    if amount.is_some_and(MinorUnitAmount::is_zero) {
+        return Err(PaymobError::ValidationError {
+            field: "amount",
+            reason: "amount must be greater than zero minor units".to_owned(),
+        });
+    }
+    if let Some(cur) = currency {
+        validate_currency_value(cur)?;
+    }
+    Ok(())
+}
+
 fn validate_update_params(p: &UpdateIntentionParams) -> Result<(), PaymobError> {
     if !has_any_update_field(p) {
         return Err(PaymobError::ValidationError {
@@ -781,17 +1030,18 @@ fn validate_update_params(p: &UpdateIntentionParams) -> Result<(), PaymobError> 
             reason: "at least one field must be provided to update an intention".to_owned(),
         });
     }
-    if p.amount.is_some_and(MinorUnitAmount::is_zero) {
-        return Err(PaymobError::ValidationError {
-            field: "amount",
-            reason: "amount must be greater than zero minor units".to_owned(),
-        });
-    }
+    validate_optional_amount_and_currency(p.amount, p.currency.as_ref())?;
     if let Some(methods) = p.payment_methods.as_deref() {
         validate_methods_slice(methods)?;
     }
-    validate_optional_urls(p.notification_url.as_deref(), p.redirection_url.as_deref())?;
-    validate_card_tokens(p.card_tokens.as_deref())
+    validate_common_optional_fields(
+        p.items.as_deref(),
+        p.notification_url.as_deref(),
+        p.redirection_url.as_deref(),
+        p.expiration,
+        p.pre_selected_plan,
+        p.card_tokens.as_deref(),
+    )
 }
 
 #[cfg(test)]
@@ -888,6 +1138,34 @@ mod tests {
                 ..
             })
         ));
+
+        let zero_plan = CreateIntentionParams::builder()
+            .amount(1_000_u64)
+            .currency(Currency::EGP)
+            .payment_methods(vec![PaymentMethodInput::IntegrationId(123)])
+            .pre_selected_plan(0)
+            .build();
+        assert!(matches!(
+            zero_plan,
+            Err(PaymobError::ValidationError {
+                field: "pre_selected_plan",
+                ..
+            })
+        ));
+
+        let zero_expiration = CreateIntentionParams::builder()
+            .amount(1_000_u64)
+            .currency(Currency::EGP)
+            .payment_methods(vec![PaymentMethodInput::IntegrationId(123)])
+            .expiration(0)
+            .build();
+        assert!(matches!(
+            zero_expiration,
+            Err(PaymobError::ValidationError {
+                field: "expiration",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -908,5 +1186,45 @@ mod tests {
             .expect("valid update");
         assert_eq!(valid.amount().map(MinorUnitAmount::as_u64), Some(150_000));
         assert_eq!(valid.special_reference(), Some("ref-002"));
+    }
+
+    #[test]
+    fn tc_2_1_cycle2_deserialize_create_and_update_params_enforce_bounds() {
+        let zero_amount = serde_json::from_str::<CreateIntentionParams>(
+            r#"{"amount":0,"currency":"EGP","payment_methods":[4097558]}"#,
+        );
+        assert!(zero_amount.is_err());
+
+        let blank_currency = serde_json::from_str::<CreateIntentionParams>(
+            r#"{"amount":1000,"currency":"   ","payment_methods":[4097558]}"#,
+        );
+        assert!(blank_currency.is_err());
+
+        let empty_methods = serde_json::from_str::<CreateIntentionParams>(
+            r#"{"amount":1000,"currency":"EGP","payment_methods":[]}"#,
+        );
+        assert!(empty_methods.is_err());
+
+        let zero_plan = serde_json::from_str::<CreateIntentionParams>(
+            r#"{"amount":1000,"currency":"EGP","payment_methods":[4097558],"pre_selected_plan":0}"#,
+        );
+        assert!(zero_plan.is_err());
+
+        let zero_exp = serde_json::from_str::<CreateIntentionParams>(
+            r#"{"amount":1000,"currency":"EGP","payment_methods":[4097558],"expiration":0}"#,
+        );
+        assert!(zero_exp.is_err());
+
+        let bad_tokens = serde_json::from_str::<CreateIntentionParams>(
+            r#"{"amount":1000,"currency":"EGP","payment_methods":[4097558],"card_tokens":[""]}"#,
+        );
+        assert!(bad_tokens.is_err());
+
+        let empty_update = serde_json::from_str::<UpdateIntentionParams>(r#"{}"#);
+        assert!(empty_update.is_err());
+
+        let update_zero_plan =
+            serde_json::from_str::<UpdateIntentionParams>(r#"{"pre_selected_plan":0}"#);
+        assert!(update_zero_plan.is_err());
     }
 }

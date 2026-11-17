@@ -1,13 +1,15 @@
 #![forbid(unsafe_code)]
 //! Billing, customer, and line-item models for Paymob v1 Payment Intentions.
 //!
-//! Enforces builder-time validation of mandatory `billing_data.phone_number`
-//! and `IntentionItem` (`name` and integer minor-unit `amount`), while redacting
-//! all customer PII in [`fmt::Debug`] output (`[REDACTED]`).
+//! Enforces builder-time and deserialization-time validation of mandatory
+//! `billing_data.phone_number` and `IntentionItem` (`name`, positive integer
+//! minor-unit `amount`, and non-zero `quantity`), while redacting all customer
+//! PII in [`fmt::Debug`] output (`[REDACTED]`).
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::de::Error as DeError;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::error::PaymobError;
 use crate::core::types::MinorUnitAmount;
@@ -40,7 +42,30 @@ const REDACTED: &str = "[REDACTED]";
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Direct struct literal construction is rejected at compile time so callers
+/// cannot bypass [`BillingDataBuilder::build`]:
+///
+/// ```compile_fail
+/// use some_paymob::resources::intentions::billing::BillingData;
+///
+/// let _ = BillingData {
+///     phone_number: String::new(),
+///     first_name: None,
+///     last_name: None,
+///     email: None,
+///     apartment: None,
+///     floor: None,
+///     street: None,
+///     building: None,
+///     shipping_method: None,
+///     postal_code: None,
+///     city: None,
+///     country: None,
+///     state: None,
+/// };
+/// ```
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct BillingData {
     phone_number: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -67,6 +92,68 @@ pub struct BillingData {
     country: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     state: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawBillingData {
+    phone_number: String,
+    #[serde(default)]
+    first_name: Option<String>,
+    #[serde(default)]
+    last_name: Option<String>,
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    apartment: Option<String>,
+    #[serde(default)]
+    floor: Option<String>,
+    #[serde(default)]
+    street: Option<String>,
+    #[serde(default)]
+    building: Option<String>,
+    #[serde(default)]
+    shipping_method: Option<String>,
+    #[serde(default)]
+    postal_code: Option<String>,
+    #[serde(default)]
+    city: Option<String>,
+    #[serde(default)]
+    country: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for BillingData {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawBillingData::deserialize(deserializer)?;
+        from_raw_billing(raw).map_err(D::Error::custom)
+    }
+}
+
+fn from_raw_billing(raw: RawBillingData) -> Result<BillingData, PaymobError> {
+    let phone_number = require_non_empty(
+        Some(raw.phone_number),
+        "billing_data.phone_number",
+        "billing_data.phone_number is required and cannot be empty",
+    )?;
+    Ok(BillingData {
+        phone_number,
+        first_name: raw.first_name.and_then(normalize_opt),
+        last_name: raw.last_name.and_then(normalize_opt),
+        email: raw.email.and_then(normalize_opt),
+        apartment: raw.apartment.and_then(normalize_opt),
+        floor: raw.floor.and_then(normalize_opt),
+        street: raw.street.and_then(normalize_opt),
+        building: raw.building.and_then(normalize_opt),
+        shipping_method: raw.shipping_method.and_then(normalize_opt),
+        postal_code: raw.postal_code.and_then(normalize_opt),
+        city: raw.city.and_then(normalize_opt),
+        country: raw.country.and_then(normalize_opt),
+        state: raw.state.and_then(normalize_opt),
+    })
 }
 
 impl BillingData {
@@ -270,7 +357,7 @@ impl BillingDataBuilder {
         self
     }
 
-    /// Sets the city name.
+    /// Sets the state or governorate name.
     #[must_use]
     pub fn city(mut self, city: impl Into<String>) -> Self {
         self.city = normalize_opt(city.into());
@@ -437,8 +524,8 @@ impl fmt::Debug for IntentionCustomer {
 
 /// Validated line item in a v1 Payment Intention (`items[]`).
 ///
-/// Enforces non-empty `name` and strictly positive integer minor-unit `amount`
-/// (zero floats).
+/// Enforces non-empty `name`, strictly positive integer minor-unit `amount`
+/// (zero floats), and non-zero `quantity` when present.
 ///
 /// # Examples
 ///
@@ -456,7 +543,7 @@ impl fmt::Debug for IntentionCustomer {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct IntentionItem {
     name: String,
     amount: MinorUnitAmount,
@@ -464,6 +551,37 @@ pub struct IntentionItem {
     description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     quantity: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct RawIntentionItem {
+    name: String,
+    amount: MinorUnitAmount,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    quantity: Option<u64>,
+}
+
+impl<'de> Deserialize<'de> for IntentionItem {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawIntentionItem::deserialize(deserializer)?;
+        from_raw_item(raw).map_err(D::Error::custom)
+    }
+}
+
+fn from_raw_item(raw: RawIntentionItem) -> Result<IntentionItem, PaymobError> {
+    let mut item = IntentionItem::new(raw.name, raw.amount)?;
+    if let Some(desc) = raw.description {
+        item.description = normalize_opt(desc);
+    }
+    if let Some(qty) = raw.quantity {
+        item = item.try_with_quantity(qty)?;
+    }
+    Ok(item)
 }
 
 impl IntentionItem {
@@ -511,6 +629,50 @@ impl IntentionItem {
     pub const fn with_quantity(mut self, quantity: u64) -> Self {
         self.quantity = Some(quantity);
         self
+    }
+
+    /// Attaches a validated non-zero item quantity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `quantity == 0`.
+    pub fn try_with_quantity(mut self, quantity: u64) -> Result<Self, PaymobError> {
+        if quantity == 0 {
+            return Err(PaymobError::ValidationError {
+                field: "items.quantity",
+                reason: "item quantity must be greater than zero".to_owned(),
+            });
+        }
+        self.quantity = Some(quantity);
+        Ok(self)
+    }
+
+    /// Validates all domain invariants on this [`IntentionItem`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `name` is blank, `amount` is zero,
+    /// or `quantity` is `Some(0)`.
+    pub fn validate(&self) -> Result<(), PaymobError> {
+        if self.name.trim().is_empty() {
+            return Err(PaymobError::ValidationError {
+                field: "items.name",
+                reason: "item name is required and cannot be empty".to_owned(),
+            });
+        }
+        if self.amount.is_zero() {
+            return Err(PaymobError::ValidationError {
+                field: "items.amount",
+                reason: "item amount must be greater than zero minor units".to_owned(),
+            });
+        }
+        if self.quantity == Some(0) {
+            return Err(PaymobError::ValidationError {
+                field: "items.quantity",
+                reason: "item quantity must be greater than zero".to_owned(),
+            });
+        }
+        Ok(())
     }
 
     /// Returns the item name.
@@ -626,6 +788,7 @@ mod tests {
         assert_eq!(item.name(), "Coffee");
         assert_eq!(item.amount().as_u64(), 4_000);
         assert_eq!(item.quantity(), Some(2));
+        item.validate().expect("valid item invariants");
 
         let empty_name = IntentionItem::new("  ", 4_000_u64);
         assert!(matches!(
@@ -641,6 +804,17 @@ mod tests {
             zero_amount,
             Err(PaymobError::ValidationError {
                 field: "items.amount",
+                ..
+            })
+        ));
+
+        let zero_qty = IntentionItem::new("Coffee", 4_000_u64)
+            .expect("valid item")
+            .try_with_quantity(0);
+        assert!(matches!(
+            zero_qty,
+            Err(PaymobError::ValidationError {
+                field: "items.quantity",
                 ..
             })
         ));
@@ -669,5 +843,32 @@ mod tests {
         assert!(cust_dbg.contains("[REDACTED]"));
         assert!(!cust_dbg.contains("customer@example.com"));
         assert!(!cust_dbg.contains("Maher"));
+    }
+
+    #[test]
+    fn tc_2_1_cycle2_deserialize_billing_and_item_enforce_domain_bounds() {
+        let blank_phone = serde_json::from_str::<BillingData>(r#"{"phone_number":"   "}"#);
+        assert!(blank_phone.is_err());
+
+        let normalized_billing = serde_json::from_str::<BillingData>(
+            r#"{"phone_number":" +201116491564 ","first_name":"  ","city":" Mansoura "}"#,
+        )
+        .expect("valid billing deserialization");
+        assert_eq!(normalized_billing.phone_number(), "+201116491564");
+        assert_eq!(normalized_billing.first_name(), None);
+        assert_eq!(normalized_billing.city(), Some("Mansoura"));
+
+        let blank_item_name =
+            serde_json::from_str::<IntentionItem>(r#"{"name":"  ","amount":1000}"#);
+        assert!(blank_item_name.is_err());
+
+        let zero_item_amount =
+            serde_json::from_str::<IntentionItem>(r#"{"name":"Course","amount":0}"#);
+        assert!(zero_item_amount.is_err());
+
+        let zero_item_qty = serde_json::from_str::<IntentionItem>(
+            r#"{"name":"Course","amount":1000,"quantity":0}"#,
+        );
+        assert!(zero_item_qty.is_err());
     }
 }

@@ -22,18 +22,6 @@ mod suite {
     };
     use some_paymob::webhooks::PaymobWebhookEngine;
 
-    async fn send_inquiry(
-        client: &reqwest::Client,
-        url: &str,
-        tok: &SecretString,
-    ) -> Result<reqwest::Response, AcceptJwtError> {
-        Ok(client
-            .post(url)
-            .json(&json!({ "auth_token": tok.expose_secret() }))
-            .send()
-            .await?)
-    }
-
     fn build_mock_client(server: &PaymobMockServer) -> PaymobClient {
         let config = ClientConfig::builder()
             .region(server.custom_region())
@@ -92,7 +80,13 @@ mod suite {
             .execute_with_retry(|tok| {
                 let c = reqwest_client.clone();
                 let u = accept_url.to_string();
-                async move { send_inquiry(&c, &u, &tok).await }
+                async move {
+                    c.post(&u)
+                        .json(&json!({ "auth_token": tok.expose_secret() }))
+                        .send()
+                        .await
+                        .map_err(AcceptJwtError::from)
+                }
             })
             .await
             .expect("401 triggers refresh and succeeds");

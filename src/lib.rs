@@ -28,6 +28,14 @@ pub mod resources;
 #[cfg(feature = "webhooks")]
 pub mod webhooks;
 
+/// Northbound `some-payments` cross-gateway unified adapter traits and `PaymobExt` escape hatch.
+#[cfg(feature = "some-payments-adapter")]
+pub mod adapter;
+
+/// Deterministic offline test vectors, multi-regime `wiremock` server, and sandbox constraint guards.
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
+
 /// Crate-root re-exports of the core Paymob client, configuration, region, error, and money types.
 pub use crate::core::client::PaymobClient;
 pub use crate::core::config::{ClientConfig, ClientConfigBuilder};

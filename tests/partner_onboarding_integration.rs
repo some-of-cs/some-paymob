@@ -484,10 +484,12 @@ async fn negative_http_status_codes_retry_after_and_malformed_json() {
     let gw_err = flow.merchant_inquiry(502).await.unwrap_err();
     assert!(gw_err.is_retryable());
 
-    assert!(matches!(
-        flow.merchant_inquiry(999).await.unwrap_err(),
-        PaymobError::TransportError(_)
-    ));
+    assert!(
+        flow.merchant_inquiry(999)
+            .await
+            .unwrap_err()
+            .is_validation_error()
+    );
 }
 
 #[tokio::test]

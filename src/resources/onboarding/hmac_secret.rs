@@ -174,6 +174,6 @@ mod tests {
             .retrieve_hmac_secret()
             .await
             .expect_err("malformed json must fail");
-        assert!(matches!(err2, PaymobError::TransportError(_)));
+        assert!(err2.is_validation_error());
     }
 }

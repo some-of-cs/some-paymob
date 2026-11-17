@@ -281,6 +281,6 @@ mod tests {
             .create_api_key(CreatePartnerApiKeyParams::new())
             .await
             .expect_err("malformed json must fail");
-        assert!(matches!(err2, PaymobError::TransportError(_)));
+        assert!(err2.is_validation_error());
     }
 }

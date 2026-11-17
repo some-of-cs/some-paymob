@@ -377,9 +377,7 @@ mod tests {
     use crate::core::config::ClientConfig;
     use crate::core::credentials::SecretKey;
     use crate::core::region::PaymobRegion;
-    use crate::resources::intentions::params::{
-        BillingData, CreateIntentionParams, PaymentMethodInput,
-    };
+    use crate::resources::intentions::{BillingData, CreateIntentionParams, PaymentMethodInput};
 
     #[test]
     fn tc_2_2_3_affordability_widget_builds_and_wires_plan_id() {

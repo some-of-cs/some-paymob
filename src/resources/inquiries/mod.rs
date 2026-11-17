@@ -11,11 +11,13 @@ pub use by_order::TransactionInquiryParams;
 pub use card_tokens::{CardTokenEnvelope, CardTokenObject};
 pub use order_inquiry::{OrderInquiryResponse, OrderShippingData, OrderTransactionAttempt};
 
+use reqwest::Method;
 use secrecy::SecretString;
-use url::Url;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 
-use crate::core::auth::accept_jwt::{AcceptJwtError, AcceptJwtProvider};
-use crate::core::client::PaymobClient;
+use crate::core::auth::accept_jwt::inject_body_auth_token;
+use crate::core::client::{PaymobClient, build_bearer_json_request};
 use crate::core::error::PaymobError;
 use crate::core::http::{HttpRequest, HttpResponse};
 
@@ -47,55 +49,58 @@ impl PaymobClient {
     }
 }
 
-pub(crate) async fn acquire_accept_jwt(
-    service: &InquiriesService<'_>,
-) -> Result<SecretString, PaymobError> {
-    let api_key =
-        service
-            .client()
-            .config()
-            .api_key()
-            .ok_or_else(|| PaymobError::ValidationError {
-                field: "api_key",
-                reason: "api_key must be configured for Regime 2 inquiry endpoints".to_owned(),
-            })?;
-    let provider = AcceptJwtProvider::with_cache(
-        service.client().endpoints().accept_base_url.as_str(),
-        SecretString::from(api_key.expose_secret().to_owned()),
-        service.client().auth().accept_cache_arc(),
-    )
-    .map_err(map_accept_jwt_error)?;
-    provider.token().await.map_err(map_accept_jwt_error)
-}
-
-pub(crate) async fn execute_accept_request(
-    service: &InquiriesService<'_>,
-    _url: &Url,
-    request: &HttpRequest,
-) -> Result<HttpResponse, PaymobError> {
-    service.client().execute_request(request).await
-}
-
-pub(crate) fn map_accept_jwt_error(err: AcceptJwtError) -> PaymobError {
-    match err {
-        AcceptJwtError::EmptyApiKey => PaymobError::ValidationError {
-            field: "api_key",
-            reason: err.to_string(),
-        },
-        AcceptJwtError::InvalidBaseUrl(_) | AcceptJwtError::InvalidJsonBody => {
-            PaymobError::ValidationError {
-                field: "accept_base_url",
-                reason: err.to_string(),
-            }
-        }
-        AcceptJwtError::InvalidCredentials | AcceptJwtError::InvalidHeaderValue => {
-            PaymobError::AuthenticationError(err.to_string())
-        }
-        AcceptJwtError::UnexpectedStatus { status, detail } => {
-            PaymobError::from_response(status, &detail, None)
-        }
-        AcceptJwtError::MissingTokenField | AcceptJwtError::Transport(_) => {
-            PaymobError::TransportError(err.to_string())
-        }
+fn missing_inquiry_api_key() -> PaymobError {
+    PaymobError::ValidationError {
+        field: "api_key",
+        reason: "api_key must be configured for Regime 2 inquiry endpoints".to_owned(),
     }
+}
+
+pub(crate) async fn execute_inquiry_bearer_get<T: DeserializeOwned>(
+    service: &InquiriesService<'_>,
+    path: &str,
+) -> Result<T, PaymobError> {
+    let url = service.client().accept_url(path)?;
+    let response = service
+        .client()
+        .execute_regime2_with_retry(missing_inquiry_api_key, |token| {
+            build_bearer_json_request::<()>(Method::GET, url.as_str(), token, None)
+        })
+        .await?;
+    decode_inquiry_response(&response)
+}
+
+pub(crate) async fn execute_inquiry_body_post<T: DeserializeOwned>(
+    service: &InquiriesService<'_>,
+    path: &str,
+    base_body: &Value,
+) -> Result<T, PaymobError> {
+    let url = service.client().accept_url(path)?;
+    let response = service
+        .client()
+        .execute_regime2_with_retry(missing_inquiry_api_key, |token| {
+            build_body_auth_post_request(url.as_str(), base_body, token)
+        })
+        .await?;
+    decode_inquiry_response(&response)
+}
+
+fn build_body_auth_post_request(
+    url: &str,
+    base_body: &Value,
+    token: &SecretString,
+) -> Result<HttpRequest, PaymobError> {
+    let mut body = base_body.clone();
+    inject_body_auth_token(&mut body, token).map_err(PaymobError::from)?;
+    HttpRequest::post(url)
+        .map_err(PaymobError::from)?
+        .with_json(&body)
+        .map_err(PaymobError::from)
+}
+
+fn decode_inquiry_response<T: DeserializeOwned>(response: &HttpResponse) -> Result<T, PaymobError> {
+    if !response.status.is_success() {
+        return Err(PaymobError::from_http_response(response));
+    }
+    response.json::<T>().map_err(PaymobError::from)
 }

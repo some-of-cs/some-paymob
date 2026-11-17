@@ -9,9 +9,13 @@
 use std::fmt;
 
 use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::core::error::PaymobError;
+use crate::core::types::{
+    serialize_opt_secret_string as serialize_opt_secret,
+    serialize_secret_string as serialize_secret,
+};
 
 /// Canonical identifier required by Paymob's Kiosk aggregator payment source.
 const KIOSK_AGGREGATOR_IDENTIFIER: &str = "AGGREGATOR";
@@ -269,23 +273,6 @@ fn validate_kiosk_identifier(identifier: &str) -> Result<(), PaymobError> {
         });
     }
     Ok(())
-}
-
-fn serialize_secret<S: Serializer>(
-    secret: &SecretString,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(secret.expose_secret())
-}
-
-fn serialize_opt_secret<S: Serializer>(
-    secret: &Option<SecretString>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    match secret {
-        Some(value) => serializer.serialize_str(value.expose_secret()),
-        None => serializer.serialize_none(),
-    }
 }
 
 #[cfg(test)]

@@ -230,7 +230,12 @@ impl LegacyV2Service {
     ) -> Result<Self, PaymobError> {
         let api_key = extract_trimmed_api_key(&client)?;
         let base_url = base_url.into().trim_end_matches('/').to_owned();
-        let jwt_provider = AcceptJwtProvider::new(&base_url, api_key).map_err(map_jwt_err)?;
+        let jwt_provider = AcceptJwtProvider::with_cache(
+            &base_url,
+            api_key,
+            client.auth().accept_cache_arc(),
+        )
+        .map_err(map_jwt_err)?;
         let http = build_http_for_base_url(&client, &base_url)?;
         Ok(Self {
             client,
@@ -486,7 +491,11 @@ fn build_http_for_base_url(
     client: &PaymobClient,
     base_url: &str,
 ) -> Result<HttpClient, PaymobError> {
-    if !base_url.starts_with("http://") {
+    let parsed = Url::parse(base_url).map_err(|err| PaymobError::ValidationError {
+        field: "base_url",
+        reason: err.to_string(),
+    })?;
+    if !crate::core::region::is_strict_loopback_http_url(&parsed) {
         return Ok(client.http().clone());
     }
     let cfg = client

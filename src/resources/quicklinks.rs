@@ -8,18 +8,14 @@
 
 use std::fmt;
 
-use reqwest::header::AUTHORIZATION;
-use secrecy::SecretString;
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use reqwest::Method;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::core::auth::accept_jwt::{
-    AcceptJwtProvider, format_bearer_header, is_incorrect_credentials_401,
-};
-use crate::core::client::PaymobClient;
+use crate::core::client::{PaymobClient, build_bearer_json_request};
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpRequest, HttpResponse};
+use crate::core::http::HttpResponse;
+use crate::core::types::deserialize_string_or_u64;
 
 const CREATE_PAYMENT_LINK_PATH: &str = "/api/ecommerce/payment-links";
 const CANCEL_PAYMENT_LINK_PATH: &str = "/api/ecommerce/payment-links/cancel";
@@ -285,41 +281,17 @@ impl<'a> QuickLinksService<'a> {
         url: &Url,
         payload: &T,
     ) -> Result<HttpResponse, PaymobError> {
-        let provider = self.accept_jwt_provider()?;
-        let token = provider.token().await.map_err(PaymobError::from)?;
-        let first = self.send_bearer_once(url, payload, &token).await?;
-        if !is_incorrect_credentials_401(first.status, &first.body) {
-            return Ok(first);
-        }
-        provider.cache().evict_if_matches(&token).await;
-        let fresh = provider.token().await.map_err(PaymobError::from)?;
-        self.send_bearer_once(url, payload, &fresh).await
-    }
-
-    async fn send_bearer_once<T: Serialize>(
-        &self,
-        url: &Url,
-        payload: &T,
-        token: &SecretString,
-    ) -> Result<HttpResponse, PaymobError> {
-        let header = format_bearer_header(token).map_err(PaymobError::from)?;
-        let request = HttpRequest::post(url.as_str())?
-            .with_header(AUTHORIZATION, header)
-            .with_json(payload)?;
-        self.client.execute_request(&request).await
-    }
-
-    fn accept_jwt_provider(&self) -> Result<AcceptJwtProvider, PaymobError> {
-        let api_key = self.client.config().api_key().ok_or_else(|| {
-            validation_err(
-                "api_key",
-                "api_key must be configured on ClientConfig for QuickLinks",
+        self.client
+            .execute_regime2_with_retry(
+                || {
+                    validation_err(
+                        "api_key",
+                        "api_key must be configured on ClientConfig for QuickLinks",
+                    )
+                },
+                |token| build_bearer_json_request(Method::POST, url.as_str(), token, Some(payload)),
             )
-        })?;
-        let secret = SecretString::from(api_key.expose_secret().to_owned());
-        let base_url = self.client.endpoints().accept_base_url.as_str();
-        let cache = self.client.auth().accept_cache_arc();
-        AcceptJwtProvider::with_cache(base_url, secret, cache).map_err(PaymobError::from)
+            .await
     }
 }
 
@@ -400,37 +372,6 @@ fn validate_redirection_url(raw_url: &str) -> Result<(), PaymobError> {
         ));
     }
     Ok(())
-}
-
-fn deserialize_string_or_u64<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct StringOrU64Visitor;
-
-    impl<'de> Visitor<'de> for StringOrU64Visitor {
-        type Value = String;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            formatter.write_str("a string or unsigned integer ID")
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(value.to_owned())
-        }
-
-        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(value.to_string())
-        }
-    }
-
-    deserializer.deserialize_any(StringOrU64Visitor)
 }
 
 #[cfg(test)]

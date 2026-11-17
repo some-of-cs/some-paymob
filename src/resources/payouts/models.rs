@@ -7,10 +7,10 @@
 
 use std::fmt;
 
-use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::error::PaymobError;
+pub(crate) use crate::core::types::serialize_trimmed_secret_string as serialize_secret_string;
 
 /// Supported Paymob Send disbursement issuers.
 ///
@@ -317,17 +317,6 @@ pub(crate) fn validate_positive_amount(amount: u64) -> Result<u64, PaymobError> 
         });
     }
     Ok(amount)
-}
-
-/// Serializes a [`SecretString`] by exposing its trimmed inner secret.
-pub(crate) fn serialize_secret_string<S>(
-    secret: &SecretString,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(secret.expose_secret().trim())
 }
 
 #[cfg(test)]

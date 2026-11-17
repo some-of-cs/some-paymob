@@ -14,7 +14,9 @@ use std::str::FromStr;
 use secrecy::SecretString;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use zeroize::ZeroizeOnDrop;
 
+use crate::core::error::PaymobError;
 use crate::core::types::MinorUnitAmount;
 
 /// Static lookup table mapping canonical lowercase Paymob subscription states
@@ -233,6 +235,9 @@ pub struct SubscriptionListFilter {
     /// Filter by subscription lifecycle state.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<SubscriptionState>,
+    /// Optional 1-based page number for paginated listing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
 }
 
 impl SubscriptionListFilter {
@@ -263,10 +268,53 @@ impl SubscriptionListFilter {
         self
     }
 
+    /// Sets the 1-based `page` query parameter.
+    #[must_use]
+    pub const fn page(mut self, page: u32) -> Self {
+        self.page = Some(page);
+        self
+    }
+
     /// Returns `true` if no filter criteria are set.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.transaction.is_none() && self.plan_id.is_none() && self.state.is_none()
+        self.transaction.is_none()
+            && self.plan_id.is_none()
+            && self.state.is_none()
+            && self.page.is_none()
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), PaymobError> {
+        if let Some(0) = self.page {
+            return Err(PaymobError::ValidationError {
+                field: "page",
+                reason: "page number must be >= 1".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn to_query_string(&self) -> String {
+        let mut pairs: Vec<(&str, String)> = Vec::new();
+        if let Some(tx) = self.transaction {
+            pairs.push(("transaction", tx.to_string()));
+        }
+        if let Some(plan) = self.plan_id {
+            pairs.push(("plan_id", plan.to_string()));
+        }
+        if let Some(ref st) = self.state {
+            pairs.push(("state", st.as_str().to_owned()));
+        }
+        if let Some(p) = self.page {
+            pairs.push(("page", p.to_string()));
+        }
+        if pairs.is_empty() {
+            return String::new();
+        }
+        let encoded = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(pairs)
+            .finish();
+        format!("?{encoded}")
     }
 }
 
@@ -303,12 +351,14 @@ impl SubscriptionListFilter {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, ZeroizeOnDrop)]
 pub struct SubscriptionCard {
     /// Unique card vault entry identifier.
+    #[zeroize(skip)]
     pub id: u64,
     /// Optional card metadata payload returned by Paymob.
     #[serde(default)]
+    #[zeroize(skip)]
     pub card_data: Option<Value>,
     /// Secret card token used for recurring MIT charges (redacted in `Debug`).
     pub token: SecretString,
@@ -317,12 +367,14 @@ pub struct SubscriptionCard {
     pub created_at: String,
     /// Whether this card is the primary billing card for the subscription.
     #[serde(default)]
+    #[zeroize(skip)]
     pub is_primary: bool,
     /// Masked Primary Account Number (e.g. `"xxxx-xxxx-xxxx-2346"`).
     #[serde(default)]
     pub masked_pan: String,
     /// Number of consecutive failed recurring charge attempts on this card.
     #[serde(default)]
+    #[zeroize(skip)]
     pub failed_attempts: u32,
 }
 

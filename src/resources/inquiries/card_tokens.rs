@@ -8,16 +8,13 @@
 use std::fmt;
 
 use secrecy::SecretString;
+use serde::Deserialize;
+use serde_json::json;
+use zeroize::ZeroizeOnDrop;
 
-use serde::{Deserialize, Deserializer};
-use serde_json::{Value, json};
-
-use crate::core::auth::accept_jwt::inject_body_auth_token;
 use crate::core::error::PaymobError;
-use crate::core::http::HttpRequest;
-use crate::resources::inquiries::{
-    InquiriesService, acquire_accept_jwt, execute_accept_request, map_accept_jwt_error,
-};
+use crate::core::types::{deserialize_string_or_u64, validate_non_zero_u64};
+use crate::resources::inquiries::{InquiriesService, execute_inquiry_body_post};
 
 /// Envelope returned by `POST /api/acceptance/order_card_tokens`.
 #[derive(Debug, Clone, Deserialize)]
@@ -33,15 +30,17 @@ pub struct CardTokenEnvelope {
 ///
 /// [`Self::token`] is stored in [`SecretString`] (`ZeroizeOnDrop`) and both
 /// `token` and `email` print `"[REDACTED]"` in `Debug` output.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, ZeroizeOnDrop)]
 pub struct CardTokenObject {
     /// Paymob saved card token record identifier.
+    #[zeroize(skip)]
     pub id: u64,
     /// Reusable saved card token wrapped in [`SecretString`].
     pub token: SecretString,
     /// Masked card PAN (for example, `"xxxx-xxxx-xxxx-2346"`).
     pub masked_pan: String,
     /// Paymob merchant identifier.
+    #[zeroize(skip)]
     pub merchant_id: u64,
     /// Card network or subtype (for example, `"MasterCard"`, `"Visa"`).
     pub card_subtype: String,
@@ -72,20 +71,6 @@ impl fmt::Debug for CardTokenObject {
             .field("order_id", &self.order_id)
             .field("next_payment_intention", &self.next_payment_intention)
             .finish()
-    }
-}
-
-fn deserialize_string_or_u64<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Value::deserialize(deserializer)?;
-    match value {
-        Value::String(s) => Ok(s),
-        Value::Number(n) => Ok(n.to_string()),
-        other => Err(serde::de::Error::custom(format!(
-            "expected string or integer for order_id, got {other}"
-        ))),
     }
 }
 
@@ -124,33 +109,9 @@ impl<'a> InquiriesService<'a> {
         &self,
         order_id: u64,
     ) -> Result<Vec<CardTokenEnvelope>, PaymobError> {
-        if order_id == 0 {
-            return Err(PaymobError::ValidationError {
-                field: "order_id",
-                reason: "order_id must be greater than zero".to_owned(),
-            });
-        }
-
-        let token = acquire_accept_jwt(self).await?;
-        let mut body = json!({ "order_id": order_id });
-        inject_body_auth_token(&mut body, &token).map_err(map_accept_jwt_error)?;
-
-        let url = self
-            .client()
-            .accept_url("/api/acceptance/order_card_tokens")?;
-        let request = HttpRequest::post(url.as_str())
-            .map_err(PaymobError::from)?
-            .with_json(&body)
-            .map_err(PaymobError::from)?;
-
-        let response = execute_accept_request(self, &url, &request).await?;
-        if !response.status.is_success() {
-            return Err(PaymobError::from_http_response(&response));
-        }
-
-        response
-            .json::<Vec<CardTokenEnvelope>>()
-            .map_err(PaymobError::from)
+        validate_non_zero_u64("order_id", order_id, "order_id must be greater than zero")?;
+        let body = json!({ "order_id": order_id });
+        execute_inquiry_body_post(self, "/api/acceptance/order_card_tokens", &body).await
     }
 }
 

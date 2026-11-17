@@ -9,12 +9,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::core::auth::accept_jwt::inject_body_auth_token;
 use crate::core::error::PaymobError;
-use crate::core::http::HttpRequest;
-use crate::resources::inquiries::{
-    InquiriesService, acquire_accept_jwt, execute_accept_request, map_accept_jwt_error,
-};
+use crate::resources::inquiries::{InquiriesService, execute_inquiry_body_post};
 
 /// Parameters for `POST /api/ecommerce/orders/transaction_inquiry`.
 ///
@@ -228,31 +224,11 @@ impl<'a> InquiriesService<'a> {
         params: TransactionInquiryParams,
     ) -> Result<InquiredTransaction, PaymobError> {
         params.validate()?;
-
-        let token = acquire_accept_jwt(self).await?;
-        let mut body =
-            serde_json::to_value(&params).map_err(|err| PaymobError::ValidationError {
-                field: "params",
-                reason: err.to_string(),
-            })?;
-        inject_body_auth_token(&mut body, &token).map_err(map_accept_jwt_error)?;
-
-        let url = self
-            .client()
-            .accept_url("/api/ecommerce/orders/transaction_inquiry")?;
-        let request = HttpRequest::post(url.as_str())
-            .map_err(PaymobError::from)?
-            .with_json(&body)
-            .map_err(PaymobError::from)?;
-
-        let response = execute_accept_request(self, &url, &request).await?;
-        if !response.status.is_success() {
-            return Err(PaymobError::from_http_response(&response));
-        }
-
-        response
-            .json::<InquiredTransaction>()
-            .map_err(PaymobError::from)
+        let body = serde_json::to_value(&params).map_err(|err| PaymobError::ValidationError {
+            field: "params",
+            reason: err.to_string(),
+        })?;
+        execute_inquiry_body_post(self, "/api/ecommerce/orders/transaction_inquiry", &body).await
     }
 }
 

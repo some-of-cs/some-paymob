@@ -14,9 +14,7 @@ pub mod scoped_client;
 pub mod step_inquiry;
 
 use reqwest::header::HeaderMap;
-use secrecy::{ExposeSecret, SecretString};
-use serde::Deserialize;
-use serde::de::{DeserializeOwned, Deserializer};
+use serde::de::DeserializeOwned;
 
 use crate::core::auth::partner::PartnerAuthContext;
 use crate::core::auth::strategy::AuthStrategy;
@@ -24,6 +22,10 @@ use crate::core::client::PaymobClient;
 use crate::core::credentials::PartnerCredentials;
 use crate::core::error::PaymobError;
 use crate::core::http::{HttpRequest, HttpResponse};
+pub(crate) use crate::core::types::{
+    deserialize_non_empty_secret, deserialize_non_zero_u64,
+    validate_non_zero_u64 as validate_non_zero_id,
+};
 
 pub use auth_models::{
     CreatePartnerApiKeyParams, PartnerApiKeyResponse, PartnerAuthTokenResponse, PartnerHmacBody,
@@ -209,47 +211,4 @@ pub(crate) fn validate_no_control_chars(
         });
     }
     Ok(())
-}
-
-pub(crate) fn validate_non_zero_id(
-    field: &'static str,
-    id: u64,
-    reason: &'static str,
-) -> Result<(), PaymobError> {
-    if id == 0 {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: String::from(reason),
-        });
-    }
-    Ok(())
-}
-
-pub(crate) fn deserialize_non_empty_secret<'de, D>(
-    deserializer: D,
-) -> Result<SecretString, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let secret = SecretString::deserialize(deserializer)?;
-    let raw = secret.expose_secret();
-    if raw.trim().is_empty() || raw.chars().any(char::is_control) {
-        return Err(serde::de::Error::custom(
-            "secret field must be non-empty and free of control characters",
-        ));
-    }
-    Ok(secret)
-}
-
-pub(crate) fn deserialize_non_zero_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = u64::deserialize(deserializer)?;
-    if value == 0 {
-        return Err(serde::de::Error::custom(
-            "paymob_mid must be a non-zero u64",
-        ));
-    }
-    Ok(value)
 }

@@ -7,7 +7,10 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
+
+use crate::core::types::{deserialize_opt_u64_flexible, deserialize_u64_flexible};
 
 /// Payment or child lifecycle transaction returned by Paymob's Manage Payment APIs.
 ///
@@ -128,7 +131,7 @@ impl Transaction {
 ///
 /// Redacts [`TransactionSourceData::pan`] in [`fmt::Debug`] output (`"[REDACTED]"`) to
 /// prevent accidental PAN leakage into logs or error traces.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default, Zeroize, ZeroizeOnDrop)]
 pub struct TransactionSourceData {
     /// Payment instrument type (for example, `"card"` or `"wallet"`).
     #[serde(rename = "type", default)]
@@ -191,61 +194,6 @@ pub struct TransactionOrderDetails {
     /// Merchant-supplied order identifier, if configured.
     #[serde(default)]
     pub merchant_order_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum FlexibleU64 {
-    Int(u64),
-    Str(String),
-}
-
-fn parse_u64_str(raw: &str) -> Result<u64, String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(String::from("numeric string must not be empty"));
-    }
-    trimmed
-        .parse::<u64>()
-        .map_err(|err| format!("invalid unsigned integer '{trimmed}': {err}"))
-}
-
-fn deserialize_u64_flexible<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    match FlexibleU64::deserialize(deserializer)? {
-        FlexibleU64::Int(val) => Ok(val),
-        FlexibleU64::Str(raw) => parse_u64_str(&raw).map_err(serde::de::Error::custom),
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum FlexibleOptU64 {
-    Int(u64),
-    Str(String),
-    Obj { id: u64 },
-}
-
-fn deserialize_opt_u64_flexible<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let opt = Option::<FlexibleOptU64>::deserialize(deserializer)?;
-    match opt {
-        None => Ok(None),
-        Some(FlexibleOptU64::Int(val)) => Ok(Some(val)),
-        Some(FlexibleOptU64::Obj { id }) => Ok(Some(id)),
-        Some(FlexibleOptU64::Str(raw)) => {
-            if raw.trim().is_empty() {
-                return Ok(None);
-            }
-            parse_u64_str(&raw)
-                .map(Some)
-                .map_err(serde::de::Error::custom)
-        }
-    }
 }
 
 #[cfg(test)]

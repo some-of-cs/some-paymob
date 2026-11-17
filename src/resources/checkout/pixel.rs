@@ -9,11 +9,12 @@
 use std::fmt;
 
 use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::client::PaymobClient;
 use crate::core::credentials::PublicKey;
 use crate::core::error::PaymobError;
+use crate::core::types::{deserialize_secret_string, serialize_secret_string};
 
 const REDACTED: &str = "[REDACTED]";
 
@@ -514,21 +515,6 @@ fn validate_google_pay(settings: &GooglePaySettings) -> Result<(), PaymobError> 
         "google_pay.gateway_merchant_id",
         settings.gateway_merchant_id.as_deref(),
     )
-}
-
-fn serialize_secret_string<S>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(secret.expose_secret())
-}
-
-fn deserialize_secret_string<'de, D>(deserializer: D) -> Result<SecretString, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let raw = String::deserialize(deserializer)?;
-    Ok(SecretString::from(raw))
 }
 
 #[cfg(test)]

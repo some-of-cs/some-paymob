@@ -7,20 +7,16 @@
 //! (`Authorization: Bearer <auth_token>`).
 
 use reqwest::Method;
-use reqwest::header::AUTHORIZATION;
-use secrecy::SecretString;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use url::Url;
 
 use super::plan_models::SubscriptionPlan;
 use super::plan_params::{CreateSubscriptionPlanParams, UpdateSubscriptionPlanParams};
-use crate::core::auth::{
-    AcceptJwtProvider, CachedToken, format_bearer_header, is_incorrect_credentials_401,
-};
-use crate::core::client::PaymobClient;
+use crate::core::client::{PaymobClient, build_bearer_json_request};
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpClient, HttpRequest, HttpResponse};
+#[cfg(test)]
+use crate::core::http::HttpClient;
+use crate::core::http::HttpResponse;
 use crate::core::pagination::PaginatedResponse;
 
 const SUBSCRIPTION_PLANS_PATH: &str = "/api/acceptance/subscription-plans";
@@ -64,22 +60,20 @@ const SUBSCRIPTION_PLANS_PATH: &str = "/api/acceptance/subscription-plans";
 #[derive(Debug, Clone)]
 pub struct SubscriptionPlansService {
     client: PaymobClient,
-    http: HttpClient,
 }
 
 impl SubscriptionPlansService {
     /// Creates a new [`SubscriptionPlansService`] bound to `client`.
     #[must_use]
     pub fn new(client: PaymobClient) -> Self {
-        let http = client.http().clone();
-        Self { client, http }
+        Self { client }
     }
 
     /// Creates a [`SubscriptionPlansService`] with an explicit [`HttpClient`] for tests.
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn with_http_client(client: PaymobClient, http: HttpClient) -> Self {
-        Self { client, http }
+    pub(crate) fn with_http_client(client: PaymobClient, _http: HttpClient) -> Self {
+        Self { client }
     }
 
     /// Returns a reference to the underlying [`PaymobClient`].
@@ -180,77 +174,18 @@ impl SubscriptionPlansService {
         body: Option<&Value>,
     ) -> Result<T, PaymobError> {
         let url = self.client.accept_url(path)?;
-        let token = self.acquire_bearer_token().await?;
-        let response = self.execute_once(&method, &url, body, &token).await?;
-
-        if is_incorrect_credentials_401(response.status, &response.body) {
-            self.client
-                .auth()
-                .accept_cache()
-                .evict_if_matches(&token)
-                .await;
-            let refreshed = self.acquire_bearer_token().await?;
-            let retry_resp = self.execute_once(&method, &url, body, &refreshed).await?;
-            return parse_json_response(&retry_resp);
-        }
-
-        parse_json_response(&response)
-    }
-
-    async fn execute_once(
-        &self,
-        method: &Method,
-        url: &Url,
-        body: Option<&Value>,
-        token: &SecretString,
-    ) -> Result<HttpResponse, PaymobError> {
-        let header_value = format_bearer_header(token)
-            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-        let mut request = HttpRequest::new(method.clone(), url.as_str())
-            .map_err(|err| PaymobError::TransportError(err.to_string()))?
-            .with_header(AUTHORIZATION, header_value);
-
-        if let Some(payload) = body {
-            request = request
-                .with_json(payload)
-                .map_err(|err| PaymobError::TransportError(err.to_string()))?;
-        }
-
-        self.http
-            .execute(&request)
-            .await
-            .map_err(|err| PaymobError::TransportError(err.to_string()))
-    }
-
-    async fn acquire_bearer_token(&self) -> Result<SecretString, PaymobError> {
-        if let Some(cached) = self.client.auth().accept_cache().peek() {
-            return Ok(cached.access_token.clone());
-        }
-
-        let api_key = self.client.config().api_key().ok_or_else(|| {
-            PaymobError::AuthenticationError(
-                "missing Paymob API key for Regime 2 Bearer authentication".to_owned(),
-            )
-        })?;
-        let provider = AcceptJwtProvider::new(
-            &self.client.endpoints().accept_base_url,
-            SecretString::from(api_key.expose_secret().to_owned()),
-        )
-        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-
-        let cached = self
+        let response = self
             .client
-            .auth()
-            .accept_cache()
-            .get_or_refresh(|| async {
-                let jwt = provider
-                    .token()
-                    .await
-                    .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-                Ok::<CachedToken, PaymobError>(CachedToken::with_default_ttl(jwt, None))
-            })
+            .execute_regime2_with_retry(
+                || {
+                    PaymobError::AuthenticationError(
+                        "missing Paymob API key for Regime 2 Bearer authentication".to_owned(),
+                    )
+                },
+                |token| build_bearer_json_request(method.clone(), url.as_str(), token, body),
+            )
             .await?;
-        Ok(cached.access_token.clone())
+        parse_json_response(&response)
     }
 }
 

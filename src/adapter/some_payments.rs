@@ -276,7 +276,8 @@ impl PayoutProvider for PaymobClient {
             let _endpoint = client.payouts_url("/disburse/")?;
             Err(PaymobError::ValidationError {
                 field: "payouts",
-                reason: "outbound payouts execution requires the payouts resource module".to_owned(),
+                reason: "outbound payouts execution requires the payouts resource module"
+                    .to_owned(),
             })
         }
     }

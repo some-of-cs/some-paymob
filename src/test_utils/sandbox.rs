@@ -21,6 +21,13 @@ use crate::webhooks::verifier::{PaymobWebhookEngine, WebhookError, WebhookResult
 
 type HmacSha512 = Hmac<Sha512>;
 
+const TX_CREATED_AT: &str = "2026-11-17T10:00:00.000000";
+const TX_INTEGRATION_ID: u64 = 4_097_558;
+const TX_OWNER: u64 = 302_852;
+const TX_PAN: &str = "2346";
+const TX_SUB_TYPE: &str = "MasterCard";
+const TX_SOURCE_TYPE: &str = "card";
+
 /// Maximum lifetime (in days) of Paymob Sandbox test credentials before expiry.
 pub const SANDBOX_CREDENTIAL_MAX_AGE_DAYS: u64 = 30;
 
@@ -82,6 +89,34 @@ pub struct SandboxCheckRequest {
     pub credential_age_days: u64,
     /// Payment channel being exercised.
     pub channel: SandboxPaymentChannel,
+}
+
+/// Input parameters for [`generate_signed_transaction_post`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignedTransactionRequest<'a> {
+    /// Paymob transaction ID.
+    pub transaction_id: u64,
+    /// Paymob order ID.
+    pub order_id: u64,
+    /// Payment amount in minor units.
+    pub amount: MinorUnitAmount,
+    /// Three-letter ISO currency code (e.g., `"EGP"` or `"SAR"`).
+    pub currency: &'a str,
+    /// Whether the simulated transaction succeeded.
+    pub success: bool,
+}
+
+/// Input parameters for [`generate_signed_subscription_post`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignedSubscriptionRequest<'a> {
+    /// Paymob request correlation identifier.
+    pub paymob_request_id: &'a str,
+    /// Paymob subscription ID.
+    pub subscription_id: u64,
+    /// Subscription lifecycle trigger type (e.g., `"suspended"` or `"resumed"`).
+    pub trigger_type: &'a str,
+    /// Subscription billing amount in minor units.
+    pub amount: MinorUnitAmount,
 }
 
 /// Structured diagnostic outcome returned by [`SandboxGuard::check_constraints`].
@@ -242,6 +277,56 @@ pub fn sign_hmac_sha512(
     Ok(hex::encode(mac.finalize().into_bytes()))
 }
 
+fn build_transaction_post_body(request: &SignedTransactionRequest<'_>) -> String {
+    let amount_cents = request.amount.as_u64();
+    json!({
+        "type": "TRANSACTION",
+        "obj": {
+            "id": request.transaction_id,
+            "pending": false,
+            "amount_cents": amount_cents,
+            "success": request.success,
+            "is_auth": false,
+            "is_capture": false,
+            "is_standalone_payment": true,
+            "is_voided": false,
+            "is_refunded": false,
+            "is_3d_secure": true,
+            "integration_id": TX_INTEGRATION_ID,
+            "profile_id": 164_295,
+            "has_parent_transaction": false,
+            "order": {
+                "id": request.order_id,
+                "created_at": TX_CREATED_AT,
+                "delivery_needed": false,
+                "amount_cents": amount_cents,
+                "currency": request.currency
+            },
+            "created_at": TX_CREATED_AT,
+            "transaction_processed_callback_responses": [],
+            "currency": request.currency,
+            "source_data": {
+                "pan": TX_PAN,
+                "type": TX_SOURCE_TYPE,
+                "tenure": null,
+                "sub_type": TX_SUB_TYPE
+            },
+            "api_source": "IFRAME",
+            "is_void": false,
+            "is_refund": false,
+            "error_occured": false,
+            "is_live": false,
+            "refunded_amount_cents": null,
+            "is_captured": false,
+            "captured_amount": null,
+            "owner": TX_OWNER
+        },
+        "issuer_bank": null,
+        "transaction_processed_callback_responses": ""
+    })
+    .to_string()
+}
+
 /// Generates a signed Protocol A (`TRANSACTION` `POST`) payload for Paymob's Webhook Testing Tool.
 ///
 /// # Errors
@@ -253,17 +338,21 @@ pub fn sign_hmac_sha512(
 /// ```rust
 /// use secrecy::SecretString;
 /// use some_paymob::core::types::MinorUnitAmount;
-/// use some_paymob::test_utils::sandbox::generate_signed_transaction_post;
+/// use some_paymob::test_utils::sandbox::{
+///     SignedTransactionRequest, generate_signed_transaction_post,
+/// };
 /// use some_paymob::webhooks::PaymobWebhookEngine;
 ///
 /// let secret = SecretString::from("my_sandbox_hmac_secret");
 /// let signed = generate_signed_transaction_post(
 ///     &secret,
-///     990011,
-///     880022,
-///     MinorUnitAmount::new(25_000),
-///     "EGP",
-///     true,
+///     &SignedTransactionRequest {
+///         transaction_id: 990011,
+///         order_id: 880022,
+///         amount: MinorUnitAmount::new(25_000),
+///         currency: "EGP",
+///         success: true,
+///     },
 /// )
 /// .expect("signed payload");
 ///
@@ -275,71 +364,19 @@ pub fn sign_hmac_sha512(
 /// ```
 pub fn generate_signed_transaction_post(
     hmac_secret: &SecretString,
-    transaction_id: u64,
-    order_id: u64,
-    amount: MinorUnitAmount,
-    currency: &str,
-    success: bool,
+    request: &SignedTransactionRequest<'_>,
 ) -> WebhookResult<SignedWebhookToolPayload> {
-    let created_at = "2026-11-17T10:00:00.000000";
-    let integration_id = 4097558_u64;
-    let owner = 302852_u64;
-    let pan = "2346";
-    let sub_type = "MasterCard";
-    let source_type = "card";
-    let amount_cents = amount.as_u64();
+    let amount_cents = request.amount.as_u64();
+    let tx_id = request.transaction_id;
+    let order_id = request.order_id;
+    let currency = request.currency;
+    let success = request.success;
 
     let canonical = format!(
-        "{amount_cents}{created_at}{currency}falsefalse{transaction_id}{integration_id}\
-         truefalsefalsefalsetruefalse{order_id}{owner}false{pan}{sub_type}{source_type}{success}"
+        "{amount_cents}{TX_CREATED_AT}{currency}falsefalse{tx_id}{TX_INTEGRATION_ID}truefalsefalsefalsetruefalse{order_id}{TX_OWNER}false{TX_PAN}{TX_SUB_TYPE}{TX_SOURCE_TYPE}{success}"
     );
     let hmac_hex = sign_hmac_sha512(hmac_secret, &canonical)?;
-    let json_body = json!({
-        "type": "TRANSACTION",
-        "obj": {
-            "id": transaction_id,
-            "pending": false,
-            "amount_cents": amount_cents,
-            "success": success,
-            "is_auth": false,
-            "is_capture": false,
-            "is_standalone_payment": true,
-            "is_voided": false,
-            "is_refunded": false,
-            "is_3d_secure": true,
-            "integration_id": integration_id,
-            "profile_id": 164295,
-            "has_parent_transaction": false,
-            "order": {
-                "id": order_id,
-                "created_at": created_at,
-                "delivery_needed": false,
-                "amount_cents": amount_cents,
-                "currency": currency
-            },
-            "created_at": created_at,
-            "transaction_processed_callback_responses": [],
-            "currency": currency,
-            "source_data": {
-                "pan": pan,
-                "type": source_type,
-                "tenure": null,
-                "sub_type": sub_type
-            },
-            "api_source": "IFRAME",
-            "is_void": false,
-            "is_refund": false,
-            "error_occured": false,
-            "is_live": false,
-            "refunded_amount_cents": null,
-            "is_captured": false,
-            "captured_amount": null,
-            "owner": owner
-        },
-        "issuer_bank": null,
-        "transaction_processed_callback_responses": ""
-    })
-    .to_string();
+    let json_body = build_transaction_post_body(request);
 
     // Ensure generated payload always satisfies PaymobWebhookEngine roundtrip contract.
     PaymobWebhookEngine::verify_concatenated_with_secret(hmac_secret, &canonical, &hmac_hex)?;
@@ -361,16 +398,20 @@ pub fn generate_signed_transaction_post(
 /// ```rust
 /// use secrecy::SecretString;
 /// use some_paymob::core::types::MinorUnitAmount;
-/// use some_paymob::test_utils::sandbox::generate_signed_subscription_post;
+/// use some_paymob::test_utils::sandbox::{
+///     SignedSubscriptionRequest, generate_signed_subscription_post,
+/// };
 /// use some_paymob::webhooks::PaymobWebhookEngine;
 ///
 /// let secret = SecretString::from("my_sandbox_hmac_secret");
 /// let signed = generate_signed_subscription_post(
 ///     &secret,
-///     "req-sub-1",
-///     1264,
-///     "suspended",
-///     MinorUnitAmount::new(330),
+///     &SignedSubscriptionRequest {
+///         paymob_request_id: "req-sub-1",
+///         subscription_id: 1264,
+///         trigger_type: "suspended",
+///         amount: MinorUnitAmount::new(330),
+///     },
 /// )
 /// .expect("signed subscription payload");
 ///
@@ -380,21 +421,18 @@ pub fn generate_signed_transaction_post(
 /// ```
 pub fn generate_signed_subscription_post(
     hmac_secret: &SecretString,
-    paymob_request_id: &str,
-    subscription_id: u64,
-    trigger_type: &str,
-    amount: MinorUnitAmount,
+    request: &SignedSubscriptionRequest<'_>,
 ) -> WebhookResult<SignedWebhookToolPayload> {
-    let canonical = format!("{trigger_type}for{subscription_id}");
+    let canonical = format!("{0}for{1}", request.trigger_type, request.subscription_id);
     let hmac_hex = sign_hmac_sha512(hmac_secret, &canonical)?;
     let json_body = json!({
-        "paymob_request_id": paymob_request_id,
+        "paymob_request_id": request.paymob_request_id,
         "subscription_data": {
-            "id": subscription_id,
-            "amount_cents": amount.as_u64(),
-            "state": trigger_type
+            "id": request.subscription_id,
+            "amount_cents": request.amount.as_u64(),
+            "state": request.trigger_type
         },
-        "trigger_type": trigger_type,
+        "trigger_type": request.trigger_type,
         "hmac": hmac_hex
     })
     .to_string();
@@ -474,11 +512,13 @@ mod tests {
         let secret = SecretString::from("tool_secret_123");
         let tx = generate_signed_transaction_post(
             &secret,
-            777,
-            888,
-            MinorUnitAmount::new(15_000),
-            "SAR",
-            true,
+            &SignedTransactionRequest {
+                transaction_id: 777,
+                order_id: 888,
+                amount: MinorUnitAmount::new(15_000),
+                currency: "SAR",
+                success: true,
+            },
         )
         .expect("signed tx");
         let engine = PaymobWebhookEngine::new("tool_secret_123").unwrap();
@@ -489,10 +529,12 @@ mod tests {
 
         let sub = generate_signed_subscription_post(
             &secret,
-            "req-1",
-            1264,
-            "resumed",
-            MinorUnitAmount::new(330),
+            &SignedSubscriptionRequest {
+                paymob_request_id: "req-1",
+                subscription_id: 1264,
+                trigger_type: "resumed",
+                amount: MinorUnitAmount::new(330),
+            },
         )
         .expect("signed sub");
         let parsed_sub = engine
@@ -506,11 +548,13 @@ mod tests {
         let secret = SecretString::from("tool_secret_123");
         let tx = generate_signed_transaction_post(
             &secret,
-            777,
-            888,
-            MinorUnitAmount::new(15_000),
-            "EGP",
-            true,
+            &SignedTransactionRequest {
+                transaction_id: 777,
+                order_id: 888,
+                amount: MinorUnitAmount::new(15_000),
+                currency: "EGP",
+                success: true,
+            },
         )
         .expect("signed tx");
         let rendered = format!("{tx:?}");

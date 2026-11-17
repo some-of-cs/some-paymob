@@ -11,12 +11,15 @@ pub mod sandbox;
 /// Unit 8.2.1: Verbatim official Paymob JSON payloads and HMAC-SHA512 test vectors.
 pub mod vectors;
 
-pub use mock_server::{MockHost, PaymobMockServer};
+pub use mock_server::{
+    JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, PaymobMockServer,
+    PayoutsRateLimitMockConfig,
+};
 pub use sandbox::{
     SANDBOX_CREDENTIAL_MAX_AGE_DAYS, SANDBOX_CREDENTIAL_WARN_AGE_DAYS, SandboxCheckRequest,
     SandboxConstraintError, SandboxGuard, SandboxPaymentChannel, SandboxReport, SandboxWarning,
-    SignedWebhookToolPayload, generate_signed_subscription_post, generate_signed_transaction_post,
-    sign_hmac_sha512,
+    SignedSubscriptionRequest, SignedTransactionRequest, SignedWebhookToolPayload,
+    generate_signed_subscription_post, generate_signed_transaction_post, sign_hmac_sha512,
 };
 pub use vectors::{
     OFFICIAL_CARD_TOKEN_15978654_CONCAT, OFFICIAL_CARD_TOKEN_15978654_HMAC,

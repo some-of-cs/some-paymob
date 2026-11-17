@@ -83,7 +83,9 @@ pub(crate) fn decode_subscription_response<Resp: DeserializeOwned>(
     if !response.status.is_success() {
         return Err(PaymobError::from_http_response(&response));
     }
-    Ok(response.json::<Resp>()?)
+    response
+        .json::<Resp>()
+        .map_err(|err| PaymobError::TransportError(format!("invalid JSON response: {err}")))
 }
 
 pub(crate) fn validate_positive_id(field: &'static str, id: u64) -> Result<(), PaymobError> {

@@ -13,14 +13,18 @@ use std::fmt;
 use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 
+use super::affordability::AffordabilityWidgetConfig;
+use super::pixel::PixelConfig;
 use crate::core::client::PaymobClient;
 use crate::core::credentials::PublicKey;
 use crate::core::error::PaymobError;
+use crate::core::types::{Currency, MinorUnitAmount};
 
 /// Checkout experience builder service bound to a [`PaymobClient`].
 ///
 /// Obtained via [`PaymobClient::checkout`]. Constructs frontend-safe Unified
-/// Checkout redirect URLs without accessing server-side secret credentials.
+/// Checkout redirect URLs, Embedded Pixel JS configurations, and Affordability
+/// Widget configurations without accessing server-side secret credentials.
 ///
 /// # Examples
 ///
@@ -84,8 +88,8 @@ impl<'a> CheckoutService<'a> {
     /// Returns [`PaymobError::ValidationError`] if:
     /// - `public_key` is missing on [`ClientConfig`](crate::core::config::ClientConfig)
     ///   or fails [`PublicKey`] (`pk_*`) verification,
-    /// - `client_secret` is empty, whitespace-only, or contains ASCII control
-    ///   characters, or
+    /// - `client_secret` is empty, whitespace-only, contains ASCII control
+    ///   characters, or starts with a server `sk_*` / `*_sk_*` prefix, or
     /// - the regional checkout base URL cannot be parsed.
     ///
     /// # Examples
@@ -111,6 +115,25 @@ impl<'a> CheckoutService<'a> {
     /// );
     /// # Ok(())
     /// # }
+    /// ```
+    ///
+    /// Passing a [`SecretKey`](crate::core::credentials::SecretKey) where
+    /// `&SecretString` or [`PublicKey`] is expected fails at compile time:
+    ///
+    /// ```compile_fail
+    /// use some_paymob::core::client::PaymobClient;
+    /// use some_paymob::core::config::ClientConfig;
+    /// use some_paymob::core::credentials::{PublicKey, SecretKey};
+    /// use some_paymob::core::region::PaymobRegion;
+    ///
+    /// let sk = SecretKey::new("egy_sk_test_123").unwrap();
+    /// let config = ClientConfig::builder()
+    ///     .region(PaymobRegion::Egypt)
+    ///     .public_key(PublicKey::new("egy_pk_test_ABC").unwrap())
+    ///     .build()
+    ///     .unwrap();
+    /// let client = PaymobClient::new(config).unwrap();
+    /// let _ = client.checkout().unified_url(&sk);
     /// ```
     pub fn unified_url(&self, client_secret: &SecretString) -> Result<Url, PaymobError> {
         let public_key =
@@ -140,10 +163,40 @@ impl<'a> CheckoutService<'a> {
             .append_pair("clientSecret", secret_value);
         Ok(url)
     }
+
+    /// Creates a [`PixelConfigBuilder`](super::pixel::PixelConfigBuilder) using
+    /// the [`PublicKey`] configured on the underlying [`PaymobClient`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `public_key` is not configured
+    /// on the client's [`ClientConfig`](crate::core::config::ClientConfig).
+    pub fn pixel_config(
+        &self,
+        client_secret: SecretString,
+    ) -> Result<super::pixel::PixelConfigBuilder, PaymobError> {
+        PixelConfig::from_client(self.client, client_secret)
+    }
+
+    /// Creates an [`AffordabilityWidgetConfigBuilder`](super::affordability::AffordabilityWidgetConfigBuilder)
+    /// using the [`PublicKey`] configured on the underlying [`PaymobClient`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `public_key` is not configured
+    /// on the client's [`ClientConfig`](crate::core::config::ClientConfig).
+    pub fn affordability_widget(
+        &self,
+        amount: impl Into<MinorUnitAmount>,
+        currency: Currency,
+    ) -> Result<super::affordability::AffordabilityWidgetConfigBuilder, PaymobError> {
+        AffordabilityWidgetConfig::from_client(self.client, amount.into(), currency)
+    }
 }
 
 impl PaymobClient {
-    /// Returns a [`CheckoutService`] handle for building Unified Checkout URLs.
+    /// Returns a [`CheckoutService`] handle for building Unified Checkout URLs,
+    /// Pixel JS configurations, and Affordability Widget configurations.
     ///
     /// # Examples
     ///
@@ -176,36 +229,66 @@ impl PaymobClient {
     }
 }
 
-fn validate_public_key(public_key: &PublicKey) -> Result<&str, PaymobError> {
-    let raw = public_key.expose_secret().trim();
+pub(super) fn is_secret_key_like(lower: &str) -> bool {
+    lower.starts_with("sk_") || lower.contains("_sk_")
+}
+
+pub(super) fn has_valid_pk_prefix(lower: &str) -> bool {
+    if let Some(suffix) = lower.strip_prefix("pk_") {
+        return !suffix.is_empty();
+    }
+    match lower.split_once("_pk_") {
+        Some((prefix, suffix)) => !prefix.is_empty() && !suffix.is_empty(),
+        None => false,
+    }
+}
+
+fn validate_non_empty_no_control<'a>(
+    field: &'static str,
+    value: &'a str,
+) -> Result<&'a str, PaymobError> {
+    let raw = value.trim();
     if raw.is_empty() {
         return Err(PaymobError::ValidationError {
-            field: "public_key",
-            reason: "public_key must not be empty".to_owned(),
+            field,
+            reason: format!("{field} must not be empty"),
         });
     }
+    if raw.chars().any(char::is_ascii_control) {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
+    Ok(raw)
+}
+
+fn validate_public_key(public_key: &PublicKey) -> Result<&str, PaymobError> {
+    let raw = validate_non_empty_no_control("public_key", public_key.expose_secret())?;
     let lower = raw.to_ascii_lowercase();
-    if lower.starts_with("sk_") || lower.contains("_sk_") {
+    if is_secret_key_like(&lower) {
         return Err(PaymobError::ValidationError {
             field: "public_key",
             reason: "secret key (`sk_*`) cannot be used in Unified Checkout URLs".to_owned(),
+        });
+    }
+    if !has_valid_pk_prefix(&lower) {
+        return Err(PaymobError::ValidationError {
+            field: "public_key",
+            reason: "public_key must have a valid `pk_` or `*_pk_*` prefix with a non-empty suffix"
+                .to_owned(),
         });
     }
     Ok(raw)
 }
 
 fn validate_client_secret(client_secret: &SecretString) -> Result<&str, PaymobError> {
-    let raw = client_secret.expose_secret().trim();
-    if raw.is_empty() {
+    let raw = validate_non_empty_no_control("client_secret", client_secret.expose_secret())?;
+    let lower = raw.to_ascii_lowercase();
+    if is_secret_key_like(&lower) {
         return Err(PaymobError::ValidationError {
             field: "client_secret",
-            reason: "client_secret must not be empty".to_owned(),
-        });
-    }
-    if raw.chars().any(|ch| ch.is_ascii_control()) {
-        return Err(PaymobError::ValidationError {
-            field: "client_secret",
-            reason: "client_secret must not contain control characters".to_owned(),
+            reason: "secret key (`sk_*`) cannot be used as client_secret".to_owned(),
         });
     }
     Ok(raw)
@@ -310,18 +393,50 @@ mod tests {
     }
 
     #[test]
-    fn tc_2_2_1_rejects_empty_and_control_char_client_secret() {
+    fn tc_2_2_1_rejects_empty_control_char_and_sk_client_secret() {
         let client = client_with_pk(PaymobRegion::Egypt, "egy_pk_test_ABC");
-        for bad in ["", "   ", "csk_bad\nline", "csk_bad\0null"] {
+        for bad in [
+            "",
+            "   ",
+            "csk_bad\nline",
+            "csk_bad\0null",
+            "sk_test_123",
+            "egy_sk_test_123",
+        ] {
             let secret = SecretString::from(bad.to_owned());
             let err = client
                 .checkout()
                 .unified_url(&secret)
-                .expect_err("malformed client_secret must be rejected");
+                .expect_err("malformed or secret-key client_secret must be rejected");
             assert!(matches!(
                 err,
                 PaymobError::ValidationError {
                     field: "client_secret",
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn tc_2_2_1_rejects_malformed_or_control_char_public_key() {
+        let secret = SecretString::from("egy_csk_test_XYZ".to_owned());
+        for bad_pk in [
+            "pk_",
+            "egy_pk_",
+            "_pk_test",
+            "not_a_public_key",
+            "egy_pk_test_\n1",
+        ] {
+            let client = client_with_pk(PaymobRegion::Egypt, bad_pk);
+            let err = client
+                .checkout()
+                .unified_url(&secret)
+                .expect_err("invalid public_key must be rejected");
+            assert!(matches!(
+                err,
+                PaymobError::ValidationError {
+                    field: "public_key",
                     ..
                 }
             ));

@@ -26,7 +26,6 @@ pub enum PixelPaymentMethod {
     /// Apple Pay express checkout button.
     ApplePay,
     /// Google Pay express checkout button.
-    GooglePay,
 }
 
 /// Apple Pay domain verification and merchant certificate settings for Pixel JS.
@@ -151,15 +150,12 @@ impl GooglePaySettings {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize)]
 pub struct PixelConfig {
     /// Client-side Paymob public key (`pk_*`).
     pub public_key: String,
     /// Intention `client_secret` token (`csk_*`), redacted in `Debug`.
-    #[serde(
-        serialize_with = "serialize_secret_string",
-        deserialize_with = "deserialize_secret_string"
-    )]
+    #[serde(serialize_with = "serialize_secret_string")]
     pub client_secret: SecretString,
     /// Enabled Pixel payment methods (`card`, `apple_pay`, `google_pay`).
     pub payment_methods: Vec<PixelPaymentMethod>,
@@ -176,6 +172,43 @@ pub struct PixelConfig {
     /// Optional UI locale (for example, `"en"` or `"ar"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawPixelConfig {
+    public_key: String,
+    #[serde(deserialize_with = "deserialize_secret_string")]
+    client_secret: SecretString,
+    payment_methods: Vec<PixelPaymentMethod>,
+    show_save_card: bool,
+    force_save_card: bool,
+    #[serde(default)]
+    apple_pay: Option<ApplePaySettings>,
+    #[serde(default)]
+    google_pay: Option<GooglePaySettings>,
+    #[serde(default)]
+    locale: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for PixelConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawPixelConfig::deserialize(deserializer)?;
+        let config = Self {
+            public_key: raw.public_key,
+            client_secret: raw.client_secret,
+            payment_methods: raw.payment_methods,
+            show_save_card: raw.show_save_card,
+            force_save_card: raw.force_save_card,
+            apple_pay: raw.apple_pay,
+            google_pay: raw.google_pay,
+            locale: raw.locale,
+        };
+        validate_pixel_config(&config).map_err(serde::de::Error::custom)?;
+        Ok(config)
+    }
 }
 
 impl fmt::Debug for PixelConfig {
@@ -195,6 +228,21 @@ impl fmt::Debug for PixelConfig {
 
 impl PixelConfig {
     /// Creates a [`PixelConfigBuilder`] from a validated [`PublicKey`] and `client_secret`.
+    ///
+    /// # Compile-Time Key Role Separation
+    ///
+    /// Passing a [`SecretKey`](crate::core::credentials::SecretKey) instead of a
+    /// [`PublicKey`] fails at compile time:
+    ///
+    /// ```compile_fail
+    /// use secrecy::SecretString;
+    /// use some_paymob::core::credentials::SecretKey;
+    /// use some_paymob::resources::checkout::pixel::PixelConfig;
+    ///
+    /// let sk = SecretKey::new("egy_sk_test_123").unwrap();
+    /// let secret = SecretString::from("egy_csk_test_XYZ".to_owned());
+    /// let _ = PixelConfig::builder(&sk, secret);
+    /// ```
     #[must_use]
     pub fn builder(public_key: &PublicKey, client_secret: SecretString) -> PixelConfigBuilder {
         PixelConfigBuilder::new(public_key, client_secret)
@@ -352,24 +400,10 @@ impl PixelConfigBuilder {
     /// # Errors
     ///
     /// Returns [`PaymobError::ValidationError`] if `public_key` or `client_secret`
-    /// is empty, `payment_methods` is empty, or Apple Pay / Google Pay settings
-    /// contain empty identifiers.
+    /// is empty or uses an `sk_*` prefix, `payment_methods` is empty, or Apple Pay
+    /// / Google Pay settings contain empty identifiers.
     pub fn build(self) -> Result<PixelConfig, PaymobError> {
-        validate_non_empty("public_key", &self.public_key)?;
-        validate_non_empty("client_secret", self.client_secret.expose_secret())?;
-        if self.payment_methods.is_empty() {
-            return Err(PaymobError::ValidationError {
-                field: "payment_methods",
-                reason: "at least one PixelPaymentMethod must be enabled".to_owned(),
-            });
-        }
-        if let Some(ref apple) = self.apple_pay {
-            validate_apple_pay(apple)?;
-        }
-        if let Some(ref google) = self.google_pay {
-            validate_google_pay(google)?;
-        }
-        Ok(PixelConfig {
+        let config = PixelConfig {
             public_key: self.public_key,
             client_secret: self.client_secret,
             payment_methods: self.payment_methods,
@@ -378,8 +412,56 @@ impl PixelConfigBuilder {
             apple_pay: self.apple_pay,
             google_pay: self.google_pay,
             locale: self.locale,
-        })
+        };
+        validate_pixel_config(&config)?;
+        Ok(config)
     }
+}
+
+fn validate_pixel_config(config: &PixelConfig) -> Result<(), PaymobError> {
+    validate_pixel_credentials(&config.public_key, config.client_secret.expose_secret())?;
+    validate_pixel_methods(&config.payment_methods)?;
+    validate_pixel_wallets(config.apple_pay.as_ref(), config.google_pay.as_ref())
+}
+
+fn validate_pixel_credentials(public_key: &str, client_secret: &str) -> Result<(), PaymobError> {
+    validate_key_not_secret("public_key", public_key)?;
+    validate_key_not_secret("client_secret", client_secret)
+}
+
+fn validate_key_not_secret(field: &'static str, value: &str) -> Result<(), PaymobError> {
+    validate_non_empty(field, value)?;
+    let lower = value.trim().to_ascii_lowercase();
+    if super::unified::is_secret_key_like(&lower) {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("secret key (`sk_*`) cannot be used as {field}"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_pixel_methods(methods: &[PixelPaymentMethod]) -> Result<(), PaymobError> {
+    if methods.is_empty() {
+        return Err(PaymobError::ValidationError {
+            field: "payment_methods",
+            reason: "at least one PixelPaymentMethod must be enabled".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_pixel_wallets(
+    apple_pay: Option<&ApplePaySettings>,
+    google_pay: Option<&GooglePaySettings>,
+) -> Result<(), PaymobError> {
+    if let Some(apple) = apple_pay {
+        validate_apple_pay(apple)?;
+    }
+    if let Some(google) = google_pay {
+        return validate_google_pay(google);
+    }
+    Ok(())
 }
 
 fn validate_non_empty(field: &'static str, value: &str) -> Result<(), PaymobError> {
@@ -392,23 +474,31 @@ fn validate_non_empty(field: &'static str, value: &str) -> Result<(), PaymobErro
     Ok(())
 }
 
-fn validate_apple_pay(settings: &ApplePaySettings) -> Result<(), PaymobError> {
-    validate_non_empty("apple_pay.merchant_id", &settings.merchant_id)?;
-    if let Some(ref domain) = settings.domain_verification {
-        validate_non_empty("apple_pay.domain_verification", domain)?;
-    }
-    if let Some(ref cert) = settings.certificate_id {
-        validate_non_empty("apple_pay.certificate_id", cert)?;
+fn validate_optional_non_empty(
+    field: &'static str,
+    value: Option<&str>,
+) -> Result<(), PaymobError> {
+    if let Some(inner) = value {
+        return validate_non_empty(field, inner);
     }
     Ok(())
 }
 
+fn validate_apple_pay(settings: &ApplePaySettings) -> Result<(), PaymobError> {
+    validate_non_empty("apple_pay.merchant_id", &settings.merchant_id)?;
+    validate_optional_non_empty(
+        "apple_pay.domain_verification",
+        settings.domain_verification.as_deref(),
+    )?;
+    validate_optional_non_empty("apple_pay.certificate_id", settings.certificate_id.as_deref())
+}
+
 fn validate_google_pay(settings: &GooglePaySettings) -> Result<(), PaymobError> {
     validate_non_empty("google_pay.merchant_id", &settings.merchant_id)?;
-    if let Some(ref gw) = settings.gateway_merchant_id {
-        validate_non_empty("google_pay.gateway_merchant_id", gw)?;
-    }
-    Ok(())
+    validate_optional_non_empty(
+        "google_pay.gateway_merchant_id",
+        settings.gateway_merchant_id.as_deref(),
+    )
 }
 
 fn serialize_secret_string<S>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error>
@@ -544,5 +634,52 @@ mod tests {
         let config_dbg = format!("{config:?}");
         assert!(config_dbg.contains("[REDACTED]"));
         assert!(!config_dbg.contains("egy_csk_super_secret_token"));
+    }
+
+    #[test]
+    fn tc_2_2_2_cycle2_deserialize_enforces_bounds_and_rejects_sk() {
+        let valid_json = r#"{
+            "public_key": "egy_pk_test_ABC",
+            "client_secret": "egy_csk_test_XYZ",
+            "payment_methods": ["card"],
+            "show_save_card": false,
+            "force_save_card": false
+        }"#;
+        let parsed: PixelConfig =
+            serde_json::from_str(valid_json).expect("valid PixelConfig JSON should deserialize");
+        assert_eq!(parsed.public_key, "egy_pk_test_ABC");
+
+        let invalid_payloads = [
+            r#"{"public_key":"","client_secret":"csk_1","payment_methods":["card"],"show_save_card":false,"force_save_card":false}"#,
+            r#"{"public_key":"egy_sk_test_123","client_secret":"csk_1","payment_methods":["card"],"show_save_card":false,"force_save_card":false}"#,
+            r#"{"public_key":"egy_pk_test_123","client_secret":"   ","payment_methods":["card"],"show_save_card":false,"force_save_card":false}"#,
+            r#"{"public_key":"egy_pk_test_123","client_secret":"sk_live_secret","payment_methods":["card"],"show_save_card":false,"force_save_card":false}"#,
+            r#"{"public_key":"egy_pk_test_123","client_secret":"csk_1","payment_methods":[],"show_save_card":false,"force_save_card":false}"#,
+            r#"{"public_key":"egy_pk_test_123","client_secret":"csk_1","payment_methods":["apple_pay"],"show_save_card":false,"force_save_card":false,"apple_pay":{"merchant_id":"  "}}"#,
+            r#"{"public_key":"egy_pk_test_123","client_secret":"csk_1","payment_methods":["google_pay"],"show_save_card":false,"force_save_card":false,"google_pay":{"merchant_id":""}}"#,
+        ];
+        for payload in invalid_payloads {
+            assert!(
+                serde_json::from_str::<PixelConfig>(payload).is_err(),
+                "expected PixelConfig deserialization to reject: {payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn tc_2_2_2_cycle2_checkout_facade_pixel_config() {
+        let cfg = ClientConfig::builder()
+            .region(PaymobRegion::Egypt)
+            .public_key(PublicKey::new("egy_pk_test_FACADE").expect("valid pk"))
+            .build()
+            .expect("valid config");
+        let client = PaymobClient::new(cfg).expect("valid client");
+        let pixel = client
+            .checkout()
+            .pixel_config(SecretString::from("egy_csk_test_999".to_owned()))
+            .expect("pixel_config builder")
+            .build()
+            .expect("valid PixelConfig");
+        assert_eq!(pixel.public_key, "egy_pk_test_FACADE");
     }
 }

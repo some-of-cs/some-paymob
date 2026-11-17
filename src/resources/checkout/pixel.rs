@@ -10,7 +10,6 @@ use std::fmt;
 
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Deserializer, Serialize};
-use zeroize::ZeroizeOnDrop;
 
 use crate::core::client::PaymobClient;
 use crate::core::credentials::PublicKey;
@@ -301,19 +300,14 @@ impl PixelConfig {
 }
 
 /// Fluent builder for [`PixelConfig`].
-#[derive(Clone, ZeroizeOnDrop)]
+#[derive(Clone)]
 pub struct PixelConfigBuilder {
     public_key: String,
     client_secret: SecretString,
-    #[zeroize(skip)]
     payment_methods: Vec<PixelPaymentMethod>,
-    #[zeroize(skip)]
     show_save_card: bool,
-    #[zeroize(skip)]
     force_save_card: bool,
-    #[zeroize(skip)]
     apple_pay: Option<ApplePaySettings>,
-    #[zeroize(skip)]
     google_pay: Option<GooglePaySettings>,
     locale: Option<String>,
 }

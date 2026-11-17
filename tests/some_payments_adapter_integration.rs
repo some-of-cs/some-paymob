@@ -38,6 +38,38 @@ fn build_mock_client(base_url: &str) -> PaymobClient {
     PaymobClient::new(config).expect("valid client")
 }
 
+fn assert_https_required<T: std::fmt::Debug>(res: Result<T, PaymobError>) {
+    assert!(matches!(
+        res,
+        Err(PaymobError::ValidationError {
+            field: "http_config",
+            ..
+        })
+    ));
+}
+
+async fn assert_manage_op<T, F, Fut>(
+    endpoint: &str,
+    expected_body: serde_json::Value,
+    response_body: serde_json::Value,
+    call: F,
+) -> T
+where
+    F: FnOnce(PaymobClient) -> Fut,
+    Fut: std::future::Future<Output = Result<T, PaymobError>>,
+{
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(endpoint))
+        .and(body_json(expected_body))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
+        .mount(&server)
+        .await;
+    call(build_mock_client(&server.uri()))
+        .await
+        .expect("manage operation")
+}
+
 #[tokio::test]
 async fn ac1_and_ac3_paymob_ext_wires_into_intention_params_and_redacts_session() {
     let ext = ProviderExt::Paymob(
@@ -60,14 +92,7 @@ async fn ac1_and_ac3_paymob_ext_wires_into_intention_params_and_redacts_session(
     assert!(wired_req.extras.is_some());
 
     let client = build_mock_client("http://127.0.0.1:9");
-    let https_err = client.create_payment_session(&wired_req).await;
-    assert!(matches!(
-        https_err,
-        Err(PaymobError::ValidationError {
-            field: "http_config",
-            ..
-        })
-    ));
+    assert_https_required(client.create_payment_session(&wired_req).await);
 
     let session = UnifiedPaymentSession {
         session_id: "pi_us810_001".to_owned(),
@@ -84,41 +109,25 @@ async fn ac1_and_ac3_paymob_ext_wires_into_intention_params_and_redacts_session(
     assert!(dbg.contains("[REDACTED]"));
 }
 
-async fn start_manage_mock(
-    endpoint: &str,
-    expected_body: serde_json::Value,
-    response_body: serde_json::Value,
-) -> (MockServer, PaymobClient) {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(endpoint))
-        .and(body_json(expected_body))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
-        .mount(&server)
-        .await;
-    let client = build_mock_client(&server.uri());
-    (server, client)
-}
-
 #[tokio::test]
 async fn ac1_capture_delegates_to_manage_service() {
-    let (_server, client) = start_manage_mock(
+    let cap = assert_manage_op(
         "/api/acceptance/capture",
         serde_json::json!({ "transaction_id": 1001, "amount_cents": 5000 }),
         serde_json::json!({
             "id": 1002, "pending": false, "amount_cents": 5000,
             "success": true, "is_capture": true, "is_captured": true
         }),
+        |client| async move {
+            client
+                .capture_payment(&UnifiedCaptureRequest::new(
+                    1001,
+                    MinorUnitAmount::new(5000),
+                ))
+                .await
+        },
     )
     .await;
-
-    let cap = client
-        .capture_payment(&UnifiedCaptureRequest::new(
-            1001,
-            MinorUnitAmount::new(5000),
-        ))
-        .await
-        .expect("capture");
     assert_eq!(cap.transaction_id, 1002);
     assert_eq!(cap.amount.as_u64(), 5000);
     assert!(cap.success);
@@ -126,20 +135,20 @@ async fn ac1_capture_delegates_to_manage_service() {
 
 #[tokio::test]
 async fn ac1_refund_delegates_to_manage_service() {
-    let (_server, client) = start_manage_mock(
+    let refund = assert_manage_op(
         "/api/acceptance/void_refund/refund",
         serde_json::json!({ "transaction_id": 1002, "amount_cents": 2500 }),
         serde_json::json!({
             "id": 1003, "pending": false, "amount_cents": 2500,
             "success": true, "is_refund": true, "is_refunded": true
         }),
+        |client| async move {
+            client
+                .refund_payment(&UnifiedRefundRequest::new(1002, MinorUnitAmount::new(2500)))
+                .await
+        },
     )
     .await;
-
-    let refund = client
-        .refund_payment(&UnifiedRefundRequest::new(1002, MinorUnitAmount::new(2500)))
-        .await
-        .expect("refund");
     assert_eq!(refund.refund_id, 1003);
     assert_eq!(refund.amount.as_u64(), 2500);
     assert!(refund.is_refunded);
@@ -147,20 +156,16 @@ async fn ac1_refund_delegates_to_manage_service() {
 
 #[tokio::test]
 async fn ac1_void_delegates_to_manage_service() {
-    let (_server, client) = start_manage_mock(
+    let voided = assert_manage_op(
         "/api/acceptance/void_refund/void",
         serde_json::json!({ "transaction_id": 1004 }),
         serde_json::json!({
             "id": 1005, "pending": false, "amount_cents": 5000,
             "success": true, "is_void": true, "is_voided": true
         }),
+        |client| async move { client.void_payment(&UnifiedVoidRequest::new(1004)).await },
     )
     .await;
-
-    let voided = client
-        .void_payment(&UnifiedVoidRequest::new(1004))
-        .await
-        .expect("void");
     assert_eq!(voided.transaction_id, 1005);
     assert!(voided.is_voided);
 }
@@ -179,14 +184,7 @@ async fn ac2_charge_saved_method_redacts_secrets_and_enforces_https() {
     assert!(!dbg.contains("999"));
     assert!(dbg.contains("[REDACTED]"));
 
-    let res = client.charge_saved_method(&req).await;
-    assert!(matches!(
-        res,
-        Err(PaymobError::ValidationError {
-            field: "http_config",
-            ..
-        })
-    ));
+    assert_https_required(client.charge_saved_method(&req).await);
 }
 
 #[tokio::test]

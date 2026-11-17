@@ -13,6 +13,8 @@ pub mod legacy;
 pub mod manage;
 #[cfg(feature = "onboarding")]
 pub mod onboarding;
+#[cfg(feature = "payouts")]
+pub mod payouts;
 #[cfg(feature = "quicklinks")]
 pub mod quicklinks;
 #[cfg(feature = "saved-cards")]

@@ -232,7 +232,7 @@ async fn verify_scoped_execution(scoped: &MerchantScopedClient, integration_id: 
         .build()
         .unwrap();
     let updated = scoped.intentions().update(&update_intent).await.unwrap();
-    assert_eq!(updated.status.as_deref(), Some("updated"));
+    assert_eq!(updated.status, "updated");
 
     let raw_tx = scoped.inquiries().transaction_by_id(555).await.unwrap();
     assert_eq!(raw_tx["id"], 555);
@@ -513,10 +513,9 @@ async fn concurrent_cross_tenant_isolation_between_scoped_merchants() {
     let tenant_a = client.with_merchant(111).unwrap();
     let tenant_b = client.with_merchant(222).unwrap();
 
-    let (res_a, res_b) = tokio::join!(
-        tenant_a.inquiries().transaction(10),
-        tenant_b.inquiries().transaction(20)
-    );
+    let inq_a = tenant_a.inquiries();
+    let inq_b = tenant_b.inquiries();
+    let (res_a, res_b) = tokio::join!(inq_a.transaction(10), inq_b.transaction(20));
 
     let tx_a = res_a.expect("tenant 111 request succeeds");
     let tx_b = res_b.expect("tenant 222 request succeeds");

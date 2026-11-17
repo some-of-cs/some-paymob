@@ -542,7 +542,7 @@ mod tests {
             .build()
             .expect("valid update params");
         let updated = scoped.intentions().update(&update_params).await.unwrap();
-        assert_eq!(updated.status.as_deref(), Some("updated"));
+        assert_eq!(updated.status, "updated");
     }
 
     #[cfg(feature = "inquiries")]

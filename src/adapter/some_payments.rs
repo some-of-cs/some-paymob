@@ -6,6 +6,8 @@
 //! `manage`, `saved_cards`, `subscriptions`, and `webhooks`) without floating-point
 //! arithmetic or secret leakage.
 
+use std::future::Future;
+
 use crate::adapter::traits::{
     PaymentProvider, PayoutProvider, SubscriptionProvider, UnifiedCaptureReceipt,
     UnifiedCaptureRequest, UnifiedPaymentSession, UnifiedPaymentSessionRequest,
@@ -59,7 +61,7 @@ pub fn build_intention_params(
 
     let mut builder = CreateIntentionParams::builder()
         .amount(req.amount)
-        .currency(req.currency)
+        .currency(req.currency.clone())
         .payment_methods(methods);
 
     if let Some(reference) = &req.special_reference {
@@ -87,6 +89,14 @@ fn parse_payment_method_input(entry: &str) -> PaymentMethodInput {
     }
 }
 
+fn build_mit_params(req: &UnifiedSavedMethodChargeRequest) -> Result<MitPayParams, PaymobError> {
+    let mut params = MitPayParams::new(req.payment_token.clone(), req.saved_method_token.clone())?;
+    if let Some(cvn) = &req.cvn {
+        params = params.with_cvn(cvn.clone())?;
+    }
+    Ok(params)
+}
+
 /// Normalizes a verified [`WebhookEvent`] into a [`UnifiedWebhookOutcome`].
 #[must_use]
 pub fn normalize_webhook_event(event: &WebhookEvent) -> UnifiedWebhookOutcome {
@@ -110,86 +120,103 @@ pub fn normalize_webhook_event(event: &WebhookEvent) -> UnifiedWebhookOutcome {
 impl PaymentProvider for PaymobClient {
     type Error = PaymobError;
 
-    async fn create_payment_session(
+    fn create_payment_session(
         &self,
         req: &UnifiedPaymentSessionRequest,
-    ) -> Result<UnifiedPaymentSession, Self::Error> {
-        let params = build_intention_params(req)?;
-        let resp = self.intentions().create(params).await?;
-        let checkout_url = self
-            .checkout()
-            .unified_url(&resp.client_secret)?
-            .to_string();
-        Ok(UnifiedPaymentSession {
-            session_id: resp.id,
-            order_id: resp.intention_order_id.to_string(),
-            client_secret: resp.client_secret,
-            checkout_url,
-            status: resp.status,
-            confirmed: resp.confirmed,
-        })
+    ) -> impl Future<Output = Result<UnifiedPaymentSession, Self::Error>> + Send + '_ {
+        let params_res = build_intention_params(req);
+        let client = self.clone();
+        async move {
+            let params = params_res?;
+            let resp = client.intentions().create(params).await?;
+            let checkout_url = client
+                .checkout()
+                .unified_url(&resp.client_secret)?
+                .to_string();
+            Ok(UnifiedPaymentSession {
+                session_id: resp.id,
+                order_id: resp.intention_order_id.to_string(),
+                client_secret: resp.client_secret,
+                checkout_url,
+                status: resp.status,
+                confirmed: resp.confirmed,
+            })
+        }
     }
 
-    async fn capture_payment(
+    fn capture_payment(
         &self,
         req: &UnifiedCaptureRequest,
-    ) -> Result<UnifiedCaptureReceipt, Self::Error> {
-        let params = CaptureParams::try_new(req.transaction_id, req.amount.as_u64())?;
-        let tx = self.manage().capture(params).await?;
-        Ok(UnifiedCaptureReceipt {
-            transaction_id: tx.id,
-            amount: MinorUnitAmount::new(tx.amount_cents),
-            success: tx.success,
-            pending: tx.pending,
-        })
+    ) -> impl Future<Output = Result<UnifiedCaptureReceipt, Self::Error>> + Send + '_ {
+        let params_res = CaptureParams::try_new(req.transaction_id, req.amount.as_u64());
+        let client = self.clone();
+        async move {
+            let params = params_res?;
+            let tx = client.manage().capture(params).await?;
+            Ok(UnifiedCaptureReceipt {
+                transaction_id: tx.id,
+                amount: MinorUnitAmount::new(tx.amount_cents),
+                success: tx.success,
+                pending: tx.pending,
+            })
+        }
     }
 
-    async fn refund_payment(
+    fn refund_payment(
         &self,
         req: &UnifiedRefundRequest,
-    ) -> Result<UnifiedRefundReceipt, Self::Error> {
-        let params = RefundParams::try_new(req.transaction_id, req.amount.as_u64())?;
-        let tx = self.manage().refund(params).await?;
-        Ok(UnifiedRefundReceipt {
-            refund_id: tx.id,
-            amount: MinorUnitAmount::new(tx.amount_cents),
-            success: tx.success,
-            pending: tx.pending,
-            is_refunded: tx.is_refunded,
-        })
+    ) -> impl Future<Output = Result<UnifiedRefundReceipt, Self::Error>> + Send + '_ {
+        let params_res = RefundParams::try_new(req.transaction_id, req.amount.as_u64());
+        let client = self.clone();
+        async move {
+            let params = params_res?;
+            let tx = client.manage().refund(params).await?;
+            Ok(UnifiedRefundReceipt {
+                refund_id: tx.id,
+                amount: MinorUnitAmount::new(tx.amount_cents),
+                success: tx.success,
+                pending: tx.pending,
+                is_refunded: tx.is_refunded,
+            })
+        }
     }
 
-    async fn void_payment(
+    fn void_payment(
         &self,
         req: &UnifiedVoidRequest,
-    ) -> Result<UnifiedVoidReceipt, Self::Error> {
-        let params = VoidParams::try_new(req.transaction_id)?;
-        let tx = self.manage().void(params).await?;
-        Ok(UnifiedVoidReceipt {
-            transaction_id: tx.id,
-            success: tx.success,
-            is_voided: tx.is_voided,
-        })
+    ) -> impl Future<Output = Result<UnifiedVoidReceipt, Self::Error>> + Send + '_ {
+        let params_res = VoidParams::try_new(req.transaction_id);
+        let client = self.clone();
+        async move {
+            let params = params_res?;
+            let tx = client.manage().void(params).await?;
+            Ok(UnifiedVoidReceipt {
+                transaction_id: tx.id,
+                success: tx.success,
+                is_voided: tx.is_voided,
+            })
+        }
     }
 
-    async fn charge_saved_method(
+    fn charge_saved_method(
         &self,
         req: &UnifiedSavedMethodChargeRequest,
-    ) -> Result<UnifiedSavedMethodChargeReceipt, Self::Error> {
-        let mut params =
-            MitPayParams::new(req.payment_token.clone(), req.saved_method_token.clone())?;
-        if let Some(cvn) = &req.cvn {
-            params = params.with_cvn(cvn.clone())?;
+    ) -> impl Future<Output = Result<UnifiedSavedMethodChargeReceipt, Self::Error>> + Send + '_
+    {
+        let params_res = build_mit_params(req);
+        let client = self.clone();
+        async move {
+            let params = params_res?;
+            let resp = client.saved_cards().pay_with_token_mit(&params).await?;
+            Ok(UnifiedSavedMethodChargeReceipt {
+                transaction_id: resp.transaction.id,
+                amount: MinorUnitAmount::new(resp.transaction.amount_cents),
+                success: resp.transaction.success,
+                pending: resp.transaction.pending,
+                redirect_url: resp.redirect_url,
+                kiosk_bill_reference: resp.kiosk_bill_reference,
+            })
         }
-        let resp = self.saved_cards().pay_with_token_mit(&params).await?;
-        Ok(UnifiedSavedMethodChargeReceipt {
-            transaction_id: resp.transaction.id,
-            amount: MinorUnitAmount::new(resp.transaction.amount_cents),
-            success: resp.transaction.success,
-            pending: resp.transaction.pending,
-            redirect_url: resp.redirect_url,
-            kiosk_bill_reference: resp.kiosk_bill_reference,
-        })
     }
 }
 
@@ -211,38 +238,47 @@ impl WebhookVerifier for PaymobClient {
 impl SubscriptionProvider for PaymobClient {
     type Error = PaymobError;
 
-    async fn refund_last_transaction(
+    fn refund_last_transaction(
         &self,
         req: &UnifiedSubscriptionRefundRequest,
-    ) -> Result<UnifiedSubscriptionRefundReceipt, Self::Error> {
+    ) -> impl Future<Output = Result<UnifiedSubscriptionRefundReceipt, Self::Error>> + Send + '_
+    {
+        let sub_id = req.subscription_id;
         let amount_cents = req.amount.map(MinorUnitAmount::as_u64);
-        let resp = self
-            .subscriptions()
-            .refund_last_transaction(req.subscription_id, amount_cents)
-            .await?;
-        Ok(UnifiedSubscriptionRefundReceipt {
-            refund_id: resp.id,
-            amount: MinorUnitAmount::new(resp.amount_cents),
-            success: resp.success,
-            pending: resp.pending,
-            parent_transaction_id: resp.parent_transaction,
-        })
+        let client = self.clone();
+        async move {
+            let resp = client
+                .subscriptions()
+                .refund_last_transaction(sub_id, amount_cents)
+                .await?;
+            Ok(UnifiedSubscriptionRefundReceipt {
+                refund_id: resp.id,
+                amount: MinorUnitAmount::new(resp.amount_cents),
+                success: resp.success,
+                pending: resp.pending,
+                parent_transaction_id: resp.parent_transaction,
+            })
+        }
     }
 }
 
 impl PayoutProvider for PaymobClient {
     type Error = PaymobError;
 
-    async fn execute_payout(
+    fn execute_payout(
         &self,
         req: &UnifiedPayoutRequest,
-    ) -> Result<UnifiedPayoutReceipt, Self::Error> {
-        req.validate()?;
-        let _endpoint = self.payouts_url("/disburse/")?;
-        Err(PaymobError::ValidationError {
-            field: "payouts",
-            reason: "outbound payouts execution requires the payouts resource module".to_owned(),
-        })
+    ) -> impl Future<Output = Result<UnifiedPayoutReceipt, Self::Error>> + Send + '_ {
+        let valid_res = req.validate();
+        let client = self.clone();
+        async move {
+            valid_res?;
+            let _endpoint = client.payouts_url("/disburse/")?;
+            Err(PaymobError::ValidationError {
+                field: "payouts",
+                reason: "outbound payouts execution requires the payouts resource module".to_owned(),
+            })
+        }
     }
 }
 

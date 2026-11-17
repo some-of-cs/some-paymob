@@ -254,7 +254,7 @@ fn validate_non_empty_no_control<'a>(
             reason: format!("{field} must not be empty"),
         });
     }
-    if raw.chars().any(char::is_ascii_control) {
+    if raw.chars().any(|ch| ch.is_ascii_control()) {
         return Err(PaymobError::ValidationError {
             field,
             reason: format!("{field} must not contain control characters"),

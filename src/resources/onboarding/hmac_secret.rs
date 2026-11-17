@@ -6,10 +6,10 @@
 
 use crate::core::error::PaymobError;
 use crate::core::http::HttpRequest;
-use crate::resources::onboarding::PartnerAuthService;
 use crate::resources::onboarding::auth_models::PartnerHmacEnvelope;
-use crate::resources::onboarding::login_apikey::{
-    execute_onboarding_request, map_http_error, resolve_partner_bearer_headers,
+use crate::resources::onboarding::{
+    PartnerAuthService, apply_header_map, decode_onboarding_json, execute_onboarding_request,
+    resolve_partner_bearer_headers,
 };
 
 const PARTNER_HMAC_SECRET_PATH: &str = "/api/auth/hmac_secret/get_hmac";
@@ -57,21 +57,10 @@ impl PartnerAuthService {
             "partner_credentials.bearer_token is required to retrieve partner HMAC secret",
         )?;
         let url = self.client().accept_url(PARTNER_HMAC_SECRET_PATH)?;
-        let mut request = HttpRequest::get(url.as_str()).map_err(map_http_error)?;
-        for (name, value) in headers {
-            if let Some(header_name) = name {
-                request = request.with_header(header_name, value);
-            }
-        }
+        let request = apply_header_map(HttpRequest::get(url.as_str())?, &headers);
 
         let response = execute_onboarding_request(self.client(), &request).await?;
-        if !response.status.is_success() {
-            return Err(PaymobError::from_http_response(&response));
-        }
-
-        response
-            .json::<PartnerHmacEnvelope>()
-            .map_err(|err| PaymobError::TransportError(err.to_string()))
+        decode_onboarding_json(&response)
     }
 }
 

@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize, Serializer};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::core::error::PaymobError;
+use crate::resources::onboarding::{
+    deserialize_non_empty_secret, validate_no_control_chars, validate_non_empty_trimmed,
+};
 
 const REDACTED: &str = "[REDACTED]";
 
@@ -54,7 +57,7 @@ impl PartnerLoginCredentials {
     /// # Errors
     ///
     /// Returns [`PaymobError::ValidationError`] if `username` or `password` is
-    /// empty or whitespace-only.
+    /// empty, whitespace-only, or contains control characters.
     pub fn try_new(
         username: impl Into<String>,
         password: impl Into<String>,
@@ -64,26 +67,25 @@ impl PartnerLoginCredentials {
         Ok(creds)
     }
 
-    /// Validates that `username` and `password` are non-empty.
+    /// Validates that `username` and `password` are non-empty and free of control characters.
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if either credential is empty or
-    /// whitespace-only.
+    /// Returns [`PaymobError::ValidationError`] if either credential is empty,
+    /// whitespace-only, or contains control characters.
     pub fn validate(&self) -> Result<(), PaymobError> {
-        if self.username.trim().is_empty() {
-            return Err(PaymobError::ValidationError {
-                field: "username",
-                reason: String::from("partner username must not be empty"),
-            });
-        }
-        if self.password.expose_secret().trim().is_empty() {
-            return Err(PaymobError::ValidationError {
-                field: "password",
-                reason: String::from("partner password must not be empty"),
-            });
-        }
-        Ok(())
+        validate_non_empty_trimmed(
+            "username",
+            &self.username,
+            "partner username must not be empty",
+        )?;
+        validate_no_control_chars("username", &self.username)?;
+        validate_non_empty_trimmed(
+            "password",
+            self.password.expose_secret(),
+            "partner password must not be empty",
+        )?;
+        validate_no_control_chars("password", self.password.expose_secret())
     }
 
     /// Returns the partner username.
@@ -136,7 +138,10 @@ impl Serialize for PartnerLoginCredentials {
 #[derive(Clone, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct PartnerAuthTokenResponse {
     /// Partner Bearer authentication token wrapped in [`SecretString`].
-    #[serde(alias = "access_token")]
+    #[serde(
+        alias = "access_token",
+        deserialize_with = "deserialize_non_empty_secret"
+    )]
     pub token: SecretString,
 }
 
@@ -194,20 +199,20 @@ impl CreatePartnerApiKeyParams {
         self.label.as_deref()
     }
 
-    /// Validates that any provided `label` is non-empty.
+    /// Validates that any provided `label` is non-empty and free of control characters.
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `label` is `Some` and empty or
-    /// whitespace-only.
+    /// Returns [`PaymobError::ValidationError`] if `label` is `Some` and empty,
+    /// whitespace-only, or contains control characters.
     pub fn validate(&self) -> Result<(), PaymobError> {
-        if let Some(label) = &self.label
-            && label.trim().is_empty()
-        {
-            return Err(PaymobError::ValidationError {
-                field: "label",
-                reason: String::from("partner API key label must not be empty when provided"),
-            });
+        if let Some(label) = &self.label {
+            validate_non_empty_trimmed(
+                "label",
+                label,
+                "partner API key label must not be empty when provided",
+            )?;
+            validate_no_control_chars("label", label)?;
         }
         Ok(())
     }
@@ -234,7 +239,7 @@ impl CreatePartnerApiKeyParams {
 #[derive(Clone, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct PartnerApiKeyResponse {
     /// Provisioned Partner API Key wrapped in [`SecretString`].
-    #[serde(alias = "key")]
+    #[serde(alias = "key", deserialize_with = "deserialize_non_empty_secret")]
     pub api_key: SecretString,
     /// Optional label associated with the Partner API Key.
     #[serde(default)]
@@ -274,6 +279,7 @@ impl fmt::Debug for PartnerApiKeyResponse {
 #[derive(Clone, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct PartnerHmacBody {
     /// Sub-merchant HMAC secret wrapped in [`SecretString`].
+    #[serde(deserialize_with = "deserialize_non_empty_secret")]
     pub hmac_secret: SecretString,
 }
 
@@ -348,6 +354,9 @@ mod tests {
 
         assert!(PartnerLoginCredentials::try_new("   ", "pass").is_err());
         assert!(PartnerLoginCredentials::try_new("user", "  ").is_err());
+        assert!(PartnerLoginCredentials::try_new("user\r\n", "pass").is_err());
+        assert!(PartnerLoginCredentials::try_new("user\0name", "pass").is_err());
+        assert!(PartnerLoginCredentials::try_new("user", "pass\0word").is_err());
     }
 
     #[test]
@@ -370,6 +379,13 @@ mod tests {
         let key_dbg = format!("{key_resp:?}");
         assert!(key_dbg.contains("[REDACTED]"));
         assert!(!key_dbg.contains("pk_partner_live_xyz"));
+
+        assert!(serde_json::from_str::<PartnerAuthTokenResponse>(r#"{"token":"   "}"#).is_err());
+        assert!(
+            serde_json::from_str::<PartnerAuthTokenResponse>(r#"{"token":"bad\ntok"}"#).is_err()
+        );
+        assert!(serde_json::from_str::<PartnerApiKeyResponse>(r#"{"api_key":""}"#).is_err());
+        assert!(serde_json::from_str::<PartnerApiKeyResponse>(r#"{"api_key":"k\u0000"}"#).is_err());
     }
 
     #[test]
@@ -384,6 +400,9 @@ mod tests {
 
         let empty_label = CreatePartnerApiKeyParams::new().with_label("   ");
         assert!(empty_label.validate().is_err());
+
+        let ctrl_label = CreatePartnerApiKeyParams::new().with_label("ci\r\nkey");
+        assert!(ctrl_label.validate().is_err());
     }
 
     #[test]
@@ -411,5 +430,13 @@ mod tests {
     fn tc_6_1_1_malformed_hmac_envelope_rejected() {
         let missing_body = r#"{"label":null,"status":"Created","code":201}"#;
         assert!(serde_json::from_str::<PartnerHmacEnvelope>(missing_body).is_err());
+
+        let empty_hmac =
+            r#"{"label":null,"status":"Created","code":201,"body":{"hmac_secret":"   "}}"#;
+        assert!(serde_json::from_str::<PartnerHmacEnvelope>(empty_hmac).is_err());
+
+        let ctrl_hmac =
+            r#"{"label":null,"status":"Created","code":201,"body":{"hmac_secret":"ab\ncd"}}"#;
+        assert!(serde_json::from_str::<PartnerHmacEnvelope>(ctrl_hmac).is_err());
     }
 }

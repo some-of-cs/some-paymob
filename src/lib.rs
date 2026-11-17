@@ -88,4 +88,33 @@ pub use resources::payouts::PayoutsService;
 
 /// Crate-root re-exports of Partner Merchant Onboarding services and scoped client.
 #[cfg(feature = "onboarding")]
-pub use resources::onboarding::{OnboardingService, PartnerAuthService, PartnerFlowService};
+pub use resources::onboarding::{
+    MerchantScopedClient, OnboardingService, PartnerAuthService, PartnerFlowService,
+};
+
+/// Crate-root re-exports of Partner Merchant Onboarding authentication models.
+#[cfg(feature = "onboarding")]
+pub use resources::onboarding::{
+    CreatePartnerApiKeyParams, PartnerApiKeyResponse, PartnerAuthTokenResponse, PartnerHmacBody,
+    PartnerHmacEnvelope, PartnerLoginCredentials,
+};
+
+/// Crate-root re-exports of Partner Merchant Onboarding flow and inquiry models.
+#[cfg(feature = "onboarding")]
+pub use resources::onboarding::{
+    OnboardingFlowSchema, OnboardingSchemaField, OnboardingSchemaQuery, OnboardingSchemaStep,
+    PartnerMerchantInquiryResponse, RegisterMerchantParams, RegisteredMerchantResponse,
+    SubmitOnboardingStepParams, SubmitOnboardingStepResponse,
+};
+
+/// Crate-root re-export of the sub-merchant scoped Inquiries handle.
+#[cfg(all(feature = "onboarding", feature = "inquiries"))]
+pub use resources::onboarding::ScopedInquiries;
+
+/// Crate-root re-export of the sub-merchant scoped Payment Intentions handle.
+#[cfg(all(feature = "onboarding", feature = "intentions"))]
+pub use resources::onboarding::ScopedIntentions;
+
+/// Crate-root re-export of the sub-merchant scoped Payment Lifecycle Management handle.
+#[cfg(all(feature = "onboarding", feature = "manage"))]
+pub use resources::onboarding::ScopedManage;

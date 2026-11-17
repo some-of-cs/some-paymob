@@ -4,19 +4,15 @@
 //! Implements [`PartnerAuthService::login`] and [`PartnerAuthService::create_api_key`]
 //! under Regime 4 Partner Delegated Authentication (`crate::core::auth::partner`).
 
-use reqwest::header::HeaderMap;
-
-use crate::core::auth::partner::PartnerAuthContext;
-use crate::core::client::PaymobClient;
-use crate::core::credentials::PartnerCredentials;
 use crate::core::error::PaymobError;
-use crate::core::http::{
-    HttpClient, HttpClientConfig, HttpError, HttpRequest, HttpResponse, RetryPolicy,
-};
-use crate::resources::onboarding::PartnerAuthService;
+use crate::core::http::HttpRequest;
 use crate::resources::onboarding::auth_models::{
     CreatePartnerApiKeyParams, PartnerApiKeyResponse, PartnerAuthTokenResponse,
     PartnerLoginCredentials,
+};
+use crate::resources::onboarding::{
+    PartnerAuthService, apply_header_map, decode_onboarding_json, execute_onboarding_request,
+    resolve_partner_bearer_headers,
 };
 
 const PARTNER_LOGIN_PATH: &str = "/api/auth/tokens";
@@ -62,8 +58,7 @@ impl PartnerAuthService {
     ) -> Result<PartnerAuthTokenResponse, PaymobError> {
         creds.validate()?;
         let url = self.client().accept_url(PARTNER_LOGIN_PATH)?;
-        let request = HttpRequest::post(url.as_str())
-            .map_err(map_http_error)?
+        let request = HttpRequest::post(url.as_str())?
             .with_json(&creds)
             .map_err(|err| PaymobError::ValidationError {
                 field: "creds",
@@ -71,13 +66,7 @@ impl PartnerAuthService {
             })?;
 
         let response = execute_onboarding_request(self.client(), &request).await?;
-        if !response.status.is_success() {
-            return Err(PaymobError::from_http_response(&response));
-        }
-
-        response
-            .json::<PartnerAuthTokenResponse>()
-            .map_err(|err| PaymobError::TransportError(err.to_string()))
+        decode_onboarding_json(&response)
     }
 
     /// Provisions a new Partner API Key under Regime 4 Partner Bearer authentication.
@@ -126,77 +115,17 @@ impl PartnerAuthService {
             "partner_credentials.bearer_token is required for Regime 4 API key provisioning",
         )?;
         let url = self.client().accept_url(PARTNER_API_KEY_PATH)?;
-        let mut request = HttpRequest::post(url.as_str())
-            .map_err(map_http_error)?
+        let request = HttpRequest::post(url.as_str())?
             .with_json(&params)
             .map_err(|err| PaymobError::ValidationError {
                 field: "params",
                 reason: err.to_string(),
             })?;
-        for (name, value) in headers {
-            if let Some(header_name) = name {
-                request = request.with_header(header_name, value);
-            }
-        }
+        let request = apply_header_map(request, &headers);
 
         let response = execute_onboarding_request(self.client(), &request).await?;
-        if !response.status.is_success() {
-            return Err(PaymobError::from_http_response(&response));
-        }
-
-        response
-            .json::<PartnerApiKeyResponse>()
-            .map_err(|err| PaymobError::TransportError(err.to_string()))
+        decode_onboarding_json(&response)
     }
-}
-
-pub(crate) fn resolve_partner_bearer_headers(
-    client: &PaymobClient,
-    missing_reason: &'static str,
-) -> Result<HeaderMap, PaymobError> {
-    let bearer = client
-        .config()
-        .partner_credentials()
-        .and_then(PartnerCredentials::bearer_token)
-        .ok_or_else(|| PaymobError::AuthenticationError(String::from(missing_reason)))?;
-
-    let ctx = PartnerAuthContext::bearer(bearer)
-        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-    let mut headers = HeaderMap::new();
-    ctx.apply_headers(&mut headers)
-        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-    Ok(headers)
-}
-
-pub(crate) async fn execute_onboarding_request(
-    client: &PaymobClient,
-    request: &HttpRequest,
-) -> Result<HttpResponse, PaymobError> {
-    let is_loopback_http = request.url().scheme() == "http"
-        && matches!(
-            request.url().host_str(),
-            Some("127.0.0.1" | "localhost" | "[::1]")
-        );
-    if !is_loopback_http {
-        return client.http().execute(request).await.map_err(map_http_error);
-    }
-    let cfg = client.config();
-    let local_http = HttpClient::new(HttpClientConfig {
-        connect_timeout: cfg.timeout(),
-        request_timeout: cfg.timeout(),
-        max_response_bytes: client.http().config().max_response_bytes,
-        retry: RetryPolicy {
-            max_retries: cfg.max_retries(),
-            ..RetryPolicy::default()
-        },
-        allow_insecure_http: true,
-    })
-    .map_err(map_http_error)?;
-    local_http.execute(request).await.map_err(map_http_error)
-}
-
-pub(crate) fn map_http_error(err: HttpError) -> PaymobError {
-    PaymobError::from(err)
 }
 
 #[cfg(test)]
@@ -205,7 +134,9 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
+    use crate::core::client::PaymobClient;
     use crate::core::config::ClientConfig;
+    use crate::core::credentials::PartnerCredentials;
     use crate::core::region::PaymobRegion;
 
     fn test_client(base_url: &str, bearer_token: Option<&str>) -> PaymobClient {

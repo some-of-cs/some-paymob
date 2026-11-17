@@ -9,13 +9,18 @@
 use std::fmt;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use url::Url;
 
+use crate::core::auth::partner::DEFAULT_MERCHANT_ID_HEADER;
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpClient, HttpClientConfig, HttpRequest, HttpResponse, RetryPolicy};
+#[cfg(any(feature = "intentions", feature = "inquiries", feature = "manage"))]
+use crate::core::http::{HttpRequest, HttpResponse};
+#[cfg(any(feature = "intentions", feature = "inquiries", feature = "manage"))]
+use crate::resources::onboarding::{
+    apply_header_map, decode_onboarding_json, execute_onboarding_request,
+};
+use crate::resources::onboarding::{resolve_partner_api_key_headers, validate_non_zero_id};
 
-const PARTNER_API_KEY_HEADER: &str = "x-api-key";
 const MERCHANT_ID_HEADER: &str = "x-paymob-merchant-id";
 
 /// Immutable, thread-safe view of [`PaymobClient`] scoped to a single sub-merchant.
@@ -68,12 +73,11 @@ impl PaymobClient {
     /// - [`PaymobError::ValidationError`] if `merchant_id == 0`.
     /// - [`PaymobError::AuthenticationError`] if `partner_credentials` is not configured.
     pub fn with_merchant(&self, merchant_id: u64) -> Result<MerchantScopedClient, PaymobError> {
-        if merchant_id == 0 {
-            return Err(PaymobError::ValidationError {
-                field: "merchant_id",
-                reason: "merchant_id must be a non-zero merchant ID".to_owned(),
-            });
-        }
+        validate_non_zero_id(
+            "merchant_id",
+            merchant_id,
+            "merchant_id must be a non-zero merchant ID",
+        )?;
         if self.config().partner_credentials().is_none() {
             return Err(PaymobError::AuthenticationError(String::from(
                 "partner_credentials must be configured for with_merchant scoping",
@@ -101,25 +105,24 @@ impl MerchantScopedClient {
 
     /// Builds the Regime 4 Partner API Key and tenant-scoping HTTP headers.
     ///
+    /// Injects `x-api-key` along with both `x-paymob-merchant-id` and
+    /// `x-merchant-id` ([`DEFAULT_MERCHANT_ID_HEADER`]).
+    ///
     /// # Errors
     ///
     /// Returns [`PaymobError::AuthenticationError`] if `partner_credentials` is
     /// missing or contains invalid header bytes.
     pub fn scope_headers(&self) -> Result<HeaderMap, PaymobError> {
-        let creds = self.inner.config().partner_credentials().ok_or_else(|| {
-            PaymobError::AuthenticationError(String::from(
-                "partner_credentials must be configured for with_merchant scoping",
-            ))
-        })?;
-        let mut api_key_val = HeaderValue::from_str(creds.api_key())
-            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-        api_key_val.set_sensitive(true);
+        let mut headers = resolve_partner_api_key_headers(
+            &self.inner,
+            "partner_credentials must be configured for with_merchant scoping",
+        )?;
         let mid_val = HeaderValue::from_str(&self.merchant_id.to_string())
             .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-
-        let mut headers = HeaderMap::new();
-        headers.insert(HeaderName::from_static(PARTNER_API_KEY_HEADER), api_key_val);
-        headers.insert(HeaderName::from_static(MERCHANT_ID_HEADER), mid_val);
+        let default_mid_header = HeaderName::from_bytes(DEFAULT_MERCHANT_ID_HEADER.as_bytes())
+            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
+        headers.insert(HeaderName::from_static(MERCHANT_ID_HEADER), mid_val.clone());
+        headers.insert(default_mid_header, mid_val);
         Ok(headers)
     }
 
@@ -142,6 +145,52 @@ impl MerchantScopedClient {
     #[must_use]
     pub const fn manage(&self) -> ScopedManage<'_> {
         ScopedManage { scoped: self }
+    }
+
+    #[cfg(feature = "inquiries")]
+    async fn send_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, PaymobError> {
+        let headers = self.scope_headers()?;
+        let url = self.inner.accept_url(path)?;
+        let request = apply_header_map(HttpRequest::get(url.as_str())?, &headers);
+        let response = execute_onboarding_request(&self.inner, &request).await?;
+        decode_onboarding_json(&response)
+    }
+
+    #[cfg(any(feature = "intentions", feature = "inquiries", feature = "manage"))]
+    async fn send_raw_post<B: serde::Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<HttpResponse, PaymobError> {
+        let headers = self.scope_headers()?;
+        let url = self.inner.accept_url(path)?;
+        let req = HttpRequest::post(url.as_str())?.with_json(body)?;
+        let request = apply_header_map(req, &headers);
+        execute_onboarding_request(&self.inner, &request).await
+    }
+
+    #[cfg(any(feature = "intentions", feature = "inquiries", feature = "manage"))]
+    async fn send_post<B: serde::Serialize, T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, PaymobError> {
+        let response = self.send_raw_post(path, body).await?;
+        decode_onboarding_json(&response)
+    }
+
+    #[cfg(feature = "intentions")]
+    async fn send_put<B: serde::Serialize, T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, PaymobError> {
+        let headers = self.scope_headers()?;
+        let url = self.inner.accept_url(path)?;
+        let req = HttpRequest::put(url.as_str())?.with_json(body)?;
+        let request = apply_header_map(req, &headers);
+        let response = execute_onboarding_request(&self.inner, &request).await?;
+        decode_onboarding_json(&response)
     }
 }
 
@@ -170,14 +219,20 @@ impl<'a> ScopedIntentions<'a> {
         &self,
         params: &crate::resources::intentions::CreateIntentionParams,
     ) -> Result<crate::resources::intentions::IntentionResponse, PaymobError> {
-        let headers = self.scoped.scope_headers()?;
-        let url = self.scoped.client().accept_url("/v1/intention/")?;
-        let mut request = HttpRequest::post(url.as_str())?.with_json(params)?;
-        for (name, val) in &headers {
-            request = request.with_header(name.clone(), val.clone());
-        }
-        let response = execute_scoped_request(self.scoped.client(), &request).await?;
-        decode_json_response(&response)
+        self.scoped.send_post("/v1/intention/", params).await
+    }
+
+    /// Updates a v1 Payment Intention on behalf of the scoped sub-merchant (`PUT /v1/intention/`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::AuthenticationError`], [`PaymobError::ValidationError`],
+    /// [`PaymobError::ApiError`], or [`PaymobError::TransportError`] on failure.
+    pub async fn update(
+        &self,
+        params: &crate::resources::intentions::UpdateIntentionParams,
+    ) -> Result<crate::resources::intentions::IntentionResponse, PaymobError> {
+        self.scoped.send_put("/v1/intention/", params).await
     }
 }
 
@@ -202,7 +257,7 @@ impl<'a> ScopedInquiries<'a> {
         self.scoped.client().inquiries()
     }
 
-    /// Queries a transaction by ID on behalf of the scoped sub-merchant
+    /// Queries a transaction by ID on behalf of the scoped sub-merchant as raw JSON
     /// (`GET /api/acceptance/transactions/{transaction_id}`).
     ///
     /// # Errors
@@ -213,21 +268,51 @@ impl<'a> ScopedInquiries<'a> {
         &self,
         transaction_id: u64,
     ) -> Result<serde_json::Value, PaymobError> {
-        if transaction_id == 0 {
-            return Err(PaymobError::ValidationError {
-                field: "transaction_id",
-                reason: "transaction_id must be non-zero".to_owned(),
-            });
-        }
-        let headers = self.scoped.scope_headers()?;
+        validate_non_zero_id(
+            "transaction_id",
+            transaction_id,
+            "transaction_id must be non-zero",
+        )?;
         let path = format!("/api/acceptance/transactions/{transaction_id}");
-        let url = self.scoped.client().accept_url(&path)?;
-        let mut request = HttpRequest::get(url.as_str())?;
-        for (name, val) in &headers {
-            request = request.with_header(name.clone(), val.clone());
-        }
-        let response = execute_scoped_request(self.scoped.client(), &request).await?;
-        decode_json_response(&response)
+        self.scoped.send_get(&path).await
+    }
+
+    /// Queries a strongly-typed [`Transaction`](crate::resources::inquiries::by_id::Transaction)
+    /// by ID on behalf of the scoped sub-merchant (`GET /api/acceptance/transactions/{transaction_id}`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `transaction_id == 0`, or
+    /// [`PaymobError::AuthenticationError`] / [`PaymobError::ApiError`] / [`PaymobError::TransportError`].
+    pub async fn transaction(
+        &self,
+        transaction_id: u64,
+    ) -> Result<crate::resources::inquiries::by_id::Transaction, PaymobError> {
+        validate_non_zero_id(
+            "transaction_id",
+            transaction_id,
+            "transaction_id must be non-zero",
+        )?;
+        let path = format!("/api/acceptance/transactions/{transaction_id}");
+        self.scoped.send_get(&path).await
+    }
+
+    /// Queries a strongly-typed [`InquiredTransaction`](crate::resources::inquiries::by_order::InquiredTransaction)
+    /// by order ID or merchant reference on behalf of the scoped sub-merchant
+    /// (`POST /api/ecommerce/orders/transaction_inquiry`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `params` is invalid, or
+    /// [`PaymobError::AuthenticationError`] / [`PaymobError::ApiError`] / [`PaymobError::TransportError`].
+    pub async fn by_order(
+        &self,
+        params: &crate::resources::inquiries::by_order::TransactionInquiryParams,
+    ) -> Result<crate::resources::inquiries::by_order::InquiredTransaction, PaymobError> {
+        params.validate()?;
+        self.scoped
+            .send_post("/api/ecommerce/orders/transaction_inquiry", params)
+            .await
     }
 }
 
@@ -252,7 +337,7 @@ impl<'a> ScopedManage<'a> {
         self.scoped.client().manage()
     }
 
-    /// Voids a transaction on behalf of the scoped sub-merchant
+    /// Voids a transaction on behalf of the scoped sub-merchant as raw JSON
     /// (`POST /api/acceptance/void_refund/void`).
     ///
     /// # Errors
@@ -263,72 +348,75 @@ impl<'a> ScopedManage<'a> {
         &self,
         transaction_id: u64,
     ) -> Result<serde_json::Value, PaymobError> {
-        if transaction_id == 0 {
-            return Err(PaymobError::ValidationError {
-                field: "transaction_id",
-                reason: "transaction_id must be non-zero".to_owned(),
-            });
-        }
-        let headers = self.scoped.scope_headers()?;
-        let url = self
-            .scoped
-            .client()
-            .accept_url("/api/acceptance/void_refund/void")?;
+        validate_non_zero_id(
+            "transaction_id",
+            transaction_id,
+            "transaction_id must be non-zero",
+        )?;
         let payload = serde_json::json!({ "transaction_id": transaction_id });
-        let mut request = HttpRequest::post(url.as_str())?.with_json(&payload)?;
-        for (name, val) in &headers {
-            request = request.with_header(name.clone(), val.clone());
-        }
-        let response = execute_scoped_request(self.scoped.client(), &request).await?;
-        decode_json_response(&response)
-    }
-}
-
-#[cfg(any(feature = "intentions", feature = "inquiries", feature = "manage"))]
-fn is_loopback_http(url: &Url) -> bool {
-    url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
-}
-
-#[cfg(any(feature = "intentions", feature = "inquiries", feature = "manage"))]
-async fn execute_scoped_request(
-    client: &PaymobClient,
-    request: &HttpRequest,
-) -> Result<HttpResponse, PaymobError> {
-    if !is_loopback_http(request.url()) {
-        return client
-            .http()
-            .execute(request)
+        self.scoped
+            .send_post("/api/acceptance/void_refund/void", &payload)
             .await
-            .map_err(PaymobError::from);
     }
-    let cfg = client.config();
-    let local_http = HttpClient::new(HttpClientConfig {
-        connect_timeout: cfg.timeout(),
-        request_timeout: cfg.timeout(),
-        max_response_bytes: client.http().config().max_response_bytes,
-        retry: RetryPolicy {
-            max_retries: cfg.max_retries(),
-            ..RetryPolicy::default()
-        },
-        allow_insecure_http: true,
-    })
-    .map_err(PaymobError::from)?;
-    local_http.execute(request).await.map_err(PaymobError::from)
-}
 
-#[cfg(any(feature = "intentions", feature = "inquiries", feature = "manage"))]
-fn decode_json_response<T: serde::de::DeserializeOwned>(
-    response: &HttpResponse,
-) -> Result<T, PaymobError> {
-    if !response.status.is_success() {
-        let body = response.text().unwrap_or_default();
-        return Err(PaymobError::from_response(
-            response.status.as_u16(),
-            body,
-            None,
-        ));
+    /// Voids an unsettled transaction on behalf of the scoped sub-merchant
+    /// (`POST /api/acceptance/void_refund/void`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `params.transaction_id == 0`, or
+    /// [`PaymobError::AuthenticationError`] / [`PaymobError::ApiError`] / [`PaymobError::TransportError`].
+    pub async fn void(
+        &self,
+        params: &crate::resources::manage::void_capture::VoidParams,
+    ) -> Result<crate::resources::manage::models::Transaction, PaymobError> {
+        params.validate()?;
+        self.scoped
+            .send_post("/api/acceptance/void_refund/void", params)
+            .await
     }
-    response.json::<T>().map_err(PaymobError::from)
+
+    /// Captures an authorized transaction on behalf of the scoped sub-merchant
+    /// (`POST /api/acceptance/capture`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `params` has zero ID or amount, or
+    /// [`PaymobError::AuthenticationError`] / [`PaymobError::ApiError`] / [`PaymobError::TransportError`].
+    pub async fn capture(
+        &self,
+        params: &crate::resources::manage::void_capture::CaptureParams,
+    ) -> Result<crate::resources::manage::models::Transaction, PaymobError> {
+        params.validate()?;
+        self.scoped
+            .send_post("/api/acceptance/capture", params)
+            .await
+    }
+
+    /// Refunds a settled transaction on behalf of the scoped sub-merchant
+    /// (`POST /api/acceptance/void_refund/refund`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `params` has zero ID or amount,
+    /// [`PaymobError::RefundExceedsPermissibleAmount`] on over-refund HTTP 400, or
+    /// [`PaymobError::AuthenticationError`] / [`PaymobError::ApiError`] / [`PaymobError::TransportError`].
+    pub async fn refund(
+        &self,
+        params: &crate::resources::manage::refund::RefundParams,
+    ) -> Result<crate::resources::manage::models::Transaction, PaymobError> {
+        params.validate()?;
+        let response = self
+            .scoped
+            .send_raw_post("/api/acceptance/void_refund/refund", params)
+            .await?;
+        if !response.status.is_success() {
+            return Err(crate::resources::manage::refund::parse_refund_error(
+                &response,
+            ));
+        }
+        decode_onboarding_json(&response)
+    }
 }
 
 #[cfg(test)]
@@ -337,6 +425,26 @@ mod tests {
     use crate::core::config::ClientConfig;
     use crate::core::credentials::PartnerCredentials;
     use crate::core::region::PaymobRegion;
+
+    #[cfg(any(feature = "intentions", feature = "inquiries", feature = "manage"))]
+    fn scoped_mock_client(base_url: &str) -> MerchantScopedClient {
+        let region = PaymobRegion::Custom {
+            accept_base_url: base_url.to_owned(),
+            checkout_base_url: format!("{base_url}/unifiedcheckout/"),
+            payouts_base_url: base_url.to_owned(),
+            payouts_staging_base_url: base_url.to_owned(),
+        };
+        let cfg = ClientConfig::builder()
+            .region(region)
+            .partner_credentials(
+                PartnerCredentials::new("partner_key_secret_624").expect("valid partner"),
+            )
+            .max_retries(0)
+            .build()
+            .expect("valid config");
+        let client = PaymobClient::new(cfg).expect("valid client");
+        client.with_merchant(987_654).expect("valid scoped client")
+    }
 
     #[test]
     fn tc_6_2_4_with_merchant_validates_mid_and_credentials() {
@@ -374,6 +482,10 @@ mod tests {
         assert!(m1.client().ptr_eq(&client));
         assert!(format!("{m1:?}").contains("[REDACTED]"));
         assert!(!format!("{m1:?}").contains("partner_key_secret_624"));
+
+        let headers = m1.scope_headers().expect("valid scope headers");
+        assert_eq!(headers.get("x-paymob-merchant-id").unwrap(), "111222");
+        assert_eq!(headers.get("x-merchant-id").unwrap(), "111222");
     }
 
     #[cfg(feature = "intentions")]
@@ -384,39 +496,32 @@ mod tests {
 
         use crate::core::types::Currency;
         use crate::resources::intentions::{
-            BillingData, CreateIntentionParams, PaymentMethodInput,
+            BillingData, CreateIntentionParams, PaymentMethodInput, UpdateIntentionParams,
         };
 
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/intention/"))
-            .and(header("x-api-key", "partner_key_secret_624"))
-            .and(header("x-paymob-merchant-id", "987654"))
-            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
-                "id": "pi_scoped_123",
-                "intention_order_id": 987654,
-                "client_secret": "egy_csk_test_scoped",
-                "status": "intended"
-            })))
-            .mount(&server)
-            .await;
+        for (verb, status_code, status_str) in [
+            ("POST", 201_u16, "intended"),
+            ("PUT", 200_u16, "updated"),
+        ] {
+            Mock::given(method(verb))
+                .and(path("/v1/intention/"))
+                .and(header("x-api-key", "partner_key_secret_624"))
+                .and(header("x-paymob-merchant-id", "987654"))
+                .and(header("x-merchant-id", "987654"))
+                .respond_with(ResponseTemplate::new(status_code).set_body_json(
+                    serde_json::json!({
+                        "id": "pi_scoped_123",
+                        "intention_order_id": 987654,
+                        "client_secret": "egy_csk_test_scoped",
+                        "status": status_str
+                    }),
+                ))
+                .mount(&server)
+                .await;
+        }
 
-        let region = PaymobRegion::Custom {
-            accept_base_url: server.uri(),
-            checkout_base_url: format!("{}/unifiedcheckout/", server.uri()),
-            payouts_base_url: server.uri(),
-            payouts_staging_base_url: server.uri(),
-        };
-        let cfg = ClientConfig::builder()
-            .region(region)
-            .partner_credentials(
-                PartnerCredentials::new("partner_key_secret_624").expect("valid partner"),
-            )
-            .max_retries(0)
-            .build()
-            .expect("valid config");
-        let client = PaymobClient::new(cfg).expect("valid client");
-
+        let scoped = scoped_mock_client(&server.uri());
         let params = CreateIntentionParams::builder()
             .amount(10_000_u64)
             .currency(Currency::EGP)
@@ -430,13 +535,15 @@ mod tests {
             .build()
             .expect("valid intention params");
 
-        let scoped = client.with_merchant(987_654).expect("valid scoped client");
-        let resp = scoped
-            .intentions()
-            .create(&params)
-            .await
-            .expect("scoped intention create succeeds");
+        let resp = scoped.intentions().create(&params).await.unwrap();
         assert_eq!(resp.id, "pi_scoped_123");
+
+        let update_params = UpdateIntentionParams::builder()
+            .amount(15_000_u64)
+            .build()
+            .expect("valid update params");
+        let updated = scoped.intentions().update(&update_params).await.unwrap();
+        assert_eq!(updated.status.as_deref(), Some("updated"));
     }
 
     #[cfg(feature = "inquiries")]
@@ -445,41 +552,49 @@ mod tests {
         use wiremock::matchers::{header, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
+        use crate::resources::inquiries::by_order::TransactionInquiryParams;
+
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/acceptance/transactions/42"))
             .and(header("x-api-key", "partner_key_secret_624"))
             .and(header("x-paymob-merchant-id", "987654"))
+            .and(header("x-merchant-id", "987654"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "id": 42,
+                "amount_cents": 10000,
                 "success": true
             })))
             .mount(&server)
             .await;
 
-        let region = PaymobRegion::Custom {
-            accept_base_url: server.uri(),
-            checkout_base_url: format!("{}/unifiedcheckout/", server.uri()),
-            payouts_base_url: server.uri(),
-            payouts_staging_base_url: server.uri(),
-        };
-        let cfg = ClientConfig::builder()
-            .region(region)
-            .partner_credentials(
-                PartnerCredentials::new("partner_key_secret_624").expect("valid partner"),
-            )
-            .max_retries(0)
-            .build()
-            .expect("valid config");
-        let client = PaymobClient::new(cfg).expect("valid client");
+        Mock::given(method("POST"))
+            .and(path("/api/ecommerce/orders/transaction_inquiry"))
+            .and(header("x-api-key", "partner_key_secret_624"))
+            .and(header("x-paymob-merchant-id", "987654"))
+            .and(header("x-merchant-id", "987654"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 42,
+                "amount_cents": 10000,
+                "success": true,
+                "currency": "EGP"
+            })))
+            .mount(&server)
+            .await;
 
-        let scoped = client.with_merchant(987_654).expect("valid scoped client");
-        let tx = scoped
-            .inquiries()
-            .transaction_by_id(42)
-            .await
-            .expect("scoped transaction_by_id succeeds");
+        let scoped = scoped_mock_client(&server.uri());
+        let tx = scoped.inquiries().transaction_by_id(42).await.unwrap();
         assert_eq!(tx["id"], 42);
+
+        let typed_tx = scoped.inquiries().transaction(42).await.unwrap();
+        assert_eq!(typed_tx.amount_cents, 10_000);
+
+        let order_tx = scoped
+            .inquiries()
+            .by_order(&TransactionInquiryParams::by_order_id(212_245_716))
+            .await
+            .unwrap();
+        assert_eq!(order_tx.currency, "EGP");
     }
 
     #[cfg(feature = "manage")]
@@ -488,40 +603,55 @@ mod tests {
         use wiremock::matchers::{header, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
+        use crate::resources::manage::refund::RefundParams;
+        use crate::resources::manage::void_capture::{CaptureParams, VoidParams};
+
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/acceptance/void_refund/void"))
-            .and(header("x-api-key", "partner_key_secret_624"))
-            .and(header("x-paymob-merchant-id", "987654"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "id": 42,
-                "is_voided": true
-            })))
-            .mount(&server)
-            .await;
+        for (endpoint, body) in [
+            (
+                "/api/acceptance/void_refund/void",
+                serde_json::json!({
+                    "id": 42, "amount_cents": 10000, "is_voided": true, "is_void": true
+                }),
+            ),
+            (
+                "/api/acceptance/capture",
+                serde_json::json!({"id": 43, "amount_cents": 5000, "is_capture": true}),
+            ),
+            (
+                "/api/acceptance/void_refund/refund",
+                serde_json::json!({"id": 44, "amount_cents": 2500, "is_refund": true}),
+            ),
+        ] {
+            Mock::given(method("POST"))
+                .and(path(endpoint))
+                .and(header("x-api-key", "partner_key_secret_624"))
+                .and(header("x-paymob-merchant-id", "987654"))
+                .and(header("x-merchant-id", "987654"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+                .mount(&server)
+                .await;
+        }
 
-        let region = PaymobRegion::Custom {
-            accept_base_url: server.uri(),
-            checkout_base_url: format!("{}/unifiedcheckout/", server.uri()),
-            payouts_base_url: server.uri(),
-            payouts_staging_base_url: server.uri(),
-        };
-        let cfg = ClientConfig::builder()
-            .region(region)
-            .partner_credentials(
-                PartnerCredentials::new("partner_key_secret_624").expect("valid partner"),
-            )
-            .max_retries(0)
-            .build()
-            .expect("valid config");
-        let client = PaymobClient::new(cfg).expect("valid client");
-
-        let scoped = client.with_merchant(987_654).expect("valid scoped client");
-        let res = scoped
-            .manage()
-            .void_transaction(42)
-            .await
-            .expect("scoped void_transaction succeeds");
+        let scoped = scoped_mock_client(&server.uri());
+        let res = scoped.manage().void_transaction(42).await.unwrap();
         assert_eq!(res["is_voided"], true);
+
+        let voided = scoped.manage().void(&VoidParams::new(42)).await.unwrap();
+        assert!(voided.is_void);
+
+        let captured = scoped
+            .manage()
+            .capture(&CaptureParams::new(42, 5_000))
+            .await
+            .unwrap();
+        assert!(captured.is_capture);
+
+        let refunded = scoped
+            .manage()
+            .refund(&RefundParams::new(42, 2_500))
+            .await
+            .unwrap();
+        assert!(refunded.is_refund);
     }
 }

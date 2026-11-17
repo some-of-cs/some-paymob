@@ -84,9 +84,42 @@ pub use crate::resources::payouts::{
     AcceptBalanceTopupParams, AmanCashingDetails, BankCardCashinParams, BankTransactionType,
     BankTransferTopupParams, BulkDisbursementItem, BulkDisbursementParams,
     BulkDisbursementResponse, CancelAmanParams, DisburseIssuer, DisbursementResponse,
-    EgyptianPostCashinParams, InstantBankCashinParams, MAX_BULK_DISBURSEMENT_ITEMS,
-    MAX_INQUIRY_IDS, MAX_TOPUP_PROOF_BYTES, MobileWalletCashinParams, PayoutsAuthService,
-    PayoutsCashinService, PayoutsInquiriesService, PayoutsService, PayoutsTokenResponse,
-    PayoutsTopupsService, ReferenceInquiryParams, TopupInquiryParams, TopupInquiryResponse,
-    TopupRecord, TransactionInquiryParams, TransactionInquiryResponse, UserBudgetResponse,
+    EgyptianPostCashinParams, InstantBankCashinParams, MAX_TOPUP_PROOF_BYTES,
+    MobileWalletCashinParams, PayoutsAuthService, PayoutsCashinService, PayoutsInquiriesService,
+    PayoutsService, PayoutsTokenResponse, PayoutsTopupsService, ReferenceInquiryParams,
+    TopupInquiryParams, TopupInquiryResponse, TopupRecord, TransactionInquiryParams,
+    TransactionInquiryResponse, UserBudgetResponse,
 };
+
+/// Re-exports Partner Merchant Onboarding services and scoped client.
+#[cfg(feature = "onboarding")]
+pub use crate::resources::onboarding::{
+    MerchantScopedClient, OnboardingService, PartnerAuthService, PartnerFlowService,
+};
+
+/// Re-exports Partner Merchant Onboarding authentication models.
+#[cfg(feature = "onboarding")]
+pub use crate::resources::onboarding::{
+    CreatePartnerApiKeyParams, PartnerApiKeyResponse, PartnerAuthTokenResponse, PartnerHmacBody,
+    PartnerHmacEnvelope, PartnerLoginCredentials,
+};
+
+/// Re-exports Partner Merchant Onboarding flow and inquiry models.
+#[cfg(feature = "onboarding")]
+pub use crate::resources::onboarding::{
+    OnboardingFlowSchema, OnboardingSchemaField, OnboardingSchemaQuery, OnboardingSchemaStep,
+    PartnerMerchantInquiryResponse, RegisterMerchantParams, RegisteredMerchantResponse,
+    SubmitOnboardingStepParams, SubmitOnboardingStepResponse,
+};
+
+/// Re-exports the sub-merchant scoped Inquiries handle.
+#[cfg(all(feature = "onboarding", feature = "inquiries"))]
+pub use crate::resources::onboarding::ScopedInquiries;
+
+/// Re-exports the sub-merchant scoped Payment Intentions handle.
+#[cfg(all(feature = "onboarding", feature = "intentions"))]
+pub use crate::resources::onboarding::ScopedIntentions;
+
+/// Re-exports the sub-merchant scoped Payment Lifecycle Management handle.
+#[cfg(all(feature = "onboarding", feature = "manage"))]
+pub use crate::resources::onboarding::ScopedManage;

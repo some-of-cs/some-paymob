@@ -73,11 +73,7 @@ pub struct AcceptBalanceTopupParams {
 impl AcceptBalanceTopupParams {
     /// Creates a new [`AcceptBalanceTopupParams`] with `transfer_type = "from_accept_balance"`.
     #[must_use]
-    pub fn new(
-        amount: u64,
-        currency: impl Into<String>,
-        username: impl Into<String>,
-    ) -> Self {
+    pub fn new(amount: u64, currency: impl Into<String>, username: impl Into<String>) -> Self {
         Self {
             amount,
             transfer_type: "from_accept_balance",

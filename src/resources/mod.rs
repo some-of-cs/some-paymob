@@ -11,6 +11,8 @@ pub mod intentions;
 pub mod legacy;
 #[cfg(feature = "manage")]
 pub mod manage;
+#[cfg(feature = "payouts")]
+pub mod payouts;
 #[cfg(feature = "quicklinks")]
 pub mod quicklinks;
 #[cfg(feature = "saved-cards")]
@@ -19,5 +21,3 @@ pub mod saved_cards;
 pub mod splits;
 #[cfg(feature = "subscriptions")]
 pub mod subscriptions;
-#[cfg(feature = "payouts")]
-pub mod payouts;

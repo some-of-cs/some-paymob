@@ -157,14 +157,11 @@ impl<'a> PayoutsAuthService<'a> {
     fn require_credentials(
         &self,
     ) -> Result<&crate::core::credentials::PayoutsCredentials, PaymobError> {
-        self.client
-            .config()
-            .payouts_credentials()
-            .ok_or_else(|| {
-                PaymobError::AuthenticationError(String::from(
-                    "payouts_credentials are required for Payouts OAuth2 token requests",
-                ))
-            })
+        self.client.config().payouts_credentials().ok_or_else(|| {
+            PaymobError::AuthenticationError(String::from(
+                "payouts_credentials are required for Payouts OAuth2 token requests",
+            ))
+        })
     }
 
     async fn dispatch_token_request(

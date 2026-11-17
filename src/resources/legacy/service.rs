@@ -381,7 +381,10 @@ impl LegacyV2Service {
         if !err.is_auth_error() {
             return Err(err);
         }
-        self.jwt_provider.cache().evict_if_matches(stale_token).await;
+        self.jwt_provider
+            .cache()
+            .evict_if_matches(stale_token)
+            .await;
         let fresh = self.generate_auth_token().await?;
         op(url, fresh).await
     }

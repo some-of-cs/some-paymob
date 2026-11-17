@@ -1,0 +1,42 @@
+{
+  "module": "module-3-manage-inquiries-splits",
+  "branch": "feat/module-3-manage-inquiries-splits",
+  "base": "main",
+  "status": "in_review",
+  "stories": {
+    "US-3.1.0": {
+      "branch": "feat/us-3.1.0-payment-refund-void-capture",
+      "pr_number": 66,
+      "status": "merged",
+      "merge_sha": "94f1fbabb07a1de5c3e0b0a0cd0484938561a9f9",
+      "units": {
+        "unit-1": { "pr_number": 39, "status": "merged" },
+        "unit-2": { "pr_number": 50, "status": "merged" },
+        "unit-3": { "pr_number": 58, "status": "merged" }
+      }
+    },
+    "US-3.2.0": {
+      "branch": "feat/us-3.2.0-transaction-order-inquiries",
+      "pr_number": 69,
+      "status": "merged",
+      "merge_sha": "7178be6287f51b3422eaf4d6e9a6b1f036ffbd54",
+      "units": {
+        "unit-1": { "pr_number": 57, "status": "merged" },
+        "unit-2": { "pr_number": 55, "status": "merged" },
+        "unit-3": { "pr_number": 54, "status": "merged" },
+        "unit-4": { "pr_number": 56, "status": "merged" }
+      }
+    },
+    "US-3.3.0": {
+      "branch": "feat/us-3.3.0-quicklinks-splits-fees",
+      "pr_number": 67,
+      "status": "merged",
+      "merge_sha": "de156936023a89dc9be620998ad02e6e5bdc7d38",
+      "units": {
+        "unit-1": { "pr_number": 42, "status": "merged" },
+        "unit-2": { "pr_number": 51, "status": "merged" },
+        "unit-3": { "pr_number": 53, "status": "merged" }
+      }
+    }
+  }
+}

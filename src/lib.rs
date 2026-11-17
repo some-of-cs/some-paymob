@@ -11,8 +11,15 @@
 pub mod core;
 pub mod prelude;
 
-/// Paymob API resource modules and checkout builders.
-#[cfg(any(feature = "intentions", feature = "legacy-v2"))]
+/// Paymob API resource modules, checkout builders, payment lifecycle management, inquiries, QuickLinks, and splits.
+#[cfg(any(
+    feature = "intentions",
+    feature = "legacy-v2",
+    feature = "manage",
+    feature = "inquiries",
+    feature = "quicklinks",
+    feature = "splits"
+))]
 pub mod resources;
 
 /// Constant-time cryptographic webhook verification engine (Protocols A–E & Idempotency Guard).
@@ -29,3 +36,15 @@ pub use crate::core::types::{Currency, MinorUnitAmount};
 /// Crate-root re-exports of the core Paymob webhook engine, event, error, and result types.
 #[cfg(feature = "webhooks")]
 pub use webhooks::{PaymobWebhookEngine, WebhookError, WebhookEvent, WebhookResult};
+
+/// Crate-root re-export of the payment lifecycle management service (`refund`, `void`, `capture`).
+#[cfg(feature = "manage")]
+pub use resources::manage::ManageService;
+
+/// Crate-root re-export of the transaction, order, and saved card token inquiry service.
+#[cfg(feature = "inquiries")]
+pub use resources::inquiries::InquiriesService;
+
+/// Crate-root re-export of the QuickLinks payment links service (`create`, `cancel`).
+#[cfg(feature = "quicklinks")]
+pub use resources::quicklinks::QuickLinksService;

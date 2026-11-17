@@ -81,6 +81,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
+    use crate::core::client::PaymobClient;
     use crate::core::config::ClientConfig;
     use crate::core::credentials::PartnerCredentials;
     use crate::core::region::PaymobRegion;

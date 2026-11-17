@@ -241,11 +241,15 @@ impl PaymobMockServer {
             tokens: owned_tokens,
             cursor: Arc::new(AtomicUsize::new(0)),
         };
-        Mock::given(method("POST"))
-            .and(path("/api/auth/tokens"))
-            .respond_with(responder)
-            .mount(&self.accept)
-            .await;
+        self.mount_responder(
+            MockRoute {
+                host: MockHost::Accept,
+                http_method: "POST",
+                endpoint_path: "/api/auth/tokens",
+            },
+            responder,
+        )
+        .await;
     }
 
     /// Mounts `POST /api/secure/o/token/` on the Payouts host returning an OAuth 2.0 token pair.
@@ -275,11 +279,14 @@ impl PaymobMockServer {
             "expires_in": expires_in,
             "token_type": "Bearer"
         });
-        Mock::given(method("POST"))
-            .and(path("/api/secure/o/token/"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(body))
-            .mount(&self.payouts)
-            .await;
+        self.mount_json(JsonEndpointMockConfig {
+            host: MockHost::Payouts,
+            http_method: "POST",
+            endpoint_path: "/api/secure/o/token/",
+            status: 200,
+            body,
+        })
+        .await;
     }
 
     async fn mount_responder(&self, route: MockRoute<'_>, responder: impl Respond + 'static) {

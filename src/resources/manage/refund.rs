@@ -2,14 +2,17 @@
 //! Full and partial payment refund operations for Paymob (`US-3.1.0`).
 //!
 //! Implements [`RefundParams`] and [`ManageService::refund`] targeting
-//! `POST /api/acceptance/void_refund/refund` with Regime 1 `Authorization: Token <secret_key>`
-//! authentication and structured mapping of over-refund HTTP 400 responses into
+//! `POST /api/acceptance/void_refund/refund` with Regime 1 (`Authorization: Token <secret_key>`)
+//! or legacy-v2 Regime 2 (`Authorization: Bearer <auth_token>`) authentication via
+//! [`ClientConfig::use_legacy_v2_bearer_for_capture`](crate::core::config::ClientConfig::use_legacy_v2_bearer_for_capture),
+//! and structured mapping of over-refund HTTP 400 responses into
 //! [`PaymobError::RefundExceedsPermissibleAmount`].
 
-use reqwest::header::{AUTHORIZATION, HeaderMap};
-use secrecy::SecretString;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
+use crate::core::auth::accept_jwt::AcceptJwtProvider;
 use crate::core::auth::strategy::inject_secret_key_token;
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
@@ -94,17 +97,19 @@ impl RefundParams {
 impl<'a> ManageService<'a> {
     /// Executes a full or partial refund via `POST /api/acceptance/void_refund/refund`.
     ///
-    /// Authenticates using Regime 1 `Authorization: Token <secret_key>` and maps Paymob's
-    /// over-refundable balance HTTP 400 error to
+    /// Authenticates using Regime 1 `Authorization: Token <secret_key>` by default, or
+    /// Regime 2 `Authorization: Bearer <auth_token>` when
+    /// [`ClientConfig::use_legacy_v2_bearer_for_capture`](crate::core::config::ClientConfig::use_legacy_v2_bearer_for_capture)
+    /// is enabled, and maps Paymob's over-refundable balance HTTP 400 error to
     /// [`PaymobError::RefundExceedsPermissibleAmount`].
     ///
     /// # Errors
     ///
     /// Returns:
     /// - [`PaymobError::ValidationError`] if `params.transaction_id == 0` or `params.amount_cents == 0`.
-    /// - [`PaymobError::AuthenticationError`] if `secret_key` is missing or rejected.
+    /// - [`PaymobError::AuthenticationError`] if the required credential is missing or rejected.
     /// - [`PaymobError::RefundExceedsPermissibleAmount`] if `amount_cents` exceeds the remaining refundable balance.
-    /// - [`PaymobError::ApiError`] or [`PaymobError::TransportError`] on gateway or network failures.
+    /// - [`PaymobError::RateLimited`], [`PaymobError::ApiError`], or [`PaymobError::TransportError`] on gateway or network failures.
     ///
     /// # Examples
     ///
@@ -128,7 +133,7 @@ impl<'a> ManageService<'a> {
     /// ```
     pub async fn refund(&self, params: RefundParams) -> Result<Transaction, PaymobError> {
         params.validate()?;
-        let request = self.build_refund_request(&params)?;
+        let request = self.build_refund_request(&params).await?;
         let response = execute_manage_request(self.client(), &request).await?;
 
         if !response.status.is_success() {
@@ -140,29 +145,68 @@ impl<'a> ManageService<'a> {
             .map_err(|err| PaymobError::TransportError(err.to_string()))
     }
 
-    fn build_refund_request(&self, params: &RefundParams) -> Result<HttpRequest, PaymobError> {
-        let secret_key = self.client().config().secret_key().ok_or_else(|| {
-            PaymobError::AuthenticationError(String::from(
-                "secret_key is required for Regime 1 refund requests",
-            ))
-        })?;
+    async fn build_refund_request(
+        &self,
+        params: &RefundParams,
+    ) -> Result<HttpRequest, PaymobError> {
+        let auth_header = self.resolve_refund_auth_header().await?;
         let url = self.client().accept_url(REFUND_PATH)?;
-        let mut headers = HeaderMap::new();
-        let secret = SecretString::from(secret_key.expose_secret().to_owned());
-        inject_secret_key_token(&mut headers, &secret)
-            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-
-        let mut request = HttpRequest::post(url.as_str())
-            .map_err(|err| PaymobError::TransportError(err.to_string()))?;
-        if let Some(auth_value) = headers.remove(AUTHORIZATION) {
-            request = request.with_header(AUTHORIZATION, auth_value);
-        }
-        request
+        HttpRequest::post(url.as_str())
+            .map_err(map_http_error)?
+            .with_header(AUTHORIZATION, auth_header)
             .with_json(params)
             .map_err(|err| PaymobError::ValidationError {
                 field: "params",
                 reason: err.to_string(),
             })
+    }
+
+    async fn resolve_refund_auth_header(&self) -> Result<HeaderValue, PaymobError> {
+        if self.client().config().use_legacy_v2_bearer_for_capture() {
+            return self.resolve_refund_legacy_v2_bearer_header().await;
+        }
+        self.resolve_refund_regime1_token_header()
+    }
+
+    fn resolve_refund_regime1_token_header(&self) -> Result<HeaderValue, PaymobError> {
+        let secret_key = self.client().config().secret_key().ok_or_else(|| {
+            PaymobError::AuthenticationError(String::from(
+                "secret_key is required for Regime 1 refund requests",
+            ))
+        })?;
+        let mut headers = HeaderMap::new();
+        let secret = SecretString::from(secret_key.expose_secret().to_owned());
+        inject_secret_key_token(&mut headers, &secret)
+            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
+        headers.remove(AUTHORIZATION).ok_or_else(|| {
+            PaymobError::AuthenticationError(String::from(
+                "failed to construct Regime 1 Authorization header",
+            ))
+        })
+    }
+
+    async fn resolve_refund_legacy_v2_bearer_header(&self) -> Result<HeaderValue, PaymobError> {
+        let api_key = self.client().config().api_key().ok_or_else(|| {
+            PaymobError::AuthenticationError(String::from(
+                "api_key is required when use_legacy_v2_bearer_for_capture is enabled",
+            ))
+        })?;
+        let base_url = self.client().accept_url("/")?;
+        let provider = AcceptJwtProvider::with_cache(
+            base_url.as_str(),
+            SecretString::from(api_key.expose_secret().to_owned()),
+            self.client().auth().accept_cache_arc(),
+        )
+        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
+
+        let jwt = provider
+            .token()
+            .await
+            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
+        let mut header_val = HeaderValue::from_str(&format!("Bearer {}", jwt.expose_secret()))
+            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
+        header_val.set_sensitive(true);
+        Ok(header_val)
     }
 }
 
@@ -226,7 +270,7 @@ async fn execute_manage_request(
 }
 
 fn map_http_error(err: HttpError) -> PaymobError {
-    PaymobError::TransportError(err.to_string())
+    PaymobError::from(err)
 }
 
 #[cfg(test)]
@@ -237,7 +281,7 @@ mod tests {
     use super::*;
     use crate::core::client::PaymobClient;
     use crate::core::config::ClientConfig;
-    use crate::core::credentials::SecretKey;
+    use crate::core::credentials::{ApiKey, SecretKey};
     use crate::core::region::PaymobRegion;
 
     fn test_client(base_url: &str) -> PaymobClient {
@@ -250,6 +294,26 @@ mod tests {
         let config = ClientConfig::builder()
             .region(region)
             .secret_key(SecretKey::new("egy_sk_test_refund_secret").expect("valid secret key"))
+            .max_retries(0)
+            .build()
+            .expect("valid config");
+        PaymobClient::new(config).expect("valid client")
+    }
+
+    fn test_client_legacy_bearer(base_url: &str) -> PaymobClient {
+        let region = PaymobRegion::Custom {
+            accept_base_url: base_url.to_owned(),
+            checkout_base_url: base_url.to_owned(),
+            payouts_base_url: base_url.to_owned(),
+            payouts_staging_base_url: base_url.to_owned(),
+        };
+        let config = ClientConfig::builder()
+            .region(region)
+            .api_key(
+                ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5")
+                    .expect("valid api key"),
+            )
+            .use_legacy_v2_bearer_for_capture(true)
             .max_retries(0)
             .build()
             .expect("valid config");
@@ -297,6 +361,73 @@ mod tests {
         assert!(tx.is_refund);
         assert_eq!(tx.parent_transaction, Some(192_036_465));
         assert_eq!(tx.amount_cents, 25_000);
+    }
+
+    #[tokio::test]
+    async fn refund_uses_regime2_bearer_when_legacy_v2_toggle_enabled_and_reuses_cache() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/auth/tokens"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "token": "jwt_legacy_v2_refund_token"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/acceptance/void_refund/refund"))
+            .and(header("authorization", "Bearer jwt_legacy_v2_refund_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 192036467,
+                "amount_cents": 15000,
+                "success": true,
+                "is_refund": true,
+                "parent_transaction": 192036465
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let client = test_client_legacy_bearer(&server.uri());
+        let first = client
+            .manage()
+            .refund(RefundParams::new(192_036_465, 15_000))
+            .await
+            .expect("first legacy v2 bearer refund succeeds");
+        let second = client
+            .manage()
+            .refund(RefundParams::new(192_036_465, 15_000))
+            .await
+            .expect("second legacy v2 bearer refund reuses cached JWT");
+
+        assert_eq!(first.id, 192_036_467);
+        assert_eq!(second.id, 192_036_467);
+        assert!(first.is_refund);
+    }
+
+    #[tokio::test]
+    async fn refund_maps_429_retries_exhausted_to_rate_limited_with_retry_after() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/acceptance/void_refund/refund"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("Retry-After", "17")
+                    .set_body_json(serde_json::json!({ "detail": "Request was throttled." })),
+            )
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server.uri());
+        let err = client
+            .manage()
+            .refund(RefundParams::new(192_036_465, 10_000))
+            .await
+            .expect_err("429 retry exhaustion must fail with RateLimited");
+
+        assert!(err.is_rate_limited());
+        assert_eq!(err.retry_after_secs(), Some(17));
     }
 
     #[tokio::test]

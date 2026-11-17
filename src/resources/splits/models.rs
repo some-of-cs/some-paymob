@@ -7,7 +7,7 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::error::PaymobError;
 
@@ -262,16 +262,26 @@ impl SplitCardPortion {
         self
     }
 
-    /// Validates that `amount_cents > 0`.
+    /// Validates that `amount_cents > 0` and any provided `card_token` is non-empty.
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `amount_cents == 0`.
+    /// Returns [`PaymobError::ValidationError`] if `amount_cents == 0` or `card_token` is blank.
     pub fn validate(&self) -> Result<(), PaymobError> {
         if self.amount_cents == 0 {
             return Err(validation_err(
                 "amount_cents",
                 "card portion amount_cents must be greater than zero",
+            ));
+        }
+        if self
+            .card_token
+            .as_deref()
+            .is_some_and(|token| token.trim().is_empty())
+        {
+            return Err(validation_err(
+                "card_token",
+                "card_token must not be empty when provided",
             ));
         }
         Ok(())
@@ -298,10 +308,25 @@ impl SplitCardPortion {
 /// # }
 /// # example().unwrap();
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SplitPaymentConfig {
     /// Card portions (between 1 and 3 entries inclusive).
     pub cards: Vec<SplitCardPortion>,
+}
+
+impl<'de> Deserialize<'de> for SplitPaymentConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawSplitPaymentConfig {
+            cards: Vec<SplitCardPortion>,
+        }
+
+        let raw = RawSplitPaymentConfig::deserialize(deserializer)?;
+        Self::new(raw.cards).map_err(serde::de::Error::custom)
+    }
 }
 
 impl SplitPaymentConfig {
@@ -310,18 +335,31 @@ impl SplitPaymentConfig {
     /// # Errors
     ///
     /// Returns [`PaymobError::ValidationError`] (`field: "cards"`) if `cards`
-    /// is empty or contains more than 3 entries, or if any portion has `amount_cents == 0`.
+    /// is empty or contains more than 3 entries, or if any portion has `amount_cents == 0`
+    /// or an empty `card_token`.
     pub fn new(cards: Vec<SplitCardPortion>) -> Result<Self, PaymobError> {
-        if cards.is_empty() || cards.len() > MAX_SPLIT_CARDS {
+        let cfg = Self { cards };
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// Validates that `1 <= cards.len() <= 3` and every [`SplitCardPortion`] is valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `cards` is empty, exceeds [`MAX_SPLIT_CARDS`],
+    /// or contains an invalid portion.
+    pub fn validate(&self) -> Result<(), PaymobError> {
+        if self.cards.is_empty() || self.cards.len() > MAX_SPLIT_CARDS {
             return Err(validation_err(
                 "cards",
                 format!("split payment requires between 1 and {MAX_SPLIT_CARDS} cards"),
             ));
         }
-        for card in &cards {
+        for card in &self.cards {
             card.validate()?;
         }
-        Ok(Self { cards })
+        Ok(())
     }
 
     /// Returns the checked sum of `amount_cents` across all card portions.
@@ -339,12 +377,15 @@ impl SplitPaymentConfig {
         Ok(total)
     }
 
-    /// Verifies that the sum of card portions equals `expected_total_cents`.
+    /// Validates all card invariants (`self.validate()?`) and verifies that the sum of card
+    /// portions equals `expected_total_cents`.
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if totals do not match or overflow.
+    /// Returns [`PaymobError::ValidationError`] if card invariants fail, totals do not match,
+    /// or integer addition overflows.
     pub fn validate_total(&self, expected_total_cents: u64) -> Result<(), PaymobError> {
+        self.validate()?;
         let total = self.total_amount_cents()?;
         if total != expected_total_cents {
             return Err(validation_err(
@@ -466,5 +507,42 @@ mod tests {
         let dbg = format!("{portion:?}");
         assert!(dbg.contains("[REDACTED]"));
         assert!(!dbg.contains("tok_secret_visa_4242"));
+    }
+
+    #[test]
+    fn tc_3_3_2_split_payment_deserialization_and_validate_total_enforce_invariants() {
+        let empty_json = r#"{"cards":[]}"#;
+        assert!(serde_json::from_str::<SplitPaymentConfig>(empty_json).is_err());
+
+        let four_json = r#"{"cards":[{"amount_cents":1},{"amount_cents":1},{"amount_cents":1},{"amount_cents":1}]}"#;
+        assert!(serde_json::from_str::<SplitPaymentConfig>(four_json).is_err());
+
+        let zero_amt_json = r#"{"cards":[{"amount_cents":0}]}"#;
+        assert!(serde_json::from_str::<SplitPaymentConfig>(zero_amt_json).is_err());
+
+        let blank_tok_json = r#"{"cards":[{"amount_cents":100,"card_token":"   "}]}"#;
+        assert!(serde_json::from_str::<SplitPaymentConfig>(blank_tok_json).is_err());
+
+        let valid_json = r#"{"cards":[{"amount_cents":6000,"card_token":"t1"},{"amount_cents":4000,"card_token":"t2"}]}"#;
+        let mut cfg: SplitPaymentConfig =
+            serde_json::from_str(valid_json).expect("valid split payment config");
+        assert!(cfg.validate_total(10_000).is_ok());
+
+        cfg.cards[0].card_token = Some("   ".to_owned());
+        assert!(matches!(
+            cfg.validate_total(10_000),
+            Err(PaymobError::ValidationError {
+                field: "card_token",
+                ..
+            })
+        ));
+
+        cfg.cards[0].card_token = Some("tok_1".to_owned());
+        cfg.cards.push(SplitCardPortion::new(1_000));
+        cfg.cards.push(SplitCardPortion::new(1_000));
+        assert!(matches!(
+            cfg.validate_total(12_000),
+            Err(PaymobError::ValidationError { field: "cards", .. })
+        ));
     }
 }

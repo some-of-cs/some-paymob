@@ -315,7 +315,8 @@ impl<'a> QuickLinksService<'a> {
         })?;
         let secret = SecretString::from(api_key.expose_secret().to_owned());
         let base_url = self.client.endpoints().accept_base_url.as_str();
-        AcceptJwtProvider::new(base_url, secret).map_err(PaymobError::from)
+        let cache = self.client.auth().accept_cache_arc();
+        AcceptJwtProvider::with_cache(base_url, secret, cache).map_err(PaymobError::from)
     }
 
     fn build_tls_client(&self) -> Result<Client, PaymobError> {
@@ -450,6 +451,7 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(201).set_body_json(serde_json::json!({ "token": "jwt_ql" })),
             )
+            .expect(1)
             .mount(&server)
             .await;
 

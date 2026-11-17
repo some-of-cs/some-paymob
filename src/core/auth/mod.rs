@@ -7,6 +7,7 @@ pub mod partner;
 pub mod payouts_oauth;
 pub mod strategy;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::Client;
@@ -61,8 +62,8 @@ const DEFAULT_AUTH_HTTP_TIMEOUT_SECS: u64 = 30;
 /// ```
 #[derive(Debug, Default)]
 pub struct AuthManager {
-    accept_cache: TokenCache,
-    payouts_cache: TokenCache,
+    accept_cache: Arc<TokenCache>,
+    payouts_cache: Arc<TokenCache>,
 }
 
 impl AuthManager {
@@ -70,21 +71,33 @@ impl AuthManager {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            accept_cache: TokenCache::new(),
-            payouts_cache: TokenCache::new(),
+            accept_cache: Arc::new(TokenCache::new()),
+            payouts_cache: Arc::new(TokenCache::new()),
         }
     }
 
     /// Returns a reference to the Regime 2 Accept JWT [`TokenCache`].
     #[must_use]
-    pub const fn accept_cache(&self) -> &TokenCache {
+    pub fn accept_cache(&self) -> &TokenCache {
         &self.accept_cache
+    }
+
+    /// Returns a cloned [`Arc`] handle to the shared Regime 2 Accept JWT [`TokenCache`].
+    #[must_use]
+    pub fn accept_cache_arc(&self) -> Arc<TokenCache> {
+        Arc::clone(&self.accept_cache)
     }
 
     /// Returns a reference to the Regime 3 Payouts OAuth2 [`TokenCache`].
     #[must_use]
-    pub const fn payouts_cache(&self) -> &TokenCache {
+    pub fn payouts_cache(&self) -> &TokenCache {
         &self.payouts_cache
+    }
+
+    /// Returns a cloned [`Arc`] handle to the shared Regime 3 Payouts OAuth2 [`TokenCache`].
+    #[must_use]
+    pub fn payouts_cache_arc(&self) -> Arc<TokenCache> {
+        Arc::clone(&self.payouts_cache)
     }
 
     /// Evicts both the Accept JWT cache and the Payouts OAuth2 cache immediately.

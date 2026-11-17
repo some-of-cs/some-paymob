@@ -152,12 +152,23 @@ impl AcceptJwtProvider {
     /// [`AcceptJwtError::InvalidBaseUrl`] if `base_url` is not a valid `http`/`https` URL.
     /// Returns [`AcceptJwtError::Transport`] if building the default HTTP client fails.
     pub fn new(base_url: &str, api_key: SecretString) -> Result<Self, AcceptJwtError> {
-        Self::with_client_and_cache(
-            base_url,
-            api_key,
-            build_default_auth_client()?,
-            Arc::new(TokenCache::default()),
-        )
+        Self::with_cache(base_url, api_key, Arc::new(TokenCache::default()))
+    }
+
+    /// Creates a new [`AcceptJwtProvider`] with a default `reqwest::Client` and a caller-supplied shared [`TokenCache`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AcceptJwtError::EmptyApiKey`] if `api_key` is empty/whitespace,
+    /// [`AcceptJwtError::InvalidBaseUrl`] if `base_url` is not a valid `http`/`https` URL,
+    /// or [`AcceptJwtError::Transport`] if building the default HTTP client fails.
+    pub fn with_cache(
+        base_url: &str,
+        api_key: SecretString,
+        cache: Arc<TokenCache>,
+    ) -> Result<Self, AcceptJwtError> {
+        let http = build_default_auth_client()?;
+        Self::with_client_and_cache(base_url, api_key, http, cache)
     }
 
     /// Creates a new [`AcceptJwtProvider`] with caller-supplied HTTP client and shared [`TokenCache`].

@@ -167,7 +167,7 @@ fn verify_optional_payouts_hmac(
             if trimmed.is_empty() {
                 return Err(super::verifier::WebhookError::MissingQueryHmac);
             }
-            super::verifier::PaymobWebhookEngine::verify_concatenated_with_secret(
+            super::verifier::PaymobWebhookEngine::verify_concatenated_with_resolved_secret(
                 secret, raw_body, trimmed,
             )
         }

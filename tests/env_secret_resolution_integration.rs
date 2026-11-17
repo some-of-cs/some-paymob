@@ -21,6 +21,18 @@ use some_paymob::core::region::PaymobRegion;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+struct TempEnvGuard {
+    prev_dir: std::path::PathBuf,
+    temp_dir: std::path::PathBuf,
+}
+
+impl Drop for TempEnvGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.prev_dir);
+        let _ = std::fs::remove_dir_all(&self.temp_dir);
+    }
+}
+
 fn with_temp_env<F, R>(vars: &[(&str, &str)], f: F) -> R
 where
     F: FnOnce() -> R,
@@ -38,10 +50,8 @@ where
 
     let prev_dir = std::env::current_dir().expect("current dir");
     std::env::set_current_dir(&temp_dir).expect("chdir temp_dir");
-    let result = f();
-    let _ = std::env::set_current_dir(prev_dir);
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    result
+    let _cleanup = TempEnvGuard { prev_dir, temp_dir };
+    f()
 }
 
 #[test]
@@ -179,6 +189,13 @@ fn env_secret_resolution_works_on_webhook_engine_and_rejects_missing_vars() {
             );
         },
     );
+
+    with_temp_env(&[("TEST_DOLLAR_HMAC", "$DOLLAR_PREFIXED_SECRET")], || {
+        let engine =
+            PaymobWebhookEngine::new("$TEST_DOLLAR_HMAC").expect("resolved secret starting with $");
+        let sig = "2bcf72fe6b6d331ce42b0dbffa1378ed6f00c49a482d497e25bc11d07f579f41c18406f07889c8b316dce20c8fb986dfb693da5ffa20d3659c925e0117813a42";
+        assert_eq!(engine.verify_concatenated_str("100020003000", sig), Ok(()));
+    });
 }
 
 #[cfg(all(feature = "intentions", feature = "legacy-v2"))]
@@ -336,10 +353,13 @@ fn env_secret_resolution_negative_and_edge_cases() {
         })
     ));
 
+    let secret_like_err = SecretKey::new("$p@ss word!").unwrap_err();
+    assert!(!secret_like_err.to_string().contains("$p@ss word!"));
+
     let dotenv = "
         # leading comment
-        export KEY_A = \"val_a\"
-        KEY_B = 'val_b'
+        export KEY_A = \"val_a\" # double-quoted comment
+        KEY_B = 'val_b' # single-quoted comment
         KEY_C = val_c # comment
     ";
     assert_eq!(

@@ -359,7 +359,7 @@ pub fn parse_env_secret_reference<'a>(
         return Err(PaymobError::ValidationError {
             field,
             reason: format!(
-                "{field} environment variable reference '{trimmed}' is invalid; expected $VAR_NAME or ${{VAR_NAME}}"
+                "{field} environment variable reference is invalid; expected $VAR_NAME or ${{VAR_NAME}}"
             ),
         });
     }
@@ -406,14 +406,19 @@ pub fn parse_dotenv_line_value(line: &str, var_name: &str) -> Option<String> {
 }
 
 fn unquote_dotenv_value(raw: &str) -> String {
-    if raw.len() >= 2
-        && ((raw.starts_with('"') && raw.ends_with('"'))
-            || (raw.starts_with('\'') && raw.ends_with('\'')))
+    if let Some(unquoted) =
+        extract_quoted_dotenv_value(raw, '"').or_else(|| extract_quoted_dotenv_value(raw, '\''))
     {
-        return raw[1..raw.len() - 1].to_owned();
+        return unquoted;
     }
-    let without_comment = raw.split(" #").next().unwrap_or(raw).trim_end();
-    without_comment.to_owned()
+    raw.split(" #").next().unwrap_or(raw).trim_end().to_owned()
+}
+
+fn extract_quoted_dotenv_value(raw: &str, quote: char) -> Option<String> {
+    let after_open = raw.strip_prefix(quote)?;
+    let end_idx = after_open.find(quote)?;
+    let trailing = after_open[end_idx + quote.len_utf8()..].trim();
+    (trailing.is_empty() || trailing.starts_with('#')).then(|| after_open[..end_idx].to_owned())
 }
 
 /// Searches `.env` content in memory for `var_name`, returning the last matching assignment.
@@ -1200,8 +1205,8 @@ mod tests {
         let dotenv_sample = "
             # comment line
             OTHER_KEY=123
-            export PAYMOB_DOTENV_SK=\"ksa_sk_live_from_dotenv\"
-            SINGLE_QUOTED='omn_pk_test_single'
+            export PAYMOB_DOTENV_SK=\"ksa_sk_live_from_dotenv\" # double-quoted inline comment
+            SINGLE_QUOTED='omn_pk_test_single' # single-quoted inline comment
             INLINE_COMMENT=pak_sk_test_inline # trailing comment
         ";
         assert_eq!(
@@ -1233,6 +1238,9 @@ mod tests {
                 Some("egy_sk_test_123".to_owned())
             })
             .expect_err("malformed $VAR syntax should fail");
+            if bad_syntax.len() > 2 {
+                assert!(!err.to_string().contains(bad_syntax));
+            }
             assert!(matches!(
                 err,
                 PaymobError::ValidationError {

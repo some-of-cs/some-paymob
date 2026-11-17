@@ -301,7 +301,11 @@ impl PaymobWebhookEngine {
         concatenated: &str,
         signature_hex: &str,
     ) -> WebhookResult<()> {
-        Self::verify_concatenated_with_secret(&self.hmac_secret, concatenated, signature_hex)
+        Self::verify_concatenated_with_resolved_secret(
+            &self.hmac_secret,
+            concatenated,
+            signature_hex,
+        )
     }
 
     /// Verifies a pre-concatenated Paymob webhook string against a hex-encoded
@@ -334,7 +338,15 @@ impl PaymobWebhookEngine {
         let resolved =
             crate::core::credentials::resolve_secret_or_env("hmac_secret", secret.expose_secret())
                 .map_err(|_| WebhookError::InvalidSecretKeyLength)?;
-        let trimmed_secret = validate_secret_non_empty(&resolved)?;
+        Self::verify_concatenated_with_resolved_secret(&resolved, concatenated, signature_hex)
+    }
+
+    pub(crate) fn verify_concatenated_with_resolved_secret(
+        secret: &SecretString,
+        concatenated: &str,
+        signature_hex: &str,
+    ) -> WebhookResult<()> {
+        let trimmed_secret = validate_secret_non_empty(secret)?;
         let mut decoded = decode_sha512_hex(signature_hex)?;
         let mut mac = HmacSha512::new_from_slice(trimmed_secret.as_bytes())
             .map_err(|_| WebhookError::InvalidSecretKeyLength)?;

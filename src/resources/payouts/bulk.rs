@@ -172,7 +172,7 @@ mod tests {
     async fn tc_5_2_1_bulk_disbursement_succeeds_and_rejects_empty() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/disburse/api/v1/disburse/bulk_transaction/"))
+            .and(path("/disburse/api/v1/disburse/bulk_transaction"))
             .and(header("authorization", "Bearer bulk-jwt"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "status": "ok",

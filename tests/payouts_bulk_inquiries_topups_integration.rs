@@ -35,7 +35,7 @@ fn seeded_client(base_url: &str) -> PaymobClient {
 async fn us_5_2_0_bulk_disbursement_and_inquiries() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/disburse/api/v1/disburse/bulk_transaction/"))
+        .and(path("/disburse/api/v1/disburse/bulk_transaction"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "status": "ok",
             "results": [{"transaction_id": "tx_b1", "amount": 200}]
@@ -43,7 +43,7 @@ async fn us_5_2_0_bulk_disbursement_and_inquiries() {
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/disburse/api/v1/bulk_transaction/inquire/"))
+        .and(path("/disburse/api/v1/bulk_transaction/inquire"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "results": [{"transaction_id": "tx_b1", "disbursement_status": "successful"}]
         })))
@@ -51,7 +51,7 @@ async fn us_5_2_0_bulk_disbursement_and_inquiries() {
         .await;
     Mock::given(method("POST"))
         .and(path(
-            "/disburse/api/v1/bulk_transaction/inquire_by_reference/",
+            "/disburse/api/v1/bulk_transaction/inquire_by_reference",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "results": [{"transaction_id": "tx_b1", "disbursement_status": "successful"}]

@@ -207,7 +207,7 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path(
-                "/disburse/api/v1/bulk_transaction/inquire_by_reference/",
+                "/disburse/api/v1/bulk_transaction/inquire_by_reference",
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "results": [{"transaction_id": "tx_ref_1", "disbursement_status": "pending"}],

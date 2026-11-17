@@ -388,6 +388,184 @@ pub fn validate_prefixed_id(
     Ok(())
 }
 
+/// Validates that a numeric identifier is strictly greater than zero.
+#[allow(dead_code)]
+pub(crate) fn validate_non_zero_u64(
+    field: &'static str,
+    value: u64,
+    reason: &'static str,
+) -> Result<(), PaymobError> {
+    if value == 0 {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: String::from(reason),
+        });
+    }
+    Ok(())
+}
+
+/// Serializes a [`secrecy::SecretString`] by exposing its inner string slice.
+#[allow(dead_code)]
+pub(crate) fn serialize_secret_string<S>(
+    secret: &secrecy::SecretString,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    use secrecy::ExposeSecret as _;
+    serializer.serialize_str(secret.expose_secret())
+}
+
+/// Serializes a [`secrecy::SecretString`] by exposing its trimmed inner string slice.
+#[allow(dead_code)]
+pub(crate) fn serialize_trimmed_secret_string<S>(
+    secret: &secrecy::SecretString,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    use secrecy::ExposeSecret as _;
+    serializer.serialize_str(secret.expose_secret().trim())
+}
+
+/// Serializes an optional [`secrecy::SecretString`].
+#[allow(dead_code)]
+pub(crate) fn serialize_opt_secret_string<S>(
+    secret: &Option<secrecy::SecretString>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    use secrecy::ExposeSecret as _;
+    match secret {
+        Some(value) => serializer.serialize_str(value.expose_secret()),
+        None => serializer.serialize_none(),
+    }
+}
+
+/// Deserializes a plain string into a [`secrecy::SecretString`].
+#[allow(dead_code)]
+pub(crate) fn deserialize_secret_string<'de, D>(
+    deserializer: D,
+) -> Result<secrecy::SecretString, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(secrecy::SecretString::from(raw))
+}
+
+/// Deserializes a [`secrecy::SecretString`] while rejecting empty or control-character strings.
+#[allow(dead_code)]
+pub(crate) fn deserialize_non_empty_secret<'de, D>(
+    deserializer: D,
+) -> Result<secrecy::SecretString, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use secrecy::ExposeSecret as _;
+    let secret = secrecy::SecretString::deserialize(deserializer)?;
+    let raw = secret.expose_secret();
+    if raw.trim().is_empty() || raw.chars().any(char::is_control) {
+        return Err(serde::de::Error::custom(
+            "secret field must be non-empty and free of control characters",
+        ));
+    }
+    Ok(secret)
+}
+
+/// Deserializes either a JSON string or unsigned integer into a [`String`].
+#[allow(dead_code)]
+pub(crate) fn deserialize_string_or_u64<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrU64 {
+        Str(String),
+        Num(u64),
+    }
+
+    match StringOrU64::deserialize(deserializer)? {
+        StringOrU64::Str(s) => Ok(s),
+        StringOrU64::Num(n) => Ok(n.to_string()),
+    }
+}
+
+/// Deserializes a non-zero `u64` identifier.
+#[allow(dead_code)]
+pub(crate) fn deserialize_non_zero_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u64::deserialize(deserializer)?;
+    if value == 0 {
+        return Err(serde::de::Error::custom(
+            "identifier must be a non-zero u64",
+        ));
+    }
+    Ok(value)
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FlexibleU64 {
+    Int(u64),
+    Str(String),
+}
+
+fn parse_u64_str(raw: &str) -> Result<u64, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(String::from("numeric string must not be empty"));
+    }
+    trimmed
+        .parse::<u64>()
+        .map_err(|err| format!("invalid unsigned integer '{trimmed}': {err}"))
+}
+
+/// Deserializes a `u64` from either a JSON integer or a numeric string.
+#[allow(dead_code)]
+pub(crate) fn deserialize_u64_flexible<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match FlexibleU64::deserialize(deserializer)? {
+        FlexibleU64::Int(val) => Ok(val),
+        FlexibleU64::Str(raw) => parse_u64_str(&raw).map_err(serde::de::Error::custom),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FlexibleOptU64 {
+    Int(u64),
+    Str(String),
+    Obj { id: u64 },
+}
+
+/// Deserializes an `Option<u64>` from a JSON integer, numeric string, `{ "id": u64 }`, or null.
+#[allow(dead_code)]
+pub(crate) fn deserialize_opt_u64_flexible<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt = Option::<FlexibleOptU64>::deserialize(deserializer)?;
+    match opt {
+        None => Ok(None),
+        Some(FlexibleOptU64::Int(val)) => Ok(Some(val)),
+        Some(FlexibleOptU64::Obj { id }) => Ok(Some(id)),
+        Some(FlexibleOptU64::Str(raw)) if raw.trim().is_empty() => Ok(None),
+        Some(FlexibleOptU64::Str(raw)) => parse_u64_str(&raw)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

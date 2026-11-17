@@ -9,6 +9,7 @@ use std::fmt;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::Serialize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
@@ -57,12 +58,14 @@ impl fmt::Debug for BankTransferTopupParams {
 /// Request parameters for Accept Balance topup (`POST /api/secure/topup/request/`).
 ///
 /// Redacts `username` in [`fmt::Debug`].
-#[derive(Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Zeroize, ZeroizeOnDrop)]
 pub struct AcceptBalanceTopupParams {
     /// Topup amount (`u64`, zero floats).
+    #[zeroize(skip)]
     pub amount: u64,
     /// Fixed transfer type (`"from_accept_balance"`).
     #[serde(rename = "type")]
+    #[zeroize(skip)]
     pub transfer_type: &'static str,
     /// Currency string (e.g. `"egyptian_pound"`).
     pub currency: String,

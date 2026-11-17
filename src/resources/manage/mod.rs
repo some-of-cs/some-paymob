@@ -9,11 +9,9 @@ pub use models::Transaction;
 pub use refund::RefundParams;
 pub use void_capture::{CaptureParams, VoidParams};
 
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
-use secrecy::SecretString;
+use reqwest::header::HeaderValue;
 
-use crate::core::auth::accept_jwt::{AcceptJwtProvider, format_bearer_header};
-use crate::core::auth::strategy::inject_secret_key_token;
+use crate::core::auth::accept_jwt::format_bearer_header;
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
 use crate::core::http::{HttpError, HttpRequest, HttpResponse};
@@ -44,46 +42,18 @@ impl<'a> ManageService<'a> {
         if self.client().config().use_legacy_v2_bearer_for_capture() {
             return self.resolve_legacy_v2_bearer_header().await;
         }
-        self.resolve_regime1_token_header(missing_secret_reason)
-    }
-
-    fn resolve_regime1_token_header(
-        &self,
-        missing_secret_reason: &'static str,
-    ) -> Result<HeaderValue, PaymobError> {
-        let secret_key =
-            self.client().config().secret_key().ok_or_else(|| {
-                PaymobError::AuthenticationError(String::from(missing_secret_reason))
-            })?;
-        let mut headers = HeaderMap::new();
-        let secret = SecretString::from(secret_key.expose_secret().to_owned());
-        inject_secret_key_token(&mut headers, &secret)
-            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-        headers.remove(AUTHORIZATION).ok_or_else(|| {
-            PaymobError::AuthenticationError(String::from(
-                "failed to construct Regime 1 Authorization header",
-            ))
-        })
+        self.client().regime1_token_header(missing_secret_reason)
     }
 
     async fn resolve_legacy_v2_bearer_header(&self) -> Result<HeaderValue, PaymobError> {
-        let api_key = self.client().config().api_key().ok_or_else(|| {
-            PaymobError::AuthenticationError(String::from(
-                "api_key is required when use_legacy_v2_bearer_for_capture is enabled",
-            ))
-        })?;
-        let base_url = self.client().accept_url("/")?;
-        let provider = AcceptJwtProvider::with_cache(
-            base_url.as_str(),
-            SecretString::from(api_key.expose_secret().to_owned()),
-            self.client().auth().accept_cache_arc(),
-        )
-        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-
-        let jwt = provider
-            .token()
-            .await
-            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
+        let jwt = self
+            .client()
+            .acquire_accept_jwt(|| {
+                PaymobError::AuthenticationError(String::from(
+                    "api_key is required when use_legacy_v2_bearer_for_capture is enabled",
+                ))
+            })
+            .await?;
         format_bearer_header(&jwt).map_err(|err| PaymobError::AuthenticationError(err.to_string()))
     }
 }

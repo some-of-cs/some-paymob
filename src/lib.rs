@@ -93,17 +93,39 @@ pub use resources::splits::{
     SplitPaymentConfig, SplitRecipientRule,
 };
 
-/// Crate-root re-export of saved-card tokenization and headless payment services.
+/// Crate-root re-exports of saved-card tokenization and headless payment services and models.
 #[cfg(feature = "saved-cards")]
-pub use resources::saved_cards::SavedCardsService;
+pub use resources::saved_cards::{
+    ACCEPT_PAY_PATH, CitCardTokenConfig, HeadlessPayResponse, HeadlessTransaction, KioskPayParams,
+    MitChargeParams, MitPayParams, PaymentSource, RawPayParams, SavedCardsService, WalletPayParams,
+    validate_use_cvc_with_moto,
+};
 
-/// Crate-root re-export of subscription plan and recurring billing services.
+/// Crate-root re-exports of subscription plan, lifecycle, card vault, and recurring billing services and models.
 #[cfg(feature = "subscriptions")]
-pub use resources::subscriptions::SubscriptionsService;
+pub use resources::subscriptions::{
+    AddSecondaryCardParams, ChangePrimaryCardParams, CreateSubscriptionParams,
+    CreateSubscriptionPlanParams, CreateSubscriptionPlanParamsBuilder, DeleteSecondaryCardResponse,
+    PlanFrequency, PlanType, RegisterWebhookParams, Subscription, SubscriptionCardsService,
+    SubscriptionEnrollmentResponse, SubscriptionHistoryService, SubscriptionLastTransaction,
+    SubscriptionListFilter, SubscriptionPlan, SubscriptionPlansService, SubscriptionRefundRequest,
+    SubscriptionRefundResponse, SubscriptionState, SubscriptionTransaction,
+    SubscriptionWebhookRegistration, SubscriptionsService, UpdateSubscriptionParams,
+    UpdateSubscriptionPlanParams, UpdateSubscriptionPlanParamsBuilder, prepare_refund_payload,
+};
 
-/// Crate-root re-export of the Paymob Send Payouts & Disbursement service.
+/// Crate-root re-exports of the Paymob Send Payouts, Cashin, Inquiries, Budget, and Topup services and models.
 #[cfg(feature = "payouts")]
-pub use resources::payouts::PayoutsService;
+pub use resources::payouts::{
+    AcceptBalanceTopupParams, AmanCashingDetails, BankCardCashinParams, BankTransactionType,
+    BankTransferTopupParams, BulkDisbursementItem, BulkDisbursementParams,
+    BulkDisbursementResponse, CancelAmanParams, DisburseIssuer, DisbursementResponse,
+    EgyptianPostCashinParams, InstantBankCashinParams, MAX_BULK_DISBURSEMENT_ITEMS,
+    MAX_INQUIRY_IDS, MAX_TOPUP_PROOF_BYTES, MobileWalletCashinParams, PayoutsAuthService,
+    PayoutsCashinService, PayoutsInquiriesService, PayoutsService, PayoutsTokenResponse,
+    PayoutsTopupsService, ReferenceInquiryParams, TopupInquiryParams, TopupInquiryResponse,
+    TopupRecord, TransactionInquiryParams, TransactionInquiryResponse, UserBudgetResponse,
+};
 
 /// Crate-root re-exports of Partner Merchant Onboarding services and scoped client.
 #[cfg(feature = "onboarding")]

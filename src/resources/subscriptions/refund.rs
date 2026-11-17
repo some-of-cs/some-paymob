@@ -7,16 +7,15 @@
 //! and dispatches a full or partial refund via Regime 1
 //! (`POST /api/acceptance/void_refund/refund`).
 
-use reqwest::header::{AUTHORIZATION, HeaderMap};
-use secrecy::SecretString;
+use reqwest::Method;
+use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 
-use crate::core::auth::{
-    AcceptJwtProvider, CachedToken, format_bearer_header, inject_secret_key_token,
-};
-use crate::core::client::PaymobClient;
+use crate::core::client::{PaymobClient, build_bearer_json_request};
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpClient, HttpRequest};
+#[cfg(test)]
+use crate::core::http::HttpClient;
+use crate::core::http::HttpRequest;
 
 /// Snapshot of a subscription's latest deduction transaction returned by
 /// `GET /api/acceptance/subscriptions/{id}/last-transaction`.
@@ -231,116 +230,64 @@ impl super::SubscriptionsService {
         sub_id: u64,
         amount_cents: Option<u64>,
     ) -> Result<SubscriptionRefundResponse, PaymobError> {
-        execute_refund_last_transaction(self.client().http(), self.client(), sub_id, amount_cents)
-            .await
+        execute_refund_for_client(self.client(), sub_id, amount_cents).await
     }
 }
 
+#[cfg(test)]
 async fn execute_refund_last_transaction(
-    http: &HttpClient,
+    _http: &HttpClient,
     client: &PaymobClient,
     sub_id: u64,
     amount_cents: Option<u64>,
 ) -> Result<SubscriptionRefundResponse, PaymobError> {
-    if sub_id == 0 {
-        return Err(PaymobError::ValidationError {
-            field: "sub_id",
-            reason: String::from("subscription ID must be greater than zero"),
-        });
-    }
-    let last_tx = fetch_last_transaction(http, client, sub_id).await?;
-    let payload = prepare_refund_payload(&last_tx, amount_cents)?;
-    dispatch_refund(http, client, &payload).await
+    execute_refund_for_client(client, sub_id, amount_cents).await
 }
 
-async fn resolve_accept_jwt(client: &PaymobClient) -> Result<SecretString, PaymobError> {
-    if let Some(cached) = client.auth().accept_cache().get_if_fresh() {
-        return Ok(cached.access_token.clone());
-    }
-    let api_key = client.config().api_key().ok_or_else(|| {
-        PaymobError::AuthenticationError(String::from(
-            "api_key is required for Regime 2 subscription endpoints",
-        ))
-    })?;
-    let provider = AcceptJwtProvider::new(
-        client.endpoints().accept_base_url.as_str(),
-        SecretString::from(api_key.expose_secret()),
-    )?;
-    let cached = client
-        .auth()
-        .accept_cache()
-        .get_or_refresh(|| async {
-            let token = provider.token().await?;
-            Ok::<_, PaymobError>(CachedToken::with_default_ttl(token, None))
-        })
-        .await?;
-    Ok(cached.access_token.clone())
+async fn execute_refund_for_client(
+    client: &PaymobClient,
+    sub_id: u64,
+    amount_cents: Option<u64>,
+) -> Result<SubscriptionRefundResponse, PaymobError> {
+    super::validate_positive_id("sub_id", sub_id)?;
+    let last_tx = fetch_last_transaction(client, sub_id).await?;
+    let payload = prepare_refund_payload(&last_tx, amount_cents)?;
+    dispatch_refund(client, &payload).await
 }
 
 async fn fetch_last_transaction(
-    http: &HttpClient,
     client: &PaymobClient,
     sub_id: u64,
 ) -> Result<SubscriptionLastTransaction, PaymobError> {
-    let jwt = resolve_accept_jwt(client).await?;
-    let response = send_last_transaction_get(http, client, sub_id, &jwt).await?;
-    if response.status.as_u16() == 401 {
-        client.auth().accept_cache().evict_if_matches(&jwt).await;
-        let fresh_jwt = resolve_accept_jwt(client).await?;
-        let retry_resp = send_last_transaction_get(http, client, sub_id, &fresh_jwt).await?;
-        return parse_json_or_error(retry_resp);
-    }
-    parse_json_or_error(response)
-}
-
-async fn send_last_transaction_get(
-    http: &HttpClient,
-    client: &PaymobClient,
-    sub_id: u64,
-    jwt: &SecretString,
-) -> Result<crate::core::http::HttpResponse, PaymobError> {
     let url = client.accept_url(&format!(
         "/api/acceptance/subscriptions/{sub_id}/last-transaction"
     ))?;
-    let bearer = format_bearer_header(jwt)?;
-    let request = HttpRequest::get(url.as_str())
-        .map_err(|err| PaymobError::TransportError(err.to_string()))?
-        .with_header(AUTHORIZATION, bearer);
-    http.execute(&request)
-        .await
-        .map_err(|err| PaymobError::TransportError(err.to_string()))
+    let response = client
+        .execute_regime2_with_retry(
+            || {
+                PaymobError::AuthenticationError(String::from(
+                    "api_key is required for Regime 2 subscription endpoints",
+                ))
+            },
+            |token| build_bearer_json_request::<()>(Method::GET, url.as_str(), token, None),
+        )
+        .await?;
+    parse_json_or_error(response)
 }
 
 async fn dispatch_refund(
-    http: &HttpClient,
     client: &PaymobClient,
     payload: &SubscriptionRefundRequest,
 ) -> Result<SubscriptionRefundResponse, PaymobError> {
-    let secret_key = client.config().secret_key().ok_or_else(|| {
-        PaymobError::AuthenticationError(String::from(
-            "secret_key is required for Regime 1 refund endpoint",
-        ))
-    })?;
+    let auth_header =
+        client.regime1_token_header("secret_key is required for Regime 1 refund endpoint")?;
     let url = client.accept_url("/api/acceptance/void_refund/refund")?;
-    let mut headers = HeaderMap::new();
-    inject_secret_key_token(
-        &mut headers,
-        &SecretString::from(secret_key.expose_secret()),
-    )?;
-    let auth_header = headers.get(AUTHORIZATION).cloned().ok_or_else(|| {
-        PaymobError::AuthenticationError(String::from(
-            "failed to construct Regime 1 authorization header",
-        ))
-    })?;
     let request = HttpRequest::post(url.as_str())
         .map_err(|err| PaymobError::TransportError(err.to_string()))?
         .with_header(AUTHORIZATION, auth_header)
         .with_json(payload)
         .map_err(|err| PaymobError::TransportError(err.to_string()))?;
-    let response = http
-        .execute(&request)
-        .await
-        .map_err(|err| PaymobError::TransportError(err.to_string()))?;
+    let response = client.execute_request(&request).await?;
     parse_json_or_error(response)
 }
 
@@ -362,6 +309,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
+    use crate::core::auth::CachedToken;
     use crate::core::config::ClientConfig;
     use crate::core::credentials::{ApiKey, SecretKey};
     use crate::core::http::HttpClientConfig;

@@ -7,20 +7,17 @@
 
 use std::fmt;
 
-use reqwest::StatusCode;
-use reqwest::header::AUTHORIZATION;
+use reqwest::Method;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use zeroize::ZeroizeOnDrop;
 
-use crate::core::auth::accept_jwt::{
-    ACCEPT_AUTH_TOKENS_PATH, format_bearer_header, is_incorrect_credentials_401,
-};
-use crate::core::auth::cache::CachedToken;
-use crate::core::client::PaymobClient;
+use crate::core::client::{PaymobClient, build_bearer_json_request};
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpClient, HttpRequest, HttpResponse};
+#[cfg(test)]
+use crate::core::http::HttpClient;
+use crate::core::http::HttpResponse;
 
 /// Relative endpoint path for Paymob Accept headless payment execution.
 pub const ACCEPT_PAY_PATH: &str = "/api/acceptance/payments/pay";
@@ -427,20 +424,18 @@ impl HeadlessPayResponse {
 #[derive(Debug, Clone)]
 pub struct SavedCardsService {
     client: PaymobClient,
-    http: HttpClient,
 }
 
 impl SavedCardsService {
     /// Creates a new [`SavedCardsService`] bound to `client`.
     #[must_use]
     pub fn new(client: PaymobClient) -> Self {
-        let http = client.http().clone();
-        Self { client, http }
+        Self { client }
     }
 
     #[cfg(test)]
-    pub(crate) fn with_http_client(client: PaymobClient, http: HttpClient) -> Self {
-        Self { client, http }
+    pub(crate) fn with_http_client(client: PaymobClient, _http: HttpClient) -> Self {
+        Self { client }
     }
 
     /// Returns a reference to the underlying [`PaymobClient`].
@@ -504,90 +499,22 @@ impl SavedCardsService {
 
     async fn execute_pay(&self, payload: &Value) -> Result<HeadlessPayResponse, PaymobError> {
         let pay_url = self.client.accept_url(ACCEPT_PAY_PATH)?;
-        let token = self.acquire_accept_jwt().await?;
         let response = self
-            .send_pay_request(pay_url.as_str(), &token, payload)
+            .client
+            .execute_regime2_with_retry(
+                || {
+                    PaymobError::AuthenticationError(
+                        "missing Paymob Accept API key for Regime 2 Bearer authentication"
+                            .to_owned(),
+                    )
+                },
+                |token| {
+                    build_bearer_json_request(Method::POST, pay_url.as_str(), token, Some(payload))
+                },
+            )
             .await?;
-        if is_incorrect_credentials_401(response.status, &response.body) {
-            self.client
-                .auth()
-                .accept_cache()
-                .evict_if_matches(&token)
-                .await;
-            let fresh_token = self.acquire_accept_jwt().await?;
-            let retry_resp = self
-                .send_pay_request(pay_url.as_str(), &fresh_token, payload)
-                .await?;
-            return parse_pay_response(&retry_resp);
-        }
         parse_pay_response(&response)
     }
-
-    async fn send_pay_request(
-        &self,
-        url: &str,
-        token: &SecretString,
-        payload: &Value,
-    ) -> Result<HttpResponse, PaymobError> {
-        let header = format_bearer_header(token)?;
-        let req = HttpRequest::post(url)?
-            .with_header(AUTHORIZATION, header)
-            .with_json(payload)?;
-        Ok(self.http.execute(&req).await?)
-    }
-
-    async fn acquire_accept_jwt(&self) -> Result<SecretString, PaymobError> {
-        let api_key = self.client.config().api_key().ok_or_else(|| {
-            PaymobError::AuthenticationError(
-                "missing Paymob Accept API key for Regime 2 Bearer authentication".to_owned(),
-            )
-        })?;
-        let auth_url = self.client.accept_url(ACCEPT_AUTH_TOKENS_PATH)?;
-        let cache = self.client.auth().accept_cache();
-        let cached = cache
-            .get_or_refresh(|| async {
-                let jwt = self
-                    .fetch_fresh_jwt(auth_url.as_str(), api_key.expose_secret())
-                    .await?;
-                Ok::<CachedToken, PaymobError>(CachedToken::with_default_ttl(jwt, None))
-            })
-            .await?;
-        Ok(cached.access_token.clone())
-    }
-
-    async fn fetch_fresh_jwt(
-        &self,
-        auth_url: &str,
-        api_key: &str,
-    ) -> Result<SecretString, PaymobError> {
-        let body = json!({ "api_key": api_key });
-        let req = HttpRequest::post(auth_url)?.with_json(&body)?;
-        let resp = self.http.execute(&req).await?;
-        parse_auth_token_response(&resp)
-    }
-}
-
-#[derive(Deserialize)]
-struct AuthTokenBody {
-    token: SecretString,
-}
-
-fn parse_auth_token_response(resp: &HttpResponse) -> Result<SecretString, PaymobError> {
-    if resp.status == StatusCode::UNAUTHORIZED {
-        return Err(PaymobError::AuthenticationError(
-            "Paymob Accept rejected API key (HTTP 401)".to_owned(),
-        ));
-    }
-    if !resp.status.is_success() {
-        return Err(PaymobError::from_http_response(resp));
-    }
-    let parsed: AuthTokenBody = resp.json()?;
-    if parsed.token.expose_secret().trim().is_empty() {
-        return Err(PaymobError::AuthenticationError(
-            "Paymob Accept auth response missing non-empty `token` field".to_owned(),
-        ));
-    }
-    Ok(parsed.token)
 }
 
 fn parse_pay_response(resp: &HttpResponse) -> Result<HeadlessPayResponse, PaymobError> {

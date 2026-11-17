@@ -11,25 +11,20 @@
 //! raw card data are exposed in `Debug` or error outputs.
 
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::fmt;
 
-use reqwest::header::{AUTHORIZATION, HeaderValue};
-use reqwest::{Client, Method, StatusCode};
-use secrecy::SecretString;
+use reqwest::Method;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use url::{Host, Url};
+use url::Url;
 
-use crate::core::auth::accept_jwt::{
-    AcceptJwtProvider, format_bearer_header, is_incorrect_credentials_401,
-};
-use crate::core::auth::cache::CachedToken;
-use crate::core::client::PaymobClient;
+use crate::core::client::{PaymobClient, build_bearer_json_request};
 use crate::core::error::PaymobError;
-use crate::core::http::parse_retry_after;
+use crate::core::http::HttpResponse;
+use crate::core::region::is_strict_loopback_http_url;
 use crate::resources::subscriptions::SubscriptionsService;
 
-const DEFAULT_SUBSCRIPTION_TIMEOUT_SECS: u64 = 30;
 const SUBSCRIPTION_API_SOURCE: &str = "SUBSCRIPTION";
 
 /// Request payload for registering a subscription lifecycle webhook URL.
@@ -123,7 +118,7 @@ pub struct SubscriptionWebhookRegistration {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SubscriptionTransaction {
     /// Unique Paymob transaction identifier.
     pub id: u64,
@@ -236,6 +231,26 @@ impl SubscriptionTransaction {
     #[must_use]
     pub const fn is_refundable(&self) -> bool {
         self.success && !self.pending && !self.is_refunded
+    }
+}
+
+impl fmt::Debug for SubscriptionTransaction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SubscriptionTransaction")
+            .field("id", &self.id)
+            .field("pending", &self.pending)
+            .field("amount_cents", &self.amount_cents)
+            .field("success", &self.success)
+            .field("is_refunded", &self.is_refunded)
+            .field("is_voided", &self.is_voided)
+            .field("currency", &self.currency)
+            .field("api_source", &self.api_source)
+            .field(
+                "source_data",
+                &self.source_data.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("data", &self.data.as_ref().map(|_| "[REDACTED]"))
+            .finish_non_exhaustive()
     }
 }
 
@@ -494,15 +509,6 @@ fn validate_sub_id(sub_id: u64) -> Result<(), PaymobError> {
     Ok(())
 }
 
-fn is_loopback_host(parsed: &Url) -> bool {
-    match parsed.host() {
-        Some(Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(Host::Ipv6(ip)) => ip.is_loopback(),
-        Some(Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
-        None => false,
-    }
-}
-
 fn is_control_or_whitespace(b: u8) -> bool {
     b.is_ascii_control() || b.is_ascii_whitespace()
 }
@@ -512,10 +518,8 @@ fn has_invalid_url_chars(s: &str) -> bool {
 }
 
 fn has_allowed_scheme_and_host(parsed: &Url) -> bool {
-    let has_host = parsed.host_str().is_some();
-    let is_https = parsed.scheme() == "https";
-    let is_loopback_http = parsed.scheme() == "http" && is_loopback_host(parsed);
-    has_host && (is_https || is_loopback_http)
+    parsed.host_str().is_some()
+        && (parsed.scheme() == "https" || is_strict_loopback_http_url(parsed))
 }
 
 fn validate_webhook_url(raw: &str) -> Result<String, PaymobError> {
@@ -541,75 +545,6 @@ fn validate_webhook_url(raw: &str) -> Result<String, PaymobError> {
     Ok(trimmed.to_owned())
 }
 
-fn build_regime2_http_client(timeout: Duration) -> Result<Client, PaymobError> {
-    let effective = if timeout.is_zero() {
-        Duration::from_secs(DEFAULT_SUBSCRIPTION_TIMEOUT_SECS)
-    } else {
-        timeout
-    };
-    let builder = Client::builder().timeout(effective);
-    #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
-    let builder = builder.min_tls_version(reqwest::tls::Version::TLS_1_3);
-    #[cfg(feature = "rustls-tls")]
-    let builder = builder.use_rustls_tls();
-    builder
-        .build()
-        .map_err(|err| PaymobError::TransportError(err.to_string()))
-}
-
-async fn resolve_bearer_token(client: &PaymobClient) -> Result<SecretString, PaymobError> {
-    if let Some(cached) = client.auth().accept_cache().get_if_fresh() {
-        return Ok(cached.access_token.clone());
-    }
-    fetch_and_cache_bearer_token(client).await
-}
-
-async fn fetch_and_cache_bearer_token(client: &PaymobClient) -> Result<SecretString, PaymobError> {
-    let api_key = client
-        .config()
-        .api_key()
-        .ok_or_else(|| PaymobError::ValidationError {
-            field: "api_key",
-            reason: String::from("api_key is required for Regime 2 subscription operations"),
-        })?;
-    let provider = AcceptJwtProvider::new(
-        &client.endpoints().accept_base_url,
-        SecretString::from(api_key.expose_secret().to_owned()),
-    )?;
-    let token = provider.token().await?;
-    client
-        .auth()
-        .accept_cache()
-        .store(CachedToken::with_default_ttl(token.clone(), None));
-    Ok(token)
-}
-
-async fn send_once<Req: Serialize + ?Sized>(
-    http: &Client,
-    method: Method,
-    url: &Url,
-    bearer_header: HeaderValue,
-    body: Option<&Req>,
-) -> Result<(StatusCode, Option<u64>, Vec<u8>), PaymobError> {
-    let mut builder = http
-        .request(method, url.clone())
-        .header(AUTHORIZATION, bearer_header);
-    if let Some(payload) = body {
-        builder = builder.json(payload);
-    }
-    let response = builder
-        .send()
-        .await
-        .map_err(|err| PaymobError::TransportError(err.to_string()))?;
-    let status = response.status();
-    let retry_after = parse_retry_after(response.headers()).map(|d| d.as_secs());
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|err| PaymobError::TransportError(err.to_string()))?;
-    Ok((status, retry_after, bytes.to_vec()))
-}
-
 async fn execute_regime2_json<Req, Resp>(
     client: &PaymobClient,
     method: Method,
@@ -618,39 +553,29 @@ async fn execute_regime2_json<Req, Resp>(
 ) -> Result<Resp, PaymobError>
 where
     Req: Serialize + ?Sized,
-    Resp: for<'de> Deserialize<'de>,
+    Resp: DeserializeOwned,
 {
     let url = client.accept_url(path)?;
-    let http = build_regime2_http_client(client.config().timeout())?;
-    let mut token = resolve_bearer_token(client).await?;
-    let header = format_bearer_header(&token)?;
-    let (mut status, mut retry_after, mut bytes) =
-        send_once(&http, method.clone(), &url, header, body).await?;
-
-    if is_incorrect_credentials_401(status, &bytes) {
-        client.auth().accept_cache().evict_if_matches(&token).await;
-        token = fetch_and_cache_bearer_token(client).await?;
-        let retry_header = format_bearer_header(&token)?;
-        (status, retry_after, bytes) = send_once(&http, method, &url, retry_header, body).await?;
-    }
-
-    decode_regime2_response(status, retry_after, &bytes)
+    let response = client
+        .execute_regime2_with_retry(
+            || PaymobError::ValidationError {
+                field: "api_key",
+                reason: String::from("api_key is required for Regime 2 subscription operations"),
+            },
+            |token| build_bearer_json_request(method.clone(), url.as_str(), token, body),
+        )
+        .await?;
+    decode_regime2_response(&response)
 }
 
-fn decode_regime2_response<Resp: for<'de> Deserialize<'de>>(
-    status: StatusCode,
-    retry_after: Option<u64>,
-    bytes: &[u8],
+fn decode_regime2_response<Resp: DeserializeOwned>(
+    response: &HttpResponse,
 ) -> Result<Resp, PaymobError> {
-    if !status.is_success() {
-        let body_text = String::from_utf8_lossy(bytes);
-        return Err(PaymobError::from_response(
-            status.as_u16(),
-            &body_text,
-            retry_after,
-        ));
+    if !response.status.is_success() {
+        return Err(PaymobError::from_http_response(response));
     }
-    serde_json::from_slice(bytes)
+    response
+        .json::<Resp>()
         .map_err(|err| PaymobError::TransportError(format!("invalid JSON response: {err}")))
 }
 
@@ -661,7 +586,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
-    use crate::core::auth::ACCEPT_AUTH_TOKENS_PATH;
+    use crate::core::auth::{ACCEPT_AUTH_TOKENS_PATH, CachedToken};
     use crate::core::config::ClientConfig;
     use crate::core::credentials::ApiKey;
     use crate::core::region::PaymobRegion;

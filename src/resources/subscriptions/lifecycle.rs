@@ -6,310 +6,27 @@
 //! lifecycle operations (`retrieve`, `list`, `update`, `suspend`, `resume`,
 //! `cancel`) alongside `.plans()` and `.cards()` sub-service accessors.
 
-use std::convert::Infallible;
 use std::fmt;
-use std::str::FromStr;
 
 use reqwest::Method;
-use reqwest::header::{AUTHORIZATION, HeaderValue};
+use reqwest::header::AUTHORIZATION;
 use secrecy::SecretString;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use super::models::{
+    KNOWN_SUBSCRIPTION_STATES, Subscription, SubscriptionListFilter, SubscriptionState,
+};
 use super::{decode_subscription_response, validate_positive_id};
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-#[cfg(test)]
-use crate::core::http::HttpClientConfig;
-use crate::core::http::{HttpClient, HttpRequest};
+use crate::core::http::HttpRequest;
 use crate::core::pagination::PaginatedResponse;
 use crate::core::types::{Currency, MinorUnitAmount};
 
 const SUBSCRIPTIONS_BASE_PATH: &str = "/api/acceptance/subscriptions";
 const INTENTION_CREATE_PATH: &str = "/v1/intention/";
-
-/// Static lookup table mapping canonical lowercase Paymob subscription states
-/// to [`SubscriptionState`] variants.
-pub const KNOWN_SUBSCRIPTION_STATES: &[(&str, SubscriptionState)] = &[
-    ("active", SubscriptionState::Active),
-    ("suspended", SubscriptionState::Suspended),
-    ("canceled", SubscriptionState::Canceled),
-    ("cancelled", SubscriptionState::Canceled),
-    ("inactive", SubscriptionState::Inactive),
-];
-
-/// Lifecycle state of a Paymob subscription.
-///
-/// Serializes and deserializes as a lowercase state string (e.g. `"active"`),
-/// falling back to [`SubscriptionState::Unknown`] for unrecognized values.
-///
-/// # Examples
-///
-/// ```rust
-/// use some_paymob::resources::subscriptions::lifecycle::SubscriptionState;
-///
-/// let state = SubscriptionState::from_state("ACTIVE");
-/// assert_eq!(state, SubscriptionState::Active);
-/// assert_eq!(state.as_str(), "active");
-/// assert!(state.is_known());
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum SubscriptionState {
-    /// Subscription is active and billing on schedule.
-    Active,
-    /// Subscription is temporarily suspended.
-    Suspended,
-    /// Subscription has been permanently canceled.
-    Canceled,
-    /// Subscription is inactive or awaiting initial activation.
-    Inactive,
-    /// Unrecognized subscription state returned by the Paymob API.
-    Unknown(String),
-}
-
-impl SubscriptionState {
-    /// Parses a subscription state string case-insensitively.
-    #[must_use]
-    pub fn from_state(raw: &str) -> Self {
-        let trimmed = raw.trim();
-        KNOWN_SUBSCRIPTION_STATES
-            .iter()
-            .find(|(code, _)| trimmed.eq_ignore_ascii_case(code))
-            .map_or_else(
-                || Self::Unknown(trimmed.to_ascii_lowercase()),
-                |(_, state)| state.clone(),
-            )
-    }
-
-    /// Returns the canonical lowercase string slice for this state.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        if let Self::Unknown(raw) = self {
-            return raw.as_str();
-        }
-        KNOWN_SUBSCRIPTION_STATES
-            .iter()
-            .find(|(_, state)| state == self)
-            .map_or("unknown", |(code, _)| *code)
-    }
-
-    /// Returns `true` if the state is in [`KNOWN_SUBSCRIPTION_STATES`].
-    #[must_use]
-    pub fn is_known(&self) -> bool {
-        !matches!(self, Self::Unknown(_))
-    }
-}
-
-impl Serialize for SubscriptionState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for SubscriptionState {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        Ok(Self::from_state(&raw))
-    }
-}
-
-impl fmt::Display for SubscriptionState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for SubscriptionState {
-    type Err = Infallible;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self::from_state(s))
-    }
-}
-
-/// Paymob subscription record returned by lifecycle endpoints.
-///
-/// All monetary amounts use integer minor units via [`MinorUnitAmount`].
-///
-/// # Examples
-///
-/// ```rust
-/// use some_paymob::core::types::MinorUnitAmount;
-/// use some_paymob::resources::subscriptions::lifecycle::{
-///     Subscription, SubscriptionState,
-/// };
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let json = r#"{
-///     "id": 1264,
-///     "plan_id": 88,
-///     "state": "active",
-///     "initial_transaction": 998877,
-///     "amount_cents": 50000,
-///     "created_at": "2026-11-01T00:00:00Z"
-/// }"#;
-/// let sub: Subscription = serde_json::from_str(json)?;
-/// assert_eq!(sub.id, 1264);
-/// assert_eq!(sub.state, SubscriptionState::Active);
-/// assert_eq!(sub.amount_cents, MinorUnitAmount::new(50_000));
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Subscription {
-    /// Unique Paymob subscription identifier.
-    pub id: u64,
-    /// Identifier of the associated subscription plan.
-    pub plan_id: u64,
-    /// Current lifecycle state of the subscription.
-    pub state: SubscriptionState,
-    /// Identifier of the initial 3DS enrollment transaction, if present.
-    #[serde(default)]
-    pub initial_transaction: Option<u64>,
-    /// Recurring charge amount in integer minor units.
-    pub amount_cents: MinorUnitAmount,
-    /// ISO-8601 timestamp when the subscription starts.
-    #[serde(default)]
-    pub starts_at: Option<String>,
-    /// ISO-8601 timestamp of the next scheduled billing attempt.
-    #[serde(default)]
-    pub next_billing: Option<String>,
-    /// ISO-8601 timestamp of the upcoming billing reminder.
-    #[serde(default)]
-    pub reminder_date: Option<String>,
-    /// ISO-8601 timestamp when the subscription ends or was canceled.
-    #[serde(default)]
-    pub ends_at: Option<String>,
-    /// ISO-8601 timestamp when the subscription was last resumed.
-    #[serde(default)]
-    pub resumed_at: Option<String>,
-    /// ISO-8601 timestamp when the subscription was last suspended.
-    #[serde(default)]
-    pub suspended_at: Option<String>,
-    /// ISO-8601 timestamp when the subscription was reactivated.
-    #[serde(default)]
-    pub reactivated_at: Option<String>,
-    /// ISO-8601 timestamp when the subscription record was created.
-    #[serde(default)]
-    pub created_at: String,
-}
-
-/// Optional query-string filters for listing Paymob subscriptions.
-///
-/// # Examples
-///
-/// ```rust
-/// use some_paymob::resources::subscriptions::lifecycle::{
-///     SubscriptionListFilter, SubscriptionState,
-/// };
-///
-/// let filter = SubscriptionListFilter::new()
-///     .plan_id(88)
-///     .state(SubscriptionState::Active)
-///     .page(2);
-/// assert!(!filter.is_empty());
-/// assert_eq!(filter.plan_id, Some(88));
-/// ```
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SubscriptionListFilter {
-    /// Filter by associated initial or deduction transaction identifier.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub transaction: Option<u64>,
-    /// Filter by subscription plan identifier.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub plan_id: Option<u64>,
-    /// Filter by subscription lifecycle state.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<SubscriptionState>,
-    /// Optional 1-based page number for paginated listing.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<u32>,
-}
-
-impl SubscriptionListFilter {
-    /// Creates an empty [`SubscriptionListFilter`] with all fields unset.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Sets the `transaction` filter parameter.
-    #[must_use]
-    pub const fn transaction(mut self, transaction: u64) -> Self {
-        self.transaction = Some(transaction);
-        self
-    }
-
-    /// Sets the `plan_id` filter parameter.
-    #[must_use]
-    pub const fn plan_id(mut self, plan_id: u64) -> Self {
-        self.plan_id = Some(plan_id);
-        self
-    }
-
-    /// Sets the `state` filter parameter.
-    #[must_use]
-    pub fn state(mut self, state: SubscriptionState) -> Self {
-        self.state = Some(state);
-        self
-    }
-
-    /// Sets the 1-based `page` query parameter.
-    #[must_use]
-    pub const fn page(mut self, page: u32) -> Self {
-        self.page = Some(page);
-        self
-    }
-
-    /// Returns `true` if no filter criteria are set.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.transaction.is_none()
-            && self.plan_id.is_none()
-            && self.state.is_none()
-            && self.page.is_none()
-    }
-
-    fn validate(&self) -> Result<(), PaymobError> {
-        if let Some(0) = self.page {
-            return Err(PaymobError::ValidationError {
-                field: "page",
-                reason: "page number must be >= 1".to_owned(),
-            });
-        }
-        Ok(())
-    }
-
-    fn to_query_string(&self) -> String {
-        let mut pairs: Vec<(&str, String)> = Vec::new();
-        if let Some(tx) = self.transaction {
-            pairs.push(("transaction", tx.to_string()));
-        }
-        if let Some(plan) = self.plan_id {
-            pairs.push(("plan_id", plan.to_string()));
-        }
-        if let Some(ref st) = self.state {
-            pairs.push(("state", st.as_str().to_owned()));
-        }
-        if let Some(p) = self.page {
-            pairs.push(("page", p.to_string()));
-        }
-        if pairs.is_empty() {
-            return String::new();
-        }
-        let encoded = url::form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(pairs)
-            .finish();
-        format!("?{encoded}")
-    }
-}
 
 /// Request payload for enrolling a subscription via Intention 3DS (`POST /v1/intention/`).
 ///
@@ -674,45 +391,11 @@ impl SubscriptionListEnvelope {
     }
 }
 
-/// Accessor handle for subscription plans (`paymob.subscriptions().plans()`).
-#[derive(Debug, Clone)]
-pub struct SubscriptionPlansAccessor {
-    client: PaymobClient,
-}
+/// Accessor type alias for subscription plans (`paymob.subscriptions().plans()`).
+pub type SubscriptionPlansAccessor = super::plans_service::SubscriptionPlansService;
 
-impl SubscriptionPlansAccessor {
-    /// Creates a new [`SubscriptionPlansAccessor`] bound to `client`.
-    #[must_use]
-    pub fn new(client: PaymobClient) -> Self {
-        Self { client }
-    }
-
-    /// Returns a reference to the underlying [`PaymobClient`].
-    #[must_use]
-    pub fn client(&self) -> &PaymobClient {
-        &self.client
-    }
-}
-
-/// Accessor handle for subscription card vault operations (`paymob.subscriptions().cards()`).
-#[derive(Debug, Clone)]
-pub struct SubscriptionCardsAccessor {
-    client: PaymobClient,
-}
-
-impl SubscriptionCardsAccessor {
-    /// Creates a new [`SubscriptionCardsAccessor`] bound to `client`.
-    #[must_use]
-    pub fn new(client: PaymobClient) -> Self {
-        Self { client }
-    }
-
-    /// Returns a reference to the underlying [`PaymobClient`].
-    #[must_use]
-    pub fn client(&self) -> &PaymobClient {
-        &self.client
-    }
-}
+/// Accessor type alias for subscription card vault operations (`paymob.subscriptions().cards()`).
+pub type SubscriptionCardsAccessor = super::cards::SubscriptionCardsService;
 
 /// Service handle for subscription plans, lifecycle, card vault, and history (`US-4.3.0`).
 ///
@@ -743,22 +426,18 @@ impl SubscriptionCardsAccessor {
 #[derive(Debug, Clone)]
 pub struct SubscriptionsService {
     client: PaymobClient,
-    http: HttpClient,
 }
 
 impl SubscriptionsService {
     /// Creates a new [`SubscriptionsService`] bound to `client`.
     #[must_use]
     pub fn new(client: PaymobClient) -> Self {
-        let http = client.http().clone();
-        Self { client, http }
+        Self { client }
     }
 
     #[cfg(test)]
     fn with_test_http(client: PaymobClient) -> Self {
-        let http_cfg = HttpClientConfig::default().with_allow_insecure_http(true);
-        let http = HttpClient::new(http_cfg).expect("test HTTP client should initialize");
-        Self { client, http }
+        Self { client }
     }
 
     /// Returns a reference to the underlying [`PaymobClient`].
@@ -767,7 +446,7 @@ impl SubscriptionsService {
         &self.client
     }
 
-    /// Returns a [`SubscriptionPlansAccessor`] bound to this client.
+    /// Returns a [`SubscriptionPlansService`](super::plans_service::SubscriptionPlansService) bound to this client.
     #[must_use]
     pub fn plans(&self) -> SubscriptionPlansAccessor {
         SubscriptionPlansAccessor::new(self.client.clone())
@@ -815,22 +494,20 @@ impl SubscriptionsService {
         params: &CreateSubscriptionParams,
     ) -> Result<SubscriptionEnrollmentResponse, PaymobError> {
         params.validate()?;
-        let secret_key =
-            self.client
-                .config()
-                .secret_key()
-                .ok_or_else(|| PaymobError::ValidationError {
-                    field: "secret_key",
-                    reason: "Paymob secret_key is required for Intention 3DS enrollment".to_owned(),
-                })?;
+        if self.client.config().secret_key().is_none() {
+            return Err(PaymobError::ValidationError {
+                field: "secret_key",
+                reason: "Paymob secret_key is required for Intention 3DS enrollment".to_owned(),
+            });
+        }
+        let auth_header = self
+            .client
+            .regime1_token_header("Paymob secret_key is required for Intention 3DS enrollment")?;
         let url = self.client.accept_url(INTENTION_CREATE_PATH)?;
-        let header_val = format!("Token {}", secret_key.expose_secret());
-        let auth_header = HeaderValue::from_str(&header_val)
-            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
         let request = HttpRequest::new(Method::POST, url.as_str())?
             .with_header(AUTHORIZATION, auth_header)
             .with_json(params)?;
-        let response = self.http.execute(&request).await?;
+        let response = self.client.execute_request(&request).await?;
         decode_subscription_response(response)
     }
 
@@ -947,7 +624,7 @@ impl SubscriptionsService {
         Req: Serialize + ?Sized,
         Resp: DeserializeOwned,
     {
-        super::execute_subscription_bearer_json(&self.client, &self.http, method, path, body).await
+        super::execute_subscription_bearer_json(&self.client, method, path, body).await
     }
 }
 

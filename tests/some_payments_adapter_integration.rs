@@ -99,7 +99,7 @@ async fn ac1_and_ac3_paymob_ext_wires_into_intention_params_and_redacts_session(
     assert!(params.customer().is_some());
     assert!(wired_req.extras.is_some());
 
-    let client = build_mock_client("http://127.0.0.1:9");
+    let client = build_mock_client("http://untrusted-gateway.local");
     assert_https_required(client.create_payment_session(&wired_req).await);
 
     let session = UnifiedPaymentSession {
@@ -173,7 +173,11 @@ async fn ac1_capture_refund_and_void_delegate_to_manage_service() {
 
 #[tokio::test]
 async fn ac2_charge_saved_method_redacts_secrets_and_enforces_https() {
-    let client = build_mock_client("http://127.0.0.1:9");
+    let client = build_mock_client("http://untrusted-gateway.local");
+    client
+        .auth()
+        .accept_cache()
+        .store(CachedToken::with_default_ttl("seeded-accept-jwt", None));
     let req = UnifiedSavedMethodChargeRequest::new(
         SecretString::from("payment_key_test_810"),
         SecretString::from("saved_card_token_810"),

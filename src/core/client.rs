@@ -381,7 +381,7 @@ impl PaymobClient {
         &self,
         request: &HttpRequest,
     ) -> Result<HttpResponse, PaymobError> {
-        if !is_loopback_http(request.url()) {
+        if !crate::core::region::is_strict_loopback_http_url(request.url()) {
             return self
                 .http()
                 .execute(request)
@@ -401,11 +401,101 @@ impl PaymobClient {
         })?;
         local_http.execute(request).await.map_err(PaymobError::from)
     }
+
+    /// Builds a Regime 1 `Authorization: Token <secret_key>` [`reqwest::header::HeaderValue`]
+    /// from the client's configured [`crate::core::credentials::SecretKey`].
+    #[allow(dead_code)]
+    pub(crate) fn regime1_token_header(
+        &self,
+        missing_reason: &'static str,
+    ) -> Result<reqwest::header::HeaderValue, PaymobError> {
+        let secret_key = self
+            .config()
+            .secret_key()
+            .ok_or_else(|| PaymobError::AuthenticationError(String::from(missing_reason)))?;
+        let mut headers = reqwest::header::HeaderMap::new();
+        let secret = secrecy::SecretString::from(secret_key.expose_secret().to_owned());
+        crate::core::auth::strategy::inject_secret_key_token(&mut headers, &secret)
+            .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
+        headers
+            .remove(reqwest::header::AUTHORIZATION)
+            .ok_or_else(|| {
+                PaymobError::AuthenticationError(String::from(
+                    "failed to construct Regime 1 Authorization header",
+                ))
+            })
+    }
+
+    /// Acquires or reuses a cached Regime 2 60-minute Accept JWT (`POST /api/auth/tokens`)
+    /// using the client's shared single-flight [`crate::core::auth::TokenCache`].
+    #[allow(dead_code)]
+    pub(crate) async fn acquire_accept_jwt<E>(
+        &self,
+        missing_api_key_error: E,
+    ) -> Result<secrecy::SecretString, PaymobError>
+    where
+        E: FnOnce() -> PaymobError,
+    {
+        if let Some(cached) = self.auth().accept_cache().get_if_fresh() {
+            return Ok(cached.access_token.clone());
+        }
+        let api_key = self.config().api_key().ok_or_else(missing_api_key_error)?;
+        let provider = crate::core::auth::accept_jwt::AcceptJwtProvider::with_cache(
+            self.endpoints().accept_base_url.as_str(),
+            secrecy::SecretString::from(api_key.expose_secret().to_owned()),
+            self.auth().accept_cache_arc(),
+        )
+        .map_err(PaymobError::from)?;
+        provider.token().await.map_err(PaymobError::from)
+    }
+
+    /// Executes a Regime 2 authenticated [`HttpRequest`] and performs a single-flight
+    /// cache eviction and one-shot retry on HTTP `401 {"detail": "incorrect credentials"}`.
+    #[allow(dead_code)]
+    pub(crate) async fn execute_regime2_with_retry<E, F>(
+        &self,
+        missing_api_key_error: E,
+        build_request: F,
+    ) -> Result<HttpResponse, PaymobError>
+    where
+        E: Fn() -> PaymobError,
+        F: Fn(&secrecy::SecretString) -> Result<HttpRequest, PaymobError>,
+    {
+        let token = self.acquire_accept_jwt(&missing_api_key_error).await?;
+        let request = build_request(&token)?;
+        let response = self.execute_request(&request).await?;
+        if !crate::core::auth::accept_jwt::is_incorrect_credentials_401(
+            response.status,
+            &response.body,
+        ) {
+            return Ok(response);
+        }
+        self.auth().accept_cache().evict_if_matches(&token).await;
+        let fresh = self.acquire_accept_jwt(&missing_api_key_error).await?;
+        let retry_request = build_request(&fresh)?;
+        self.execute_request(&retry_request).await
+    }
 }
 
 #[allow(dead_code)]
-fn is_loopback_http(url: &Url) -> bool {
-    url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
+pub(crate) fn build_bearer_json_request<Req>(
+    method: reqwest::Method,
+    url: &str,
+    token: &secrecy::SecretString,
+    body: Option<&Req>,
+) -> Result<HttpRequest, PaymobError>
+where
+    Req: serde::Serialize + ?Sized,
+{
+    let bearer = crate::core::auth::accept_jwt::format_bearer_header(token)
+        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
+    let mut request = HttpRequest::new(method, url)
+        .map_err(PaymobError::from)?
+        .with_header(reqwest::header::AUTHORIZATION, bearer);
+    if let Some(payload) = body {
+        request = request.with_json(&payload).map_err(PaymobError::from)?;
+    }
+    Ok(request)
 }
 
 fn has_forbidden_chars_or_authority(path: &str, trimmed: &str) -> bool {

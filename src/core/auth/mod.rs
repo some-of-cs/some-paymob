@@ -136,21 +136,8 @@ pub(crate) fn format_sensitive_auth_header(
     Some(value)
 }
 
-fn is_local_domain(domain: &str) -> bool {
-    domain.eq_ignore_ascii_case("localhost") || domain.to_ascii_lowercase().ends_with(".local")
-}
-
-fn is_loopback_or_local_host(parsed: &Url) -> bool {
-    match parsed.host() {
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        Some(url::Host::Domain(domain)) => is_local_domain(domain),
-        None => false,
-    }
-}
-
 fn is_allowed_auth_scheme(parsed: &Url) -> bool {
-    parsed.scheme() == "https" || (parsed.scheme() == "http" && is_loopback_or_local_host(parsed))
+    parsed.scheme() == "https" || crate::core::region::is_loopback_http_url(parsed)
 }
 
 fn has_no_url_credentials_or_query(parsed: &Url) -> bool {

@@ -15,7 +15,7 @@ use crate::core::auth::strategy::{AuthStrategy, EndpointAuthSpec};
 use crate::core::client::PaymobClient;
 use crate::core::credentials::EnvironmentMode;
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpClient, HttpRequest};
+use crate::core::http::HttpRequest;
 
 use super::params::{CreateIntentionParams, PaymentMethodInput, UpdateIntentionParams};
 use super::response::IntentionResponse;
@@ -63,8 +63,6 @@ pub struct IntentionsService<'a> {
     known_integration_modes: HashMap<u64, EnvironmentMode>,
     #[cfg(test)]
     mock_base_url: Option<String>,
-    #[cfg(test)]
-    mock_http: Option<HttpClient>,
 }
 
 impl fmt::Debug for IntentionsService<'_> {
@@ -96,8 +94,6 @@ impl<'a> IntentionsService<'a> {
             known_integration_modes: HashMap::new(),
             #[cfg(test)]
             mock_base_url: None,
-            #[cfg(test)]
-            mock_http: None,
         }
     }
 
@@ -201,11 +197,7 @@ impl<'a> IntentionsService<'a> {
         key_mode: EnvironmentMode,
     ) -> Result<IntentionResponse, PaymobError> {
         let req = self.build_request(method, payload)?;
-        let response = self
-            .http_client()
-            .execute(&req)
-            .await
-            .map_err(PaymobError::from)?;
+        let response = self.client.execute_request(&req).await?;
         parse_and_verify_response(&response, key_mode)
     }
 
@@ -231,14 +223,6 @@ impl<'a> IntentionsService<'a> {
             return Ok(format!("{}{}", base.trim_end_matches('/'), INTENTION_PATH));
         }
         Ok(self.client.accept_url(INTENTION_PATH)?.to_string())
-    }
-
-    fn http_client(&self) -> &HttpClient {
-        #[cfg(test)]
-        if let Some(ref mock) = self.mock_http {
-            return mock;
-        }
-        self.client.http()
     }
 }
 
@@ -303,7 +287,6 @@ mod tests {
 
     use crate::core::config::ClientConfig;
     use crate::core::credentials::SecretKey;
-    use crate::core::http::{HttpClientConfig, RetryPolicy};
     use crate::core::region::PaymobRegion;
     use crate::core::types::Currency;
 
@@ -314,23 +297,15 @@ mod tests {
         let cfg = ClientConfig::builder()
             .region(PaymobRegion::Egypt)
             .secret_key(SecretKey::new(secret).expect("valid key"))
+            .max_retries(0)
             .build()
             .expect("valid config");
         PaymobClient::new(cfg).expect("client")
     }
 
     fn mock_service<'a>(client: &'a PaymobClient, server: &MockServer) -> IntentionsService<'a> {
-        let http_cfg = HttpClientConfig {
-            allow_insecure_http: true,
-            retry: RetryPolicy {
-                max_retries: 0,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
         let mut svc = client.intentions();
         svc.mock_base_url = Some(server.uri());
-        svc.mock_http = Some(HttpClient::new(http_cfg).expect("mock http"));
         svc
     }
 

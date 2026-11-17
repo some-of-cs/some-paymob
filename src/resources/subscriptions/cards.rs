@@ -8,17 +8,15 @@
 use std::fmt;
 
 use reqwest::Method;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use zeroize::ZeroizeOnDrop;
 
 use super::{SubscriptionsService, validate_positive_id};
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::http::HttpClient;
-#[cfg(test)]
-use crate::core::http::HttpClientConfig;
+use crate::core::types::serialize_secret_string;
 
 const SUBSCRIPTIONS_BASE_PATH: &str = "/api/acceptance/subscriptions";
 
@@ -270,7 +268,6 @@ impl CardListEnvelope {
 #[derive(Debug, Clone)]
 pub struct SubscriptionCardsService {
     client: PaymobClient,
-    http: HttpClient,
 }
 
 impl SubscriptionsService {
@@ -285,15 +282,12 @@ impl SubscriptionCardsService {
     /// Creates a new [`SubscriptionCardsService`] bound to `client`.
     #[must_use]
     pub fn new(client: PaymobClient) -> Self {
-        let http = client.http().clone();
-        Self { client, http }
+        Self { client }
     }
 
     #[cfg(test)]
     fn with_test_http(client: PaymobClient) -> Self {
-        let http_cfg = HttpClientConfig::default().with_allow_insecure_http(true);
-        let http = HttpClient::new(http_cfg).expect("test HTTP client should initialize");
-        Self { client, http }
+        Self { client }
     }
 
     /// Returns a reference to the underlying [`PaymobClient`].
@@ -482,15 +476,8 @@ impl SubscriptionCardsService {
         Req: Serialize + ?Sized,
         Resp: DeserializeOwned,
     {
-        super::execute_subscription_bearer_json(&self.client, &self.http, method, path, body).await
+        super::execute_subscription_bearer_json(&self.client, method, path, body).await
     }
-}
-
-fn serialize_secret_string<S>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(secret.expose_secret())
 }
 
 #[cfg(test)]

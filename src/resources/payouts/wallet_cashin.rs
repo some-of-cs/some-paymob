@@ -7,6 +7,7 @@
 use std::fmt;
 
 use serde::Serialize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::core::error::PaymobError;
 use crate::resources::payouts::models::{
@@ -33,17 +34,19 @@ pub const PAYOUTS_DISBURSE_PATH: &str = "/api/secure/disburse/";
 /// assert_eq!(params.amount, 112);
 /// assert!(!format!("{params:?}").contains("01023456789"));
 /// ```
-#[derive(Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Zeroize, ZeroizeOnDrop)]
 pub struct MobileWalletCashinParams {
     /// Recipient mobile wallet number (`msisdn`, 10–15 digits).
     pub msisdn: String,
     /// Disbursement amount (`u64`, zero floats).
+    #[zeroize(skip)]
     pub amount: u64,
     /// Optional idempotent client reference identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_reference_id: Option<String>,
     /// Whether the recipient bears the disbursement fee.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[zeroize(skip)]
     pub customer_bears_fees: Option<bool>,
 }
 

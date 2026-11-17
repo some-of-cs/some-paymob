@@ -12,7 +12,7 @@ pub mod sources;
 
 pub use cit_mit::{CitCardTokenConfig, MitChargeParams, validate_use_cvc_with_moto};
 pub use service::{
-    ACCEPT_PAY_PATH, HeadlessPayResponse, KioskPayParams, MitPayParams, RawPayParams,
-    SavedCardsService, WalletPayParams,
+    ACCEPT_PAY_PATH, HeadlessPayResponse, HeadlessTransaction, KioskPayParams, MitPayParams,
+    RawPayParams, SavedCardsService, WalletPayParams,
 };
 pub use sources::PaymentSource;

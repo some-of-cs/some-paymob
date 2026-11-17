@@ -6,6 +6,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::core::error::PaymobError;
 use crate::resources::payouts::models::{
@@ -23,11 +24,13 @@ pub const MAX_BULK_DISBURSEMENT_ITEMS: usize = 1_000;
 /// Single item within a [`BulkDisbursementParams`] batch.
 ///
 /// Redacts `msisdn` and `full_name` in [`fmt::Debug`].
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct BulkDisbursementItem {
     /// Disbursement issuer.
+    #[zeroize(skip)]
     pub issuer: DisburseIssuer,
     /// Disbursement amount (`u64`).
+    #[zeroize(skip)]
     pub amount: u64,
     /// Recipient mobile number (redacted in `Debug`).
     #[serde(skip_serializing_if = "Option::is_none")]

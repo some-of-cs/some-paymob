@@ -6,15 +6,12 @@
 
 use std::fmt;
 
-use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::core::auth::accept_jwt::format_bearer_header;
 use crate::core::error::PaymobError;
-use crate::core::http::HttpRequest;
-use crate::resources::inquiries::{
-    InquiriesService, acquire_accept_jwt, execute_accept_request, map_accept_jwt_error,
-};
+use crate::core::types::validate_non_zero_u64;
+use crate::resources::inquiries::{InquiriesService, execute_inquiry_bearer_get};
 
 /// Summary of an order nested inside a [`Transaction`] response.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,7 +45,7 @@ impl fmt::Debug for TransactionOrder {
 }
 
 /// Payment instrument metadata attached to a [`Transaction`].
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct TransactionSourceData {
     /// Payment instrument type (for example, `"card"`, `"wallet"`, `"kiosk"`).
     #[serde(rename = "type", default)]
@@ -209,28 +206,13 @@ impl<'a> InquiriesService<'a> {
     /// # }
     /// ```
     pub async fn by_transaction_id(&self, tx_id: u64) -> Result<Transaction, PaymobError> {
-        if tx_id == 0 {
-            return Err(PaymobError::ValidationError {
-                field: "transaction_id",
-                reason: "transaction_id must be greater than zero".to_owned(),
-            });
-        }
-
-        let token = acquire_accept_jwt(self).await?;
-        let url = self
-            .client()
-            .accept_url(&format!("/api/acceptance/transactions/{tx_id}"))?;
-        let bearer = format_bearer_header(&token).map_err(map_accept_jwt_error)?;
-        let request = HttpRequest::get(url.as_str())
-            .map_err(PaymobError::from)?
-            .with_header(AUTHORIZATION, bearer);
-
-        let response = execute_accept_request(self, &url, &request).await?;
-        if !response.status.is_success() {
-            return Err(PaymobError::from_http_response(&response));
-        }
-
-        response.json::<Transaction>().map_err(PaymobError::from)
+        validate_non_zero_u64(
+            "transaction_id",
+            tx_id,
+            "transaction_id must be greater than zero",
+        )?;
+        let path = format!("/api/acceptance/transactions/{tx_id}");
+        execute_inquiry_bearer_get(self, &path).await
     }
 }
 

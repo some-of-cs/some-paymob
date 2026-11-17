@@ -9,10 +9,11 @@ use crate::core::http::HttpRequest;
 use crate::resources::onboarding::auth_models::PartnerHmacEnvelope;
 use crate::resources::onboarding::{
     PartnerAuthService, apply_header_map, decode_onboarding_json, execute_onboarding_request,
-    resolve_partner_bearer_headers,
+    resolve_partner_bearer_headers, validate_non_zero_id,
 };
 
 const PARTNER_HMAC_SECRET_PATH: &str = "/api/auth/hmac_secret/get_hmac";
+const PARTNER_MERCHANT_HMAC_SECRET_PREFIX: &str = "/api/partner/merchants/hmac_secret/";
 
 impl PartnerAuthService {
     /// Retrieves the Partner HMAC secret via `GET /api/auth/hmac_secret/get_hmac`.
@@ -57,6 +58,35 @@ impl PartnerAuthService {
             "partner_credentials.bearer_token is required to retrieve partner HMAC secret",
         )?;
         let url = self.client().accept_url(PARTNER_HMAC_SECRET_PATH)?;
+        let request = apply_header_map(HttpRequest::get(url.as_str())?, &headers);
+
+        let response = execute_onboarding_request(self.client(), &request).await?;
+        decode_onboarding_json(&response)
+    }
+
+    /// Retrieves a specific sub-merchant's HMAC secret via
+    /// `GET /api/partner/merchants/hmac_secret/{mid}`.
+    ///
+    /// Authenticates using Regime 4 Partner Bearer (`Authorization: Bearer <partner_auth_token>`)
+    /// and validates that `mid` is non-zero before dispatching the request.
+    ///
+    /// # Errors
+    ///
+    /// Returns:
+    /// - [`PaymobError::ValidationError`] if `mid == 0`.
+    /// - [`PaymobError::AuthenticationError`] if `partner_credentials.bearer_token` is missing or rejected.
+    /// - [`PaymobError::RateLimited`], [`PaymobError::ApiError`], or [`PaymobError::TransportError`] on gateway failure.
+    pub async fn retrieve_merchant_hmac_secret(
+        &self,
+        mid: u64,
+    ) -> Result<PartnerHmacEnvelope, PaymobError> {
+        validate_non_zero_id("mid", mid, "mid must be greater than zero")?;
+        let headers = resolve_partner_bearer_headers(
+            self.client(),
+            "partner_credentials.bearer_token is required to retrieve merchant HMAC secret",
+        )?;
+        let path = format!("{PARTNER_MERCHANT_HMAC_SECRET_PREFIX}{mid}");
+        let url = self.client().accept_url(&path)?;
         let request = apply_header_map(HttpRequest::get(url.as_str())?, &headers);
 
         let response = execute_onboarding_request(self.client(), &request).await?;

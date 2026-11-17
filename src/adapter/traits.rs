@@ -180,8 +180,14 @@ impl fmt::Debug for UnifiedPaymentSessionRequest {
             .field("special_reference", &self.special_reference)
             .field("notification_url", &self.notification_url)
             .field("redirection_url", &self.redirection_url)
-            .field("customer_email", &self.customer_email.as_ref().map(|_| "[REDACTED]"))
-            .field("customer_phone", &self.customer_phone.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "customer_email",
+                &self.customer_email.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "customer_phone",
+                &self.customer_phone.as_ref().map(|_| "[REDACTED]"),
+            )
             .field(
                 "customer_first_name",
                 &self.customer_first_name.as_ref().map(|_| "[REDACTED]"),
@@ -701,7 +707,9 @@ mod tests {
             session_id: "pi_123".to_owned(),
             order_id: "999".to_owned(),
             client_secret: SecretString::from("egy_csk_secret_token"),
-            checkout_url: "https://accept.paymob.com/unifiedcheckout/?clientSecret=egy_csk_secret_token".to_owned(),
+            checkout_url:
+                "https://accept.paymob.com/unifiedcheckout/?clientSecret=egy_csk_secret_token"
+                    .to_owned(),
             status: "intended".to_owned(),
             confirmed: false,
         };
@@ -736,12 +744,8 @@ mod tests {
         assert!(!dbg.contains("01001234567"));
         assert!(dbg.contains("[REDACTED]"));
 
-        let empty_recipient = UnifiedPayoutRequest::new(
-            "   ",
-            MinorUnitAmount::new(100),
-            Currency::Egp,
-            "vodafone",
-        );
+        let empty_recipient =
+            UnifiedPayoutRequest::new("   ", MinorUnitAmount::new(100), Currency::Egp, "vodafone");
         assert!(matches!(
             empty_recipient.validate(),
             Err(PaymobError::ValidationError {

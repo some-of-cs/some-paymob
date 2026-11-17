@@ -41,7 +41,7 @@ impl Respond for FailThenOkResponder {
     fn respond(&self, _request: &Request) -> ResponseTemplate {
         let prev =
             self.remaining_failures
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |curr| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |curr| {
                     curr.checked_sub(1)
                 });
         if prev.is_ok() {

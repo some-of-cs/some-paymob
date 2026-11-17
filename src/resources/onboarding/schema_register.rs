@@ -6,83 +6,18 @@
 //! under Regime 4 [`PartnerApiKey`](crate::core::auth::strategy::AuthStrategy::PartnerApiKey)
 //! authentication.
 
-use reqwest::header::{HeaderName, HeaderValue};
-use url::Url;
-
-use crate::core::auth::strategy::AuthStrategy;
-use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpClient, HttpClientConfig, HttpRequest, HttpResponse, RetryPolicy};
-
-use super::PartnerFlowService;
-use super::flow_models::{
+use crate::core::http::HttpRequest;
+use crate::resources::onboarding::flow_models::{
     OnboardingFlowSchema, OnboardingSchemaQuery, RegisterMerchantParams, RegisteredMerchantResponse,
+};
+use crate::resources::onboarding::{
+    PartnerFlowService, apply_header_map, decode_onboarding_json, execute_onboarding_request,
+    resolve_partner_api_key_headers,
 };
 
 const REGISTER_MERCHANT_PATH: &str = "/api/onboarding/register";
 const ONBOARDING_SCHEMA_PATH: &str = "/api/onboarding/flow/schema";
-const PARTNER_API_KEY_HEADER: &str = "x-api-key";
-
-/// Resolves the Regime 4 `PartnerApiKey` header value from [`PaymobClient`] config.
-fn partner_api_key_header(client: &PaymobClient) -> Result<(HeaderName, HeaderValue), PaymobError> {
-    let _strategy = AuthStrategy::PartnerApiKey;
-    let creds = client.config().partner_credentials().ok_or_else(|| {
-        PaymobError::AuthenticationError(String::from(
-            "partner_credentials must be configured for Regime 4 onboarding endpoints",
-        ))
-    })?;
-    let mut val = HeaderValue::from_str(creds.api_key())
-        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
-    val.set_sensitive(true);
-    Ok((HeaderName::from_static(PARTNER_API_KEY_HEADER), val))
-}
-
-/// Returns `true` when `url` targets a local loopback HTTP mock server.
-fn is_loopback_http(url: &Url) -> bool {
-    url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
-}
-
-/// Executes an onboarding HTTP request, allowing loopback HTTP for `wiremock` tests.
-async fn execute_onboarding_request(
-    client: &PaymobClient,
-    request: &HttpRequest,
-) -> Result<HttpResponse, PaymobError> {
-    if !is_loopback_http(request.url()) {
-        return client
-            .http()
-            .execute(request)
-            .await
-            .map_err(PaymobError::from);
-    }
-    let cfg = client.config();
-    let local_http = HttpClient::new(HttpClientConfig {
-        connect_timeout: cfg.timeout(),
-        request_timeout: cfg.timeout(),
-        max_response_bytes: client.http().config().max_response_bytes,
-        retry: RetryPolicy {
-            max_retries: cfg.max_retries(),
-            ..RetryPolicy::default()
-        },
-        allow_insecure_http: true,
-    })
-    .map_err(PaymobError::from)?;
-    local_http.execute(request).await.map_err(PaymobError::from)
-}
-
-/// Parses a JSON response or maps non-2xx status codes into [`PaymobError`].
-fn decode_json_response<T: serde::de::DeserializeOwned>(
-    response: &HttpResponse,
-) -> Result<T, PaymobError> {
-    if !response.status.is_success() {
-        let body = response.text().unwrap_or_default();
-        return Err(PaymobError::from_response(
-            response.status.as_u16(),
-            body,
-            None,
-        ));
-    }
-    response.json::<T>().map_err(PaymobError::from)
-}
 
 impl PartnerFlowService {
     /// Registers a new sub-merchant under the partner account (`POST /api/onboarding/register`).
@@ -131,13 +66,15 @@ impl PartnerFlowService {
         params: &RegisterMerchantParams,
     ) -> Result<RegisteredMerchantResponse, PaymobError> {
         params.validate()?;
-        let (header_name, header_val) = partner_api_key_header(self.client())?;
+        let headers = resolve_partner_api_key_headers(
+            self.client(),
+            "partner_credentials must be configured for Regime 4 onboarding endpoints",
+        )?;
         let url = self.client().accept_url(REGISTER_MERCHANT_PATH)?;
-        let request = HttpRequest::post(url.as_str())?
-            .with_header(header_name, header_val)
-            .with_json(params)?;
+        let req = HttpRequest::post(url.as_str())?.with_json(params)?;
+        let request = apply_header_map(req, &headers);
         let response = execute_onboarding_request(self.client(), &request).await?;
-        decode_json_response(&response)
+        decode_onboarding_json(&response)
     }
 
     /// Fetches the dynamic onboarding KYC flow schema (`GET /api/onboarding/flow/schema`).
@@ -182,12 +119,15 @@ impl PartnerFlowService {
         query: &OnboardingSchemaQuery,
     ) -> Result<OnboardingFlowSchema, PaymobError> {
         let query_str = query.to_query_string()?;
-        let (header_name, header_val) = partner_api_key_header(self.client())?;
+        let headers = resolve_partner_api_key_headers(
+            self.client(),
+            "partner_credentials must be configured for Regime 4 onboarding endpoints",
+        )?;
         let path = format!("{ONBOARDING_SCHEMA_PATH}?{query_str}");
         let url = self.client().accept_url(&path)?;
-        let request = HttpRequest::get(url.as_str())?.with_header(header_name, header_val);
+        let request = apply_header_map(HttpRequest::get(url.as_str())?, &headers);
         let response = execute_onboarding_request(self.client(), &request).await?;
-        decode_json_response(&response)
+        decode_onboarding_json(&response)
     }
 }
 
@@ -197,6 +137,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
+    use crate::core::client::PaymobClient;
     use crate::core::config::ClientConfig;
     use crate::core::credentials::PartnerCredentials;
     use crate::core::region::PaymobRegion;

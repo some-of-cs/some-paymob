@@ -10,38 +10,92 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use url::form_urlencoded;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::core::error::PaymobError;
+use crate::resources::onboarding::{
+    deserialize_non_zero_u64, validate_no_control_chars, validate_non_empty_trimmed,
+    validate_non_zero_id,
+};
 
-/// Validates that a required string field is non-empty after trimming.
-fn require_non_empty(field: &'static str, value: &str) -> Result<(), PaymobError> {
-    if value.trim().is_empty() {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must not be empty"),
-        });
+fn validate_required_text(field: &'static str, value: &str) -> Result<(), PaymobError> {
+    validate_non_empty_trimmed(field, value, "field must not be empty")?;
+    validate_no_control_chars(field, value)
+}
+
+fn validate_optional_text(field: &'static str, value: Option<&str>) -> Result<(), PaymobError> {
+    if let Some(text) = value {
+        validate_required_text(field, text)?;
     }
     Ok(())
 }
 
 /// Validates that a partner identifier is non-empty and free of control characters.
 fn validate_partner_slug(partner: &str) -> Result<(), PaymobError> {
-    let trimmed = partner.trim();
-    if trimmed.is_empty() || partner.bytes().any(|b| b.is_ascii_control()) {
+    validate_non_empty_trimmed(
+        "partner",
+        partner,
+        "partner identifier must be non-empty and free of control characters",
+    )?;
+    validate_no_control_chars("partner", partner)
+}
+
+fn is_valid_email_domain(domain: &str) -> bool {
+    let bytes = domain.as_bytes();
+    let valid_edges =
+        !bytes.is_empty() && bytes.first() != Some(&b'.') && bytes.last() != Some(&b'.');
+    valid_edges && domain.contains('.') && !domain.contains('@')
+}
+
+fn is_valid_email_structure(email: &str) -> bool {
+    let trimmed = email.trim();
+    let Some((local, domain)) = trimmed.split_once('@') else {
+        return false;
+    };
+    !local.is_empty() && !trimmed.chars().any(char::is_whitespace) && is_valid_email_domain(domain)
+}
+
+fn validate_email(email: &str) -> Result<(), PaymobError> {
+    validate_non_empty_trimmed("email", email, "email must not be empty")?;
+    validate_no_control_chars("email", email)?;
+    if !is_valid_email_structure(email) {
         return Err(PaymobError::ValidationError {
-            field: "partner",
-            reason: "partner identifier must be non-empty and free of control characters"
-                .to_owned(),
+            field: "email",
+            reason: "email must be a valid address containing '@' and a domain".to_owned(),
         });
     }
     Ok(())
 }
 
+fn zeroize_json_value(value: &mut Value) {
+    match value {
+        Value::String(s) => s.zeroize(),
+        Value::Array(items) => {
+            items.iter_mut().for_each(zeroize_json_value);
+            items.clear();
+        }
+        Value::Object(map) => zeroize_json_map(map),
+        Value::Bool(flag) => flag.zeroize(),
+        Value::Number(num) => {
+            *num = serde_json::Number::from(0_u8);
+            *value = Value::Null;
+        }
+        Value::Null => {}
+    }
+}
+
+fn zeroize_json_map(map: &mut Map<String, Value>) {
+    let entries = std::mem::take(map);
+    for (mut key, mut value) in entries {
+        key.zeroize();
+        zeroize_json_value(&mut value);
+    }
+}
+
 /// Parameters for registering a new sub-merchant under a Paymob Partner (`POST /api/onboarding/register`).
 ///
 /// PII fields (`email`, `phone_number`, `first_name`, `last_name`) are redacted as
-/// `"[REDACTED]"` in [`fmt::Debug`] output and zeroized on drop.
+/// `"[REDACTED]"` in [`fmt::Debug`] output and zeroized on drop along with `extra`.
 ///
 /// # Examples
 ///
@@ -86,14 +140,26 @@ pub struct RegisterMerchantParams {
     extra: Map<String, Value>,
 }
 
-impl Drop for RegisterMerchantParams {
-    fn drop(&mut self) {
+impl Zeroize for RegisterMerchantParams {
+    fn zeroize(&mut self) {
+        self.partner.zeroize();
         self.email.zeroize();
         self.phone_number.zeroize();
         self.first_name.zeroize();
         self.last_name.zeroize();
+        self.company_name.zeroize();
+        self.country.zeroize();
+        zeroize_json_map(&mut self.extra);
     }
 }
+
+impl Drop for RegisterMerchantParams {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for RegisterMerchantParams {}
 
 impl fmt::Debug for RegisterMerchantParams {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -115,8 +181,8 @@ impl RegisterMerchantParams {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if any required field is empty or
-    /// if `partner` contains control characters.
+    /// Returns [`PaymobError::ValidationError`] if any required field is empty,
+    /// contains control characters, or if `email` has an invalid format.
     pub fn new(
         partner: impl Into<String>,
         email: impl Into<String>,
@@ -177,18 +243,33 @@ impl RegisterMerchantParams {
         self.country.as_deref()
     }
 
-    /// Validates all required registration fields.
+    fn validate_optional_fields(&self) -> Result<(), PaymobError> {
+        for (field, value) in [
+            ("company_name", self.company_name.as_deref()),
+            ("country", self.country.as_deref()),
+        ] {
+            validate_optional_text(field, value)?;
+        }
+        Ok(())
+    }
+
+    /// Validates all required and optional registration fields.
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if any required field is empty.
+    /// Returns [`PaymobError::ValidationError`] if any field is empty, contains
+    /// control characters, or if `email` is malformed.
     pub fn validate(&self) -> Result<(), PaymobError> {
         validate_partner_slug(&self.partner)?;
-        require_non_empty("email", &self.email)?;
-        require_non_empty("phone_number", &self.phone_number)?;
-        require_non_empty("first_name", &self.first_name)?;
-        require_non_empty("last_name", &self.last_name)?;
-        Ok(())
+        validate_email(&self.email)?;
+        for (field, value) in [
+            ("phone_number", self.phone_number.as_str()),
+            ("first_name", self.first_name.as_str()),
+            ("last_name", self.last_name.as_str()),
+        ] {
+            validate_required_text(field, value)?;
+        }
+        self.validate_optional_fields()
     }
 }
 
@@ -207,8 +288,12 @@ impl RegisterMerchantParams {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegisteredMerchantResponse {
-    /// Assigned Paymob Merchant ID (`paymob_mid`).
-    #[serde(alias = "id", alias = "merchant_id")]
+    /// Assigned Paymob Merchant ID (`paymob_mid`, validated non-zero).
+    #[serde(
+        alias = "id",
+        alias = "merchant_id",
+        deserialize_with = "deserialize_non_zero_u64"
+    )]
     pub paymob_mid: u64,
     /// Partner identifier associated with the registered sub-merchant.
     #[serde(default)]
@@ -291,11 +376,12 @@ impl OnboardingSchemaQuery {
     /// Returns [`PaymobError::ValidationError`] if `partner` is invalid or `paymob_mid` is `Some(0)`.
     pub fn validate(&self) -> Result<(), PaymobError> {
         validate_partner_slug(&self.partner)?;
-        if self.paymob_mid == Some(0) {
-            return Err(PaymobError::ValidationError {
-                field: "paymob_mid",
-                reason: "paymob_mid must be a non-zero merchant ID".to_owned(),
-            });
+        if let Some(mid) = self.paymob_mid {
+            validate_non_zero_id(
+                "paymob_mid",
+                mid,
+                "paymob_mid must be a non-zero merchant ID",
+            )?;
         }
         Ok(())
     }
@@ -390,8 +476,9 @@ pub struct OnboardingFlowSchema {
 
 /// Request payload for submitting a completed onboarding KYC step (`POST /api/onboarding/flow/step`).
 ///
-/// The `data` map is redacted as `"[REDACTED]"` in [`fmt::Debug`] output so
-/// sensitive KYC documents, tax IDs, or bank account details are never logged.
+/// The `data` map is redacted as `"[REDACTED]"` in [`fmt::Debug`] output and
+/// recursively zeroized on drop so sensitive KYC documents, tax IDs, or bank
+/// account details are never left in memory or logs.
 ///
 /// # Examples
 ///
@@ -422,6 +509,23 @@ pub struct SubmitOnboardingStepParams {
     data: Map<String, Value>,
 }
 
+impl Zeroize for SubmitOnboardingStepParams {
+    fn zeroize(&mut self) {
+        self.paymob_mid.zeroize();
+        self.step_id.zeroize();
+        self.partner.zeroize();
+        zeroize_json_map(&mut self.data);
+    }
+}
+
+impl Drop for SubmitOnboardingStepParams {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for SubmitOnboardingStepParams {}
+
 impl fmt::Debug for SubmitOnboardingStepParams {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubmitOnboardingStepParams")
@@ -438,7 +542,8 @@ impl SubmitOnboardingStepParams {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `paymob_mid == 0` or `step_id` is empty.
+    /// Returns [`PaymobError::ValidationError`] if `paymob_mid == 0` or `step_id`
+    /// is empty or contains control characters.
     pub fn new(
         paymob_mid: u64,
         step_id: impl Into<String>,
@@ -483,16 +588,15 @@ impl SubmitOnboardingStepParams {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `paymob_mid == 0`, `step_id` is empty,
-    /// or `partner` (when provided) is empty/contains control characters.
+    /// Returns [`PaymobError::ValidationError`] if `paymob_mid == 0`, `step_id` is
+    /// empty/contains control characters, or `partner` (when provided) is invalid.
     pub fn validate(&self) -> Result<(), PaymobError> {
-        if self.paymob_mid == 0 {
-            return Err(PaymobError::ValidationError {
-                field: "paymob_mid",
-                reason: "paymob_mid must be a non-zero merchant ID".to_owned(),
-            });
-        }
-        require_non_empty("step_id", &self.step_id)?;
+        validate_non_zero_id(
+            "paymob_mid",
+            self.paymob_mid,
+            "paymob_mid must be a non-zero merchant ID",
+        )?;
+        validate_required_text("step_id", &self.step_id)?;
         if let Some(partner) = &self.partner {
             validate_partner_slug(partner)?;
         }
@@ -521,8 +625,12 @@ impl SubmitOnboardingStepParams {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PartnerMerchantInquiryResponse {
-    /// Sub-merchant Paymob MID.
-    #[serde(alias = "id", alias = "merchant_id")]
+    /// Sub-merchant Paymob MID (validated non-zero).
+    #[serde(
+        alias = "id",
+        alias = "merchant_id",
+        deserialize_with = "deserialize_non_zero_u64"
+    )]
     pub paymob_mid: u64,
     /// Current onboarding/approval status (for example, `"pending"`, `"approved"`, `"rejected"`).
     #[serde(default)]
@@ -566,7 +674,7 @@ mod tests {
 
     #[test]
     fn tc_6_2_1_register_merchant_params_validation_and_redaction() {
-        let params = RegisterMerchantParams::new(
+        let mut params = RegisterMerchantParams::new(
             "KeyPartner",
             "owner@acme.example",
             "+201116491564",
@@ -581,6 +689,7 @@ mod tests {
         assert_eq!(params.partner(), "KeyPartner");
         assert_eq!(params.company_name(), Some("Acme LLC"));
         assert_eq!(params.country(), Some("EGY"));
+        assert!(params.validate().is_ok());
 
         let debug = format!("{params:?}");
         assert!(debug.contains("[REDACTED]"));
@@ -588,10 +697,15 @@ mod tests {
         assert!(!debug.contains("+201116491564"));
         assert!(!debug.contains("Amira"));
         assert!(!debug.contains("Hassan"));
+        assert!(!debug.contains("123-456-789"));
+
+        params.zeroize();
+        assert!(params.partner().is_empty());
+        assert!(params.extra.is_empty());
     }
 
     #[test]
-    fn tc_6_2_1_register_merchant_params_rejects_empty_fields() {
+    fn tc_6_2_1_register_merchant_params_rejects_empty_and_malformed_email() {
         let err = RegisterMerchantParams::new(
             "   ",
             "owner@acme.example",
@@ -608,11 +722,69 @@ mod tests {
             }
         ));
 
-        let err = RegisterMerchantParams::new("KeyPartner", "", "+201116491564", "Amira", "Hassan")
-            .expect_err("empty email must fail");
+        for bad_email in [
+            "",
+            "no-at-symbol.com",
+            "@nodomain.com",
+            "user@nodot",
+            "user@.leadingdot.com",
+            "user@trailingdot.",
+            "user@two@@at.com",
+            "user\r\n@example.com",
+        ] {
+            let err = RegisterMerchantParams::new(
+                "KeyPartner",
+                bad_email,
+                "+201116491564",
+                "Amira",
+                "Hassan",
+            )
+            .expect_err("malformed email must fail");
+            assert!(matches!(
+                err,
+                PaymobError::ValidationError { field: "email", .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn tc_6_2_1_register_merchant_params_rejects_control_chars_and_bad_optionals() {
+        let bad_phone = RegisterMerchantParams::new(
+            "KeyPartner",
+            "owner@acme.example",
+            "+20111\x006491564",
+            "Amira",
+            "Hassan",
+        );
         assert!(matches!(
-            err,
-            PaymobError::ValidationError { field: "email", .. }
+            bad_phone,
+            Err(PaymobError::ValidationError {
+                field: "phone_number",
+                ..
+            })
+        ));
+
+        let base = RegisterMerchantParams::new(
+            "KeyPartner",
+            "owner@acme.example",
+            "+201116491564",
+            "Amira",
+            "Hassan",
+        )
+        .unwrap();
+        assert!(matches!(
+            base.clone().with_company_name("Acme\r\nLLC").validate(),
+            Err(PaymobError::ValidationError {
+                field: "company_name",
+                ..
+            })
+        ));
+        assert!(matches!(
+            base.with_country("   ").validate(),
+            Err(PaymobError::ValidationError {
+                field: "country",
+                ..
+            })
         ));
     }
 
@@ -653,19 +825,25 @@ mod tests {
     }
 
     #[test]
-    fn tc_6_2_1_submit_step_params_redaction_and_validation() {
+    fn tc_6_2_1_submit_step_params_redaction_zeroize_and_validation() {
         let mut data = Map::new();
         data.insert(
             "iban".into(),
             Value::String("EG380019000500000000263180002".into()),
         );
-        let params = SubmitOnboardingStepParams::new(987_654, "bank_details", data)
+        data.insert("tax_id".into(), Value::Number(123_456_789_u64.into()));
+        let mut params = SubmitOnboardingStepParams::new(987_654, "bank_details", data)
             .expect("valid step params")
             .with_partner("KeyPartner");
 
         let debug = format!("{params:?}");
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("EG380019000500000000263180002"));
+
+        params.zeroize();
+        assert_eq!(params.paymob_mid(), 0);
+        assert!(params.step_id().is_empty());
+        assert!(params.partner().is_none());
 
         assert!(matches!(
             SubmitOnboardingStepParams::new(0, "bank_details", Map::new()),
@@ -681,6 +859,13 @@ mod tests {
                 ..
             })
         ));
+        assert!(matches!(
+            SubmitOnboardingStepParams::new(987_654, "bank\0details", Map::new()),
+            Err(PaymobError::ValidationError {
+                field: "step_id",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -690,18 +875,27 @@ mod tests {
                 .expect("registered merchant");
         assert_eq!(reg.paymob_mid, 555_123);
 
-        let schema: OnboardingFlowSchema = serde_json::from_str(
-            r#"{"partner":"KeyPartner","steps":[{"id":"kyc","fields":[{"name":"cr_doc","type":"file","required":true}]}]}"#,
-        )
-        .expect("flow schema");
+        assert!(
+            serde_json::from_str::<RegisteredMerchantResponse>(r#"{"paymob_mid": 0}"#).is_err()
+        );
+
+        let schema_json = concat!(
+            r#"{"partner":"KeyPartner","steps":[{"id":"kyc","fields":"#,
+            r#"[{"name":"cr_doc","type":"file","required":true}]}]}"#
+        );
+        let schema: OnboardingFlowSchema = serde_json::from_str(schema_json).expect("flow schema");
         assert_eq!(schema.steps.len(), 1);
         assert_eq!(schema.steps[0].fields[0].name, "cr_doc");
 
         let inquiry: PartnerMerchantInquiryResponse = serde_json::from_str(
-            r#"{"merchant_id": 555123, "status": "approved", "live_integration_ids": [4097558]}"#,
+            r#"{"merchant_id": 555123, "status": "APPROVED", "live_integration_ids": [4097558]}"#,
         )
         .expect("inquiry response");
         assert!(inquiry.is_approved());
         assert!(inquiry.has_live_integrations());
+
+        assert!(
+            serde_json::from_str::<PartnerMerchantInquiryResponse>(r#"{"paymob_mid": 0}"#).is_err()
+        );
     }
 }

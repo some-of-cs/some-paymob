@@ -56,7 +56,7 @@ fn sample_create_intention_params() -> CreateIntentionParams {
         .currency(Currency::EGP)
         .payment_methods(vec![PaymentMethodInput::IntegrationId(4_097_558)])
         .items(vec![
-            IntentionItem::new("Pro Plan", MinorUnitAmount::new(100_000), 1).expect("valid item"),
+            IntentionItem::new("Pro Plan", MinorUnitAmount::new(100_000)).expect("valid item"),
         ])
         .billing_data(
             BillingData::builder()
@@ -97,7 +97,7 @@ async fn us_2_1_0_create_and_update_intention_with_checkout_url_and_redaction() 
     assert_eq!(created.id, "pi_test_990011");
     assert!(!format!("{created:?}").contains("egy_csk_test_secret_990011"));
 
-    let update_params = UpdateIntentionParams::builder(&created.client_secret)
+    let update_params = UpdateIntentionParams::builder()
         .amount(MinorUnitAmount::new(150_000))
         .build()
         .expect("valid update params");
@@ -146,11 +146,11 @@ async fn us_2_1_0_and_2_2_0_environment_parity_pixel_and_affordability_guards() 
         .checkout()
         .affordability_widget(MinorUnitAmount::new(300_000), Currency::EGP)
         .expect("affordability builder")
-        .pre_selected_plan("plan_valu_6m")
+        .pre_selected_plan(6001)
         .tenure_months(6)
         .build()
         .expect("valid affordability widget");
-    assert_eq!(widget.selected_plan_id(), Some("plan_valu_6m"));
+    assert_eq!(widget.selected_plan_id(), Some(6001));
 }
 
 #[cfg(feature = "legacy-v2")]

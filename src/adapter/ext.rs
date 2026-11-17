@@ -231,11 +231,7 @@ impl PaymobExt {
         })
     }
 
-    fn resolve_headless_params<T, F>(
-        &self,
-        option_name: &str,
-        build: F,
-    ) -> Result<T, PaymobError>
+    fn resolve_headless_params<T, F>(&self, option_name: &str, build: F) -> Result<T, PaymobError>
     where
         F: FnOnce(&HeadlessExecutionOption) -> Option<Result<T, PaymobError>>,
     {

@@ -113,7 +113,10 @@ async fn ac1_capture_delegates_to_manage_service() {
     .await;
 
     let cap = client
-        .capture_payment(&UnifiedCaptureRequest::new(1001, MinorUnitAmount::new(5000)))
+        .capture_payment(&UnifiedCaptureRequest::new(
+            1001,
+            MinorUnitAmount::new(5000),
+        ))
         .await
         .expect("capture");
     assert_eq!(cap.transaction_id, 1002);

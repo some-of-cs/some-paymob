@@ -236,7 +236,7 @@ impl<'a> ScopedIntentions<'a> {
     }
 
     /// Updates a specific v1 Payment Intention identified by `client_secret` on behalf of the
-    /// scoped sub-merchant (`PUT /v1/intention/{client_secret}/`).
+    /// scoped sub-merchant (`PUT /v1/intention/{client_secret}`).
     ///
     /// # Errors
     ///
@@ -254,7 +254,7 @@ impl<'a> ScopedIntentions<'a> {
             "client_secret must not be empty",
         )?;
         crate::resources::onboarding::validate_no_control_chars("client_secret", client_secret)?;
-        let path = format!("/v1/intention/{}/", client_secret.trim());
+        let path = format!("/v1/intention/{}", client_secret.trim());
         self.scoped.send_put(&path, params).await
     }
 }
@@ -561,7 +561,7 @@ mod tests {
         assert_eq!(resp.id, "pi_scoped_123");
 
         Mock::given(method("PUT"))
-            .and(path("/v1/intention/egy_csk_test_scoped/"))
+            .and(path("/v1/intention/egy_csk_test_scoped"))
             .and(header("x-api-key", "partner_key_secret_624"))
             .and(header("x-paymob-merchant-id", "987654"))
             .and(header("x-merchant-id", "987654"))

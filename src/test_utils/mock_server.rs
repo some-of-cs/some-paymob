@@ -30,7 +30,8 @@ pub enum MockHost {
 /// Stateful responder returning an HTTP status/body for the first `fail_count`
 /// requests, then `200 OK` with `ok_body` on subsequent requests.
 struct FailThenOkResponder {
-    remaining_failures: Arc<AtomicUsize>,
+    attempts: Arc<AtomicUsize>,
+    fail_count: usize,
     failure_status: u16,
     failure_body: Value,
     retry_after_secs: Option<u64>,
@@ -39,12 +40,8 @@ struct FailThenOkResponder {
 
 impl Respond for FailThenOkResponder {
     fn respond(&self, _request: &Request) -> ResponseTemplate {
-        let prev = self
-            .remaining_failures
-            .try_update(Ordering::SeqCst, Ordering::SeqCst, |curr| {
-                curr.checked_sub(1)
-            });
-        if prev.is_ok() {
+        let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
+        if attempt < self.fail_count {
             let mut resp =
                 ResponseTemplate::new(self.failure_status).set_body_json(self.failure_body.clone());
             if let Some(secs) = self.retry_after_secs {
@@ -253,7 +250,8 @@ impl PaymobMockServer {
         ok_body: Value,
     ) {
         let responder = FailThenOkResponder {
-            remaining_failures: Arc::new(AtomicUsize::new(fail_count)),
+            attempts: Arc::new(AtomicUsize::new(0)),
+            fail_count,
             failure_status: 401,
             failure_body: json!({ "detail": "incorrect credentials" }),
             retry_after_secs: None,
@@ -304,7 +302,8 @@ impl PaymobMockServer {
         ok_body: Value,
     ) {
         let responder = FailThenOkResponder {
-            remaining_failures: Arc::new(AtomicUsize::new(fail_count)),
+            attempts: Arc::new(AtomicUsize::new(0)),
+            fail_count,
             failure_status: 429,
             failure_body: json!({
                 "status_description": status_description,

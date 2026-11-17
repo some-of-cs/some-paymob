@@ -187,10 +187,11 @@ impl PaymobExt {
             req.special_reference = Some(reference.clone());
         }
         if let Some(rules) = &self.split_description {
-            let encoded = serde_json::to_value(rules).map_err(|err| PaymobError::ValidationError {
-                field: "split_description",
-                reason: format!("failed to serialize split_description: {err}"),
-            })?;
+            let encoded =
+                serde_json::to_value(rules).map_err(|err| PaymobError::ValidationError {
+                    field: "split_description",
+                    reason: format!("failed to serialize split_description: {err}"),
+                })?;
             req.extras = Some(merge_split_extras(req.extras, encoded));
         }
         Ok(req)

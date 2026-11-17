@@ -7,7 +7,7 @@
 
 use some_paymob::prelude::*;
 
-fn custom_http_client(remote_base: &str) -> PaymobClient {
+fn try_custom_http_client(remote_base: &str) -> Result<PaymobClient, PaymobError> {
     let config = ClientConfig::builder()
         .region(PaymobRegion::Custom {
             accept_base_url: remote_base.to_owned(),
@@ -15,12 +15,13 @@ fn custom_http_client(remote_base: &str) -> PaymobClient {
             payouts_base_url: remote_base.to_owned(),
             payouts_staging_base_url: remote_base.to_owned(),
         })
-        .secret_key(SecretKey::new("egy_sk_test_whole_codebase").expect("valid sk"))
-        .api_key(ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5").expect("api key"))
+        .secret_key(SecretKey::new("egy_sk_test_whole_codebase")?)
+        .api_key(ApiKey::new(
+            "ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5",
+        )?)
         .max_retries(0)
-        .build()
-        .expect("valid config");
-    PaymobClient::new(config).expect("valid client")
+        .build()?;
+    PaymobClient::new(config)
 }
 
 #[cfg(all(
@@ -31,7 +32,16 @@ fn custom_http_client(remote_base: &str) -> PaymobClient {
 ))]
 #[tokio::test]
 async fn non_loopback_plaintext_http_is_rejected_across_all_resource_modules() {
-    let client = custom_http_client("http://example.com");
+    assert!(matches!(
+        try_custom_http_client("http://example.com"),
+        Err(PaymobError::ValidationError {
+            field: "accept_base_url",
+            ..
+        })
+    ));
+
+    let client = try_custom_http_client("http://untrusted-gateway.local")
+        .expect("mDNS .local parses at region level");
     client
         .auth()
         .accept_cache()

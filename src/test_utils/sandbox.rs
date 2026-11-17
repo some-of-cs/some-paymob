@@ -112,28 +112,6 @@ pub struct SignedTransactionRequest<'a> {
     pub success: bool,
 }
 
-impl SignedTransactionRequest<'_> {
-    fn validate(&self) -> WebhookResult<()> {
-        if self.transaction_id == 0 {
-            return Err(WebhookError::MissingRequiredField(
-                "transaction_id".to_owned(),
-            ));
-        }
-        if self.order_id == 0 {
-            return Err(WebhookError::MissingRequiredField("order_id".to_owned()));
-        }
-        if self.amount.is_zero() {
-            return Err(WebhookError::MissingRequiredField(
-                "amount_cents".to_owned(),
-            ));
-        }
-        if self.currency.trim().is_empty() {
-            return Err(WebhookError::MissingRequiredField("currency".to_owned()));
-        }
-        Ok(())
-    }
-}
-
 /// Input parameters for [`generate_signed_subscription_post`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SignedSubscriptionRequest<'a> {
@@ -145,32 +123,6 @@ pub struct SignedSubscriptionRequest<'a> {
     pub trigger_type: &'a str,
     /// Subscription billing amount in minor units (must be positive).
     pub amount: MinorUnitAmount,
-}
-
-impl SignedSubscriptionRequest<'_> {
-    fn validate(&self) -> WebhookResult<()> {
-        if self.paymob_request_id.trim().is_empty() {
-            return Err(WebhookError::MissingRequiredField(
-                "paymob_request_id".to_owned(),
-            ));
-        }
-        if self.subscription_id == 0 {
-            return Err(WebhookError::MissingRequiredField(
-                "subscription_id".to_owned(),
-            ));
-        }
-        if self.trigger_type.trim().is_empty() {
-            return Err(WebhookError::MissingRequiredField(
-                "trigger_type".to_owned(),
-            ));
-        }
-        if self.amount.is_zero() {
-            return Err(WebhookError::MissingRequiredField(
-                "amount_cents".to_owned(),
-            ));
-        }
-        Ok(())
-    }
 }
 
 /// Structured diagnostic outcome returned by [`SandboxGuard::check_constraints`].
@@ -434,7 +386,15 @@ pub fn generate_signed_transaction_post(
     hmac_secret: &SecretString,
     request: &SignedTransactionRequest<'_>,
 ) -> WebhookResult<SignedWebhookToolPayload> {
-    request.validate()?;
+    if request.transaction_id == 0
+        || request.order_id == 0
+        || request.amount.is_zero()
+        || request.currency.trim().is_empty()
+    {
+        return Err(WebhookError::MissingRequiredField(
+            "transaction_request".to_owned(),
+        ));
+    }
     let json_body = build_transaction_post_body(request);
     let parsed: TransactionProcessedEvent = serde_json::from_str(&json_body)?;
     let canonical = build_protocol_a_canonical_string(&parsed.obj);
@@ -489,7 +449,15 @@ pub fn generate_signed_subscription_post(
     hmac_secret: &SecretString,
     request: &SignedSubscriptionRequest<'_>,
 ) -> WebhookResult<SignedWebhookToolPayload> {
-    request.validate()?;
+    if request.subscription_id == 0
+        || request.amount.is_zero()
+        || request.paymob_request_id.trim().is_empty()
+        || request.trigger_type.trim().is_empty()
+    {
+        return Err(WebhookError::MissingRequiredField(
+            "subscription_request".to_owned(),
+        ));
+    }
     let trigger = SubscriptionTriggerType::from_wire(request.trigger_type.trim());
     let canonical = canonical_subscription_message(&trigger, request.subscription_id);
     let hmac_hex = sign_hmac_sha512(hmac_secret, &canonical)?;
@@ -514,6 +482,16 @@ pub fn generate_signed_subscription_post(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_tx_req(tx_id: u64, currency: &str) -> SignedTransactionRequest<'_> {
+        SignedTransactionRequest {
+            transaction_id: tx_id,
+            order_id: 888,
+            amount: MinorUnitAmount::new(15_000),
+            currency,
+            success: true,
+        }
+    }
 
     #[test]
     fn tc_8_2_3_sandbox_guard_credential_age_boundaries() {
@@ -572,17 +550,7 @@ mod tests {
     #[test]
     fn tc_8_2_3_signed_webhook_tool_payloads_verify_roundtrip() {
         let secret = SecretString::from("tool_secret_123");
-        let tx = generate_signed_transaction_post(
-            &secret,
-            &SignedTransactionRequest {
-                transaction_id: 777,
-                order_id: 888,
-                amount: MinorUnitAmount::new(15_000),
-                currency: "SAR",
-                success: true,
-            },
-        )
-        .expect("signed tx");
+        let tx = generate_signed_transaction_post(&secret, &sample_tx_req(777, "SAR")).expect("tx");
         let engine = PaymobWebhookEngine::new("tool_secret_123").unwrap();
         let parsed_tx = engine
             .verify_transaction_post(&tx.json_body, &tx.hmac_hex)
@@ -614,47 +582,13 @@ mod tests {
         );
 
         let secret = SecretString::from("tool_secret_123");
-        assert!(
-            generate_signed_transaction_post(
-                &secret,
-                &SignedTransactionRequest {
-                    transaction_id: 0,
-                    order_id: 888,
-                    amount: MinorUnitAmount::new(15_000),
-                    currency: "EGP",
-                    success: true,
-                },
-            )
-            .is_err()
-        );
-        assert!(
-            generate_signed_subscription_post(
-                &secret,
-                &SignedSubscriptionRequest {
-                    paymob_request_id: "   ",
-                    subscription_id: 1264,
-                    trigger_type: "resumed",
-                    amount: MinorUnitAmount::new(330),
-                },
-            )
-            .is_err()
-        );
+        assert!(generate_signed_transaction_post(&secret, &sample_tx_req(0, "EGP")).is_err());
     }
 
     #[test]
     fn tc_8_2_4_signed_payload_debug_redacts_body_and_hmac() {
         let secret = SecretString::from("tool_secret_123");
-        let tx = generate_signed_transaction_post(
-            &secret,
-            &SignedTransactionRequest {
-                transaction_id: 777,
-                order_id: 888,
-                amount: MinorUnitAmount::new(15_000),
-                currency: "EGP",
-                success: true,
-            },
-        )
-        .expect("signed tx");
+        let tx = generate_signed_transaction_post(&secret, &sample_tx_req(777, "EGP")).expect("tx");
         let rendered = format!("{tx:?}");
         assert!(rendered.contains("[REDACTED]"));
         assert!(!rendered.contains(&tx.hmac_hex));

@@ -338,11 +338,7 @@ fn to_payout_receipt(
         status: resp
             .disbursement_status
             .unwrap_or_else(|| "submitted".to_owned()),
-        issuer: resp
-            .issuer
-            .unwrap_or(fallback_issuer)
-            .as_str()
-            .to_owned(),
+        issuer: resp.issuer.unwrap_or(fallback_issuer).as_str().to_owned(),
     }
 }
 

@@ -132,18 +132,17 @@ pub use resources::onboarding::ScopedManage;
 pub use adapter::{
     HeadlessExecutionOption, PaymentProvider, PaymobExt, PayoutProvider, ProviderExt,
     SubscriptionProvider, UnifiedCaptureReceipt, UnifiedCaptureRequest, UnifiedPaymentSession,
-    UnifiedPaymentSessionRequest, UnifiedPayoutReceipt, UnifiedPayoutRequest,
-    UnifiedRefundReceipt, UnifiedRefundRequest, UnifiedSavedMethodChargeReceipt,
-    UnifiedSavedMethodChargeRequest, UnifiedSubscriptionRefundReceipt,
-    UnifiedSubscriptionRefundRequest, UnifiedVoidReceipt, UnifiedVoidRequest,
-    UnifiedWebhookInput, UnifiedWebhookKind, UnifiedWebhookOutcome, WebhookVerifier,
-    build_intention_params, normalize_webhook_event,
+    UnifiedPaymentSessionRequest, UnifiedPayoutReceipt, UnifiedPayoutRequest, UnifiedRefundReceipt,
+    UnifiedRefundRequest, UnifiedSavedMethodChargeReceipt, UnifiedSavedMethodChargeRequest,
+    UnifiedSubscriptionRefundReceipt, UnifiedSubscriptionRefundRequest, UnifiedVoidReceipt,
+    UnifiedVoidRequest, UnifiedWebhookInput, UnifiedWebhookKind, UnifiedWebhookOutcome,
+    WebhookVerifier, build_intention_params, normalize_webhook_event,
 };
 
 /// Crate-root re-exports of the deterministic test harness, official vectors, and sandbox guards.
 #[cfg(feature = "test-utils")]
 pub use test_utils::{
-    MockHost, OfficialWebhookVector, PaymobMockServer, SandboxCheckRequest,
-    SandboxConstraintError, SandboxGuard, SandboxPaymentChannel, SandboxReport, SandboxWarning,
-    WebhookVectorProtocol, all_official_vectors,
+    MockHost, OfficialWebhookVector, PaymobMockServer, SandboxCheckRequest, SandboxConstraintError,
+    SandboxGuard, SandboxPaymentChannel, SandboxReport, SandboxWarning, WebhookVectorProtocol,
+    all_official_vectors,
 };

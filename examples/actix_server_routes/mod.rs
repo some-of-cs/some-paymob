@@ -6,6 +6,12 @@ pub mod intentions_checkout;
 pub mod legacy_v2;
 pub mod manage_inquiries;
 pub mod quicklinks_splits;
+pub mod saved_cards;
+pub mod subscriptions_plans;
+pub mod subscriptions_lifecycle;
+pub mod subscriptions_cards_history;
+pub mod payouts_cashin;
+pub mod payouts_ops;
 
 use std::fmt;
 use std::sync::Arc;
@@ -149,4 +155,14 @@ pub fn configure_unit_1(cfg: &mut web::ServiceConfig) {
     legacy_v2::configure(cfg);
     manage_inquiries::configure(cfg);
     quicklinks_splits::configure(cfg);
+}
+
+/// Configures Unit 2 routes (Services 7–9).
+pub fn configure_unit_2(cfg: &mut web::ServiceConfig) {
+    saved_cards::configure(cfg);
+    subscriptions_plans::configure(cfg);
+    subscriptions_lifecycle::configure(cfg);
+    subscriptions_cards_history::configure(cfg);
+    payouts_cashin::configure(cfg);
+    payouts_ops::configure(cfg);
 }

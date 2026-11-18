@@ -13,7 +13,12 @@ pub async fn list_cards(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let cards = state.client.subscriptions().cards().list(path.into_inner()).await?;
+    let cards = state
+        .client
+        .subscriptions()
+        .cards()
+        .list(path.into_inner())
+        .await?;
     Ok(HttpResponse::Ok().json(json!({ "count": cards.len(), "cards": cards })))
 }
 
@@ -165,12 +170,30 @@ pub async fn refund_last_transaction(
 /// Registers Service 8c routes.
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/subscriptions/{sub_id}/cards", web::get().to(list_cards))
-        .route("/subscriptions/{sub_id}/cards/secondary", web::post().to(add_secondary_card))
-        .route("/subscriptions/{sub_id}/cards/primary", web::post().to(change_primary_card))
-        .route("/subscriptions/{sub_id}/cards/{card_id}", web::delete().to(delete_secondary_card))
-        .route("/subscriptions/{sub_id}/webhook", web::post().to(register_webhook))
-        .route("/subscriptions/{sub_id}/last-transaction", web::get().to(last_transaction))
-        .route("/subscriptions/{sub_id}/transactions", web::get().to(list_transactions))
+        .route(
+            "/subscriptions/{sub_id}/cards/secondary",
+            web::post().to(add_secondary_card),
+        )
+        .route(
+            "/subscriptions/{sub_id}/cards/primary",
+            web::post().to(change_primary_card),
+        )
+        .route(
+            "/subscriptions/{sub_id}/cards/{card_id}",
+            web::delete().to(delete_secondary_card),
+        )
+        .route(
+            "/subscriptions/{sub_id}/webhook",
+            web::post().to(register_webhook),
+        )
+        .route(
+            "/subscriptions/{sub_id}/last-transaction",
+            web::get().to(last_transaction),
+        )
+        .route(
+            "/subscriptions/{sub_id}/transactions",
+            web::get().to(list_transactions),
+        )
         .route(
             "/subscriptions/{sub_id}/refund-last-transaction",
             web::post().to(refund_last_transaction),

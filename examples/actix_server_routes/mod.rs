@@ -5,13 +5,13 @@ pub mod core_health;
 pub mod intentions_checkout;
 pub mod legacy_v2;
 pub mod manage_inquiries;
-pub mod quicklinks_splits;
-pub mod saved_cards;
-pub mod subscriptions_plans;
-pub mod subscriptions_lifecycle;
-pub mod subscriptions_cards_history;
 pub mod payouts_cashin;
 pub mod payouts_ops;
+pub mod quicklinks_splits;
+pub mod saved_cards;
+pub mod subscriptions_cards_history;
+pub mod subscriptions_lifecycle;
+pub mod subscriptions_plans;
 
 use std::fmt;
 use std::sync::Arc;

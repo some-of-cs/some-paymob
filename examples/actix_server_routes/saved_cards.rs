@@ -28,7 +28,11 @@ pub async fn pay_mit(
     if let Some(cvn) = &body.cvn {
         params = params.with_cvn(SecretString::from(cvn.clone()))?;
     }
-    let resp = state.client.saved_cards().pay_with_token_mit(&params).await?;
+    let resp = state
+        .client
+        .saved_cards()
+        .pay_with_token_mit(&params)
+        .await?;
     Ok(HttpResponse::Ok().json(json!({
         "transaction_id": resp.transaction.id,
         "success": resp.transaction.success,

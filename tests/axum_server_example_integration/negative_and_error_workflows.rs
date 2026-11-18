@@ -229,14 +229,22 @@ async fn rejects_invalid_msisdns_pans_and_14_digit_national_ids() {
         })
     ));
     assert!(matches!(
-        client.payouts().cashin().bank_card(sample_bad_pan_params()).await,
+        client
+            .payouts()
+            .cashin()
+            .bank_card(sample_bad_pan_params())
+            .await,
         Err(PaymobError::ValidationError {
             field: "bank_card_number",
             ..
         })
     ));
     assert!(matches!(
-        client.payouts().cashin().egyptian_post(sample_bad_nid_params()).await,
+        client
+            .payouts()
+            .cashin()
+            .egyptian_post(sample_bad_nid_params())
+            .await,
         Err(PaymobError::ValidationError {
             field: "national_id",
             ..

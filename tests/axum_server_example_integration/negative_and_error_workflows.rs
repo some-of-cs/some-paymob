@@ -333,7 +333,7 @@ async fn regime3_oauth2_refresh_token_and_password_fallback() {
     let server = MockServer::start().await;
     mount_oauth_fallback_mocks(&server).await;
     let creds = PayoutsCredentials::new("cid", "csec", "user", "pass").expect("valid creds");
-    let provider = PayoutsOAuthProvider::new(&server.uri(), creds).expect("valid provider");
+    let provider = PayoutsOAuthProvider::new(&server.uri(), creds.into()).expect("valid provider");
     provider.cache().store(CachedToken::new(
         "stale",
         Some(SecretString::from("expired-ref")),

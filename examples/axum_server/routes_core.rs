@@ -70,7 +70,10 @@ pub fn router() -> Router<Arc<AppState>> {
             post(inquiry_card_tokens_handler),
         )
         .route("/quicklinks", post(create_quicklink_handler))
-        .route("/quicklinks/{link_id}/cancel", post(cancel_quicklink_handler))
+        .route(
+            "/quicklinks/{link_id}/cancel",
+            post(cancel_quicklink_handler),
+        )
         .route(
             "/splits/validate-and-quote",
             post(splits_validate_and_quote_handler),
@@ -489,7 +492,8 @@ async fn inquiry_by_tx_id_handler(
 async fn inquiry_by_order_handler(
     State(state): State<Arc<AppState>>,
     Json(params): Json<TransactionInquiryParams>,
-) -> Result<Json<some_paymob::resources::inquiries::by_order::InquiredTransaction>, ApiServerError> {
+) -> Result<Json<some_paymob::resources::inquiries::by_order::InquiredTransaction>, ApiServerError>
+{
     let tx = state
         .paymob
         .inquiries()
@@ -655,9 +659,7 @@ async fn splits_validate_and_quote_handler(
     }))
 }
 
-fn validate_split_payment(
-    input: &SplitValidateAndQuoteInput,
-) -> Result<Option<u64>, PaymobError> {
+fn validate_split_payment(input: &SplitValidateAndQuoteInput) -> Result<Option<u64>, PaymobError> {
     let Some(ref split) = input.split_payment else {
         return Ok(None);
     };

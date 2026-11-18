@@ -12,6 +12,7 @@ use actix_web::web;
 /// Configures the full Actix-Web service surface.
 pub fn configure_app(cfg: &mut web::ServiceConfig) {
     routes::configure_unit_1(cfg);
+    routes::configure_unit_2(cfg);
 }
 
 #[actix_web::main]

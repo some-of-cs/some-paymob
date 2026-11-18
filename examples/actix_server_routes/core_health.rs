@@ -24,30 +24,41 @@ pub struct SandboxCheckPayload {
 }
 
 fn parse_sandbox_channel(raw: &str) -> Result<SandboxPaymentChannel, ApiServerError> {
-    match raw.trim().to_ascii_uppercase().as_str() {
+    match raw.trim().to_ascii_lowercase().as_str() {
         "card" => Ok(SandboxPaymentChannel::Card),
         "wallet" => Ok(SandboxPaymentChannel::Wallet),
         "kiosk" => Ok(SandboxPaymentChannel::Kiosk),
         "bnpl" => Ok(SandboxPaymentChannel::Bnpl),
         _ => Err(PaymobError::ValidationError {
             field: "channel".to_owned(),
-            rea|ÛÛˆ™^XİYÛ™HÙˆØ\™Ø[]Ú[ÜÚË›œ‹×ÛİÛ™Y
+            reason: "expected one of: card, wallet, kiosk, bnpl".to_owned(),
+        }
+        .into()),
+    }
+}
 
-KˆBˆš[Ê
-JKˆBŸB‚‹ËËÈÔÕÜØ[™›ŞØÚXÚØ8 %˜[Y]\ÈØ[™›ŞÜ™Y[X[YÙH[™Ú[›™[İ\Ü‚œXˆ\Ş[˜È›ˆØ[™›ŞØÚXÚÊˆ›ÙNˆÙX’œÛÛØ[™›ŞÚXÚÔ^[ØY‹ŠHOˆ™\İ[™\ÜÛœÙK\TÙ\™\‘\œ›ÜˆÂˆ]Ú[›™[H\œÙWÜØ[™›ŞØÚ[›™[
-	˜›ÙK˜Ú[›™[
-OÎÂˆ]™\ÜHØ[™›ŞİX\™˜ÚXÚ×ØÛÛœİ˜Z[Ê	”Ø[™›ŞÚXÚÔ™\]Y\İÂˆ\×ÜØ[™›Şˆ›ÙKš\×ÜØ[™›ŞˆÜ™Y[X[ØYÙWÙ^\Îˆ›ÙK˜Ü™Y[X[ØYÙWÙ^\ËˆÚ[›™[ˆJNÂˆYˆ]ÛÛYJš\œİÙ\œŠHH™\Ü™\œ›ÜœË™š\œİ
+/// `POST /sandbox/check` â€” Validates sandbox credential age and channel support.
+pub async fn sandbox_check(
+    body: web::Json<SandboxCheckPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let channel = parse_sandbox_channel(&body.channel)?;
+    let report = SandboxGuard::check_constraints(&SandboxCheckRequest {
+        is_sandbox: body.is_sandbox,
+        credential_age_days: body.credential_age_days,
+        channel,
+    });
+    if let Some(first_err) = report.errors.first() {
+        return Err(ApiServerError::Sandbox(first_err.clone()));
+    }
+    let warnings: Vec<String> = report.warnings.iter().map(ToString::to_string).collect();
+    Ok(HttpResponse::Ok().json(json!({
+        "ok": report.is_ok(),
+        "warnings": warnings,
+    })))
+}
 
-HÂˆ™]\›ˆ\œŠ\TÙ\™\‘\œ›Ü”Ø[™›Ş
-š\œİÙ\œ‹˜ÛÛ™J
-JJNÂˆBˆ]Ø\›š[™ÜÎˆ™XÏİš[™ÏˆH™\ÜØ\›š[™ÜËš]\Š
-K›X\
-Ôİš[™Î×Üİš[™ÊK˜ÛÛXİ
-
-NÂˆÚÊ™\ÜÛœÙN“ÚÊ
-KšœÛÛŠœÛÛˆJÂˆ›ÚÈˆ™\Üš\×ÛÚÊ
-KˆØ\›š[™ÜÈˆØ\›š[™ÜËˆJJJBŸB‚‹ËËÈ™YÚ\İ\œÈÙ\šXÙHH›İ]\Ë‚œXˆ›ˆÛÛ™šYİ\™JÙ™Îˆ	›]]ÙX”Ù\šXÙPÛÛ™šYÊHÂˆÙ™Ëœ›İ]J‹ÚX[‹ÙX™Ù]
-
-KÊX[ØÚXÚÊJBˆœ›İ]J‹ÜØ[™›ŞØÚXÚÈ‹ÙXœÜİ
-
-KÊØ[™›ŞØÚXÚÊJNÂŸB
+/// Registers Service 1 routes.
+pub fn configure(cfg: &mut web::ServiceConfig) {
+    cfg.route("/health", web::get().to(health_check))
+        .route("/sandbox/check", web::post().to(sandbox_check));
+}

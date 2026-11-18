@@ -682,11 +682,13 @@ fn compute_convenience_quote(
         ctx = ctx.with_bin_prefix(bin);
     }
     let fee = fee_cfg.compute_fee_for_card_cents(input.amount_cents, ctx)?;
-    let total = input.amount_cents.checked_add(fee).ok_or_else(|| {
-        PaymobError::ValidationError {
-            field: "amount_cents",
-            reason: String::from("total with convenience fee overflows u64"),
-        }
-    })?;
+    let total =
+        input
+            .amount_cents
+            .checked_add(fee)
+            .ok_or_else(|| PaymobError::ValidationError {
+                field: "amount_cents",
+                reason: String::from("total with convenience fee overflows u64"),
+            })?;
     Ok((Some(fee), Some(total)))
 }

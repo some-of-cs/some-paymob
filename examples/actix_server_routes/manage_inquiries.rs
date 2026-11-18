@@ -103,7 +103,7 @@ pub async fn inquiry_by_order(
         some_paymob::resources::inquiries::TransactionInquiryParams::by_merchant_order_id(ref_id)
     } else {
         return Err(PaymobError::ValidationError {
-            field: "order_id".to_owned(),
+            field: "order_id",
             reason: "order_id or merchant_order_id is required".to_owned(),
         }
         .into());
@@ -111,7 +111,7 @@ pub async fn inquiry_by_order(
     let tx = state
         .client
         .inquiries()
-        .by_order_or_reference(&params)
+        .by_order_or_reference(params)
         .await?;
     Ok(HttpResponse::Ok().json(json!({
         "id": tx.id,

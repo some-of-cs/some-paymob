@@ -444,7 +444,9 @@ async fn create_subscription_plan(
     Json(req): Json<CreatePlanRequest>,
 ) -> Result<Json<SubscriptionPlan>, ApiServerError> {
     let params = CreateSubscriptionPlanParams::try_from(req)?;
-    Ok(Json(state.paymob.subscriptions().plans().create(&params).await?))
+    Ok(Json(
+        state.paymob.subscriptions().plans().create(&params).await?,
+    ))
 }
 
 /// Updates an existing subscription plan by ID.
@@ -470,7 +472,12 @@ async fn list_subscription_plans(
     Query(query): Query<ListPlansQuery>,
 ) -> Result<Json<PaginatedResponse<SubscriptionPlan>>, ApiServerError> {
     Ok(Json(
-        state.paymob.subscriptions().plans().list(query.page).await?,
+        state
+            .paymob
+            .subscriptions()
+            .plans()
+            .list(query.page)
+            .await?,
     ))
 }
 
@@ -1298,7 +1305,9 @@ impl From<EgyptianPostCashinRequest> for EgyptianPostCashinParams {
 async fn generate_payouts_token(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<PayoutsTokenResponseDto>, ApiServerError> {
-    Ok(Json(state.paymob.payouts().auth().generate_token().await?.into()))
+    Ok(Json(
+        state.paymob.payouts().auth().generate_token().await?.into(),
+    ))
 }
 
 /// Refreshes an expired Payouts OAuth 2.0 access token.
@@ -1408,7 +1417,9 @@ async fn cashin_bulk(
         bank_transaction: req.bank_transaction,
         transactions: req.transactions,
     };
-    Ok(Json(state.paymob.payouts().cashin().bulk(params).await?.into()))
+    Ok(Json(
+        state.paymob.payouts().cashin().bulk(params).await?.into(),
+    ))
 }
 
 enum PayoutInquiryKind {
@@ -1458,7 +1469,13 @@ async fn inquire_budget(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<UserBudgetResponseDto>, ApiServerError> {
     Ok(Json(
-        state.paymob.payouts().inquiries().user_budget().await?.into(),
+        state
+            .paymob
+            .payouts()
+            .inquiries()
+            .user_budget()
+            .await?
+            .into(),
     ))
 }
 
@@ -1472,7 +1489,13 @@ async fn inquire_topups(
         id: query.id,
     };
     Ok(Json(
-        state.paymob.payouts().inquiries().topup(params).await?.into(),
+        state
+            .paymob
+            .payouts()
+            .inquiries()
+            .topup(params)
+            .await?
+            .into(),
     ))
 }
 

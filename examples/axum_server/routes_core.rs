@@ -497,7 +497,7 @@ async fn inquiry_by_order_handler(
     let tx = state
         .paymob
         .inquiries()
-        .by_order_or_reference(&params)
+        .by_order_or_reference(params)
         .await?;
     Ok(Json(tx))
 }

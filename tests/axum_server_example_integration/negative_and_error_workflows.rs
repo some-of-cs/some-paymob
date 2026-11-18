@@ -1,11 +1,14 @@
 #![forbid(unsafe_code)]
 //! Negative, security, and error-recovery integration tests for `axum_server` (`US-Axum` Unit 5).
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode, header};
 use secrecy::{ExposeSecret, SecretString};
-use serde_json::json;
+use serde_json::{Value, json};
+use tower::ServiceExt;
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -27,9 +30,14 @@ use some_paymob::resources::payouts::{
 use some_paymob::resources::saved_cards::cit_mit::{MitChargeParams, validate_use_cvc_with_moto};
 use some_paymob::test_utils::mock_server::{
     JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, PaymobMockServer,
+    PayoutsRateLimitMockConfig,
 };
+use some_paymob::test_utils::vectors::{OFFICIAL_TX_192036465_JSON, SAMPLE_TX_192036465_HMAC};
 use some_paymob::webhooks::idempotency::{IdempotentWebhookGuard, InMemoryWebhookDeduplicator};
 use some_paymob::webhooks::{PaymobWebhookEngine, WebhookError};
+
+use super::axum_server::{ApiServerError, AppState, build_router};
+use super::common::{mount_accept_post, mount_payouts_token, post_status, setup_test_app};
 
 fn mock_client(server: &PaymobMockServer, secret: &str) -> PaymobClient {
     let creds = PayoutsCredentials::new("cid", "csec", "user", "pass").expect("valid creds");
@@ -98,16 +106,20 @@ async fn mount_oauth_fallback_mocks(server: &MockServer) {
         .await;
 }
 
+fn build_empty_methods_intention() -> Result<CreateIntentionParams, PaymobError> {
+    CreateIntentionParams::builder()
+        .amount(10_000_u64)
+        .currency(Currency::EGP)
+        .payment_methods(vec![])
+        .billing_data(valid_billing())
+        .build()
+}
+
 #[tokio::test]
 async fn rejects_empty_and_whitespace_strings() {
     let server = PaymobMockServer::start().await;
     let client = mock_client(&server, "egy_sk_test_mock_key_123");
-    let blank_phone = BillingData::builder()
-        .first_name("Ada")
-        .last_name("Lovelace")
-        .email("ada@example.com")
-        .phone_number("   ")
-        .build();
+    let blank_phone = BillingData::builder().phone_number("   ").build();
     assert!(matches!(
         blank_phone,
         Err(PaymobError::ValidationError {
@@ -115,26 +127,20 @@ async fn rejects_empty_and_whitespace_strings() {
             ..
         })
     ));
-    let empty_methods = CreateIntentionParams::builder()
-        .amount(10_000_u64)
-        .currency(Currency::EGP)
-        .payment_methods(vec![])
-        .billing_data(valid_billing())
-        .build();
     assert!(matches!(
-        empty_methods,
+        build_empty_methods_intention(),
         Err(PaymobError::ValidationError {
             field: "payment_methods",
             ..
         })
     ));
-    let blank_aman = client
+    let aman_res = client
         .payouts()
         .cashin()
         .cancel_aman(CancelAmanParams::new(" \t "))
         .await;
     assert!(matches!(
-        blank_aman,
+        aman_res,
         Err(PaymobError::ValidationError {
             field: "transaction_id",
             ..
@@ -183,6 +189,29 @@ async fn rejects_path_traversal_and_protocol_relative_urls() {
     ));
 }
 
+fn sample_bad_pan_params() -> BankCardCashinParams {
+    BankCardCashinParams {
+        amount: 500,
+        bank_card_number: SecretString::from("4111ABCD"),
+        bank_code: String::from("CIB"),
+        bank_transaction_type: BankTransactionType::Salary,
+        full_name: String::from("Test User"),
+        client_reference_id: None,
+        customer_bears_fees: None,
+    }
+}
+
+fn sample_bad_nid_params() -> EgyptianPostCashinParams {
+    EgyptianPostCashinParams {
+        amount: 500,
+        msisdn: String::from("01023456789"),
+        full_name: String::from("Test User"),
+        national_id: SecretString::from("1234567890123"),
+        client_reference_id: None,
+        customer_bears_fees: None,
+    }
+}
+
 #[tokio::test]
 async fn rejects_invalid_msisdns_pans_and_14_digit_national_ids() {
     let server = PaymobMockServer::start().await;
@@ -199,32 +228,15 @@ async fn rejects_invalid_msisdns_pans_and_14_digit_national_ids() {
             ..
         })
     ));
-    let bad_pan = BankCardCashinParams {
-        amount: 500,
-        bank_card_number: SecretString::from("4111ABCD"),
-        bank_code: String::from("CIB"),
-        bank_transaction_type: BankTransactionType::Salary,
-        full_name: String::from("Test User"),
-        client_reference_id: None,
-        customer_bears_fees: None,
-    };
     assert!(matches!(
-        client.payouts().cashin().bank_card(bad_pan).await,
+        client.payouts().cashin().bank_card(sample_bad_pan_params()).await,
         Err(PaymobError::ValidationError {
             field: "bank_card_number",
             ..
         })
     ));
-    let bad_nid = EgyptianPostCashinParams {
-        amount: 500,
-        msisdn: String::from("01023456789"),
-        full_name: String::from("Test User"),
-        national_id: SecretString::from("1234567890123"),
-        client_reference_id: None,
-        customer_bears_fees: None,
-    };
     assert!(matches!(
-        client.payouts().cashin().egyptian_post(bad_nid).await,
+        client.payouts().cashin().egyptian_post(sample_bad_nid_params()).await,
         Err(PaymobError::ValidationError {
             field: "national_id",
             ..
@@ -293,6 +305,113 @@ fn rejects_duplicate_webhook_replay_with_409_conflict() {
 }
 
 #[tokio::test]
+async fn router_webhooks_tampered_hmac_malformed_hex_and_replay_409() {
+    let (_server, router, _state) = setup_test_app().await;
+    let tx_val: Value = serde_json::from_str(OFFICIAL_TX_192036465_JSON).expect("valid tx json");
+    let bad_hmac = format!("/webhooks/paymob?hmac={}", "0".repeat(128));
+    assert_eq!(
+        post_status(&router, &bad_hmac, tx_val.clone()).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        post_status(&router, "/webhooks/paymob?hmac=zzzz", tx_val.clone()).await,
+        StatusCode::BAD_REQUEST
+    );
+    let ok_uri = format!("/webhooks/paymob?hmac={SAMPLE_TX_192036465_HMAC}");
+    assert_eq!(
+        post_status(&router, &ok_uri, tx_val.clone()).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_status(&router, &ok_uri, tx_val).await,
+        StatusCode::CONFLICT
+    );
+}
+
+#[tokio::test]
+async fn router_rejects_moto_cvc_mismatch_and_unknown_payout_issuer_400() {
+    let (_server, router, _state) = setup_test_app().await;
+    let missing_cvn = json!({
+        "payment_token": "pk_1",
+        "saved_token": "tok_1",
+        "use_cvc_with_moto": true
+    });
+    assert_eq!(
+        post_status(&router, "/saved-cards/pay/mit", missing_cvn).await,
+        StatusCode::BAD_REQUEST
+    );
+    let unexpected_cvn = json!({
+        "payment_token": "pk_1",
+        "saved_token": "tok_1",
+        "use_cvc_with_moto": false,
+        "cvn": "123"
+    });
+    assert_eq!(
+        post_status(&router, "/saved-cards/pay/mit", unexpected_cvn).await,
+        StatusCode::BAD_REQUEST
+    );
+    let aman = json!({ "amount": 150, "msisdn": "01012345678" });
+    assert_eq!(
+        post_status(&router, "/payouts/cashin/wallet/aman", aman).await,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn router_maps_over_refund_and_live_integration_mode_to_422() {
+    let (server, router, state) = setup_test_app().await;
+    let err_json = json!({ "message": "Refund amount exceeds maximum permissible refund balance" });
+    mount_accept_post(&server, "/api/acceptance/void_refund/refund", 400, err_json).await;
+    let refund_body = json!({ "transaction_id": 192036465, "amount_cents": 999999 });
+    assert_eq!(
+        post_status(&router, "/manage/refund", refund_body).await,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let live_state = Arc::new(
+        AppState::new(state.paymob.clone())
+            .with_integration_modes([(4_097_558, EnvironmentMode::Live)]),
+    );
+    let live_router = build_router(live_state);
+    let intent = json!({ "amount": 10000, "currency": "EGP", "payment_methods": [4097558] });
+    assert_eq!(
+        post_status(&live_router, "/intentions", intent).await,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+}
+
+#[tokio::test]
+async fn router_propagates_429_retry_after_header() {
+    let server = PaymobMockServer::start().await;
+    mount_payouts_token(&server, "po_rl_1").await;
+    server
+        .mount_payouts_429_then_ok(PayoutsRateLimitMockConfig {
+            http_method: "GET",
+            endpoint_path: "/api/secure/budget/inquire/",
+            fail_count: 5,
+            retry_after_secs: Some(17),
+            status_description: "rate limit exceeded",
+            status_code: "429",
+            ok_body: json!({ "current_budget": "Your current budget is 100.00 LE" }),
+        })
+        .await;
+    let client = mock_client(&server, "egy_sk_test_mock_key_123");
+    let router = build_router(Arc::new(AppState::new(client)));
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/payouts/inquiries/budget")
+        .body(Body::empty())
+        .expect("valid request");
+    let resp = router.oneshot(req).await.expect("router oneshot");
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        resp.headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok()),
+        Some("17")
+    );
+}
+
+#[tokio::test]
 async fn regime2_401_incorrect_credentials_evicts_cache_and_retries_single_flight() {
     let server = PaymobMockServer::start().await;
     server
@@ -349,12 +468,11 @@ async fn propagates_http_429_retry_after_header() {
     assert!(err.is_rate_limited());
     assert_eq!(err.retry_after_secs(), Some(17));
     assert_eq!(map_error_to_status(&err), StatusCode::TOO_MANY_REQUESTS);
-    let resp =
-        axum::response::IntoResponse::into_response(super::axum_server::ApiServerError::from(err));
+    let resp = axum::response::IntoResponse::into_response(ApiServerError::from(err));
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(
         resp.headers()
-            .get(axum::http::header::RETRY_AFTER)
+            .get(header::RETRY_AFTER)
             .and_then(|v| v.to_str().ok()),
         Some("17")
     );
@@ -419,5 +537,22 @@ fn redacts_secrets_and_pii_in_error_responses() {
     for leak in ["egy_sk_live_secret999", "jwt_tok_123", "user@example.com"] {
         assert!(!display.contains(leak), "Display leaked {leak}");
         assert!(!debug.contains(leak), "Debug leaked {leak}");
+    }
+    for marker in [
+        "Bearer tok",
+        "Token sk",
+        "Basic Y2lk",
+        "refresh_token=1",
+        "access_token=1",
+        "password=1",
+        "client_secret=1",
+        "a@b.co",
+    ] {
+        let srv_err = ApiServerError::from(PaymobError::ValidationError {
+            field: "test",
+            reason: marker.to_owned(),
+        });
+        let resp = axum::response::IntoResponse::into_response(srv_err);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

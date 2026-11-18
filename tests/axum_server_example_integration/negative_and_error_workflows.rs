@@ -111,7 +111,7 @@ async fn rejects_empty_and_whitespace_strings() {
     assert!(matches!(
         blank_phone,
         Err(PaymobError::ValidationError {
-            field: "phone_number",
+            field: "billing_data.phone_number",
             ..
         })
     ));
@@ -155,7 +155,7 @@ async fn rejects_control_chars_in_fields_and_paths() {
     assert!(matches!(
         nul_phone,
         Err(PaymobError::ValidationError {
-            field: "phone_number",
+            field: "billing_data.phone_number",
             ..
         })
     ));

@@ -90,16 +90,14 @@ async fn test_legacy_v2_three_step_checkout_ok() {
     mock.mount_accept_auth_sequence(&["jwt_tok_123"]).await;
     mount_accept(
         &mock,
-        "POST",
-        "/api/ecommerce/orders",
+        ("POST", "/api/ecommerce/orders"),
         201,
         json!({ "id": 9001, "amount_cents": 10000, "currency": "EGP" }),
     )
     .await;
     mount_accept(
         &mock,
-        "POST",
-        "/api/acceptance/payment_keys",
+        ("POST", "/api/acceptance/payment_keys"),
         201,
         json!({ "token": "pay_key_xyz" }),
     )
@@ -129,21 +127,19 @@ async fn test_manage_refund_void_capture_ok() {
     });
     mount_accept(
         &mock,
-        "POST",
-        "/api/acceptance/void_refund/refund",
+        ("POST", "/api/acceptance/void_refund/refund"),
         200,
         tx_json.clone(),
     )
     .await;
     mount_accept(
         &mock,
-        "POST",
-        "/api/acceptance/void_refund/void",
+        ("POST", "/api/acceptance/void_refund/void"),
         200,
         tx_json.clone(),
     )
     .await;
-    mount_accept(&mock, "POST", "/api/acceptance/capture", 200, tx_json).await;
+    mount_accept(&mock, ("POST", "/api/acceptance/capture"), 200, tx_json).await;
     let state = build_test_state(&mock);
     let app = init_actix_app!(state);
 
@@ -172,8 +168,7 @@ async fn test_inquiries_and_quicklinks_splits_ok() {
     mock.mount_accept_auth_sequence(&["jwt_inq_1"]).await;
     mount_accept(
         &mock,
-        "GET",
-        "/api/acceptance/transactions/7001",
+        ("GET", "/api/acceptance/transactions/7001"),
         200,
         json!({
             "id": 7001, "success": true, "pending": false, "amount_cents": 5000, "currency": "EGP"
@@ -214,16 +209,14 @@ async fn test_saved_cards_subscriptions_and_payouts_ok() {
         .await;
     mount_accept(
         &mock,
-        "GET",
-        "/api/acceptance/subscription-plans",
+        ("GET", "/api/acceptance/subscription-plans"),
         200,
         json!({ "count": 1, "results": [{ "id": 10, "name": "Pro", "frequency": 30, "integration": 111, "is_active": true }] }),
     )
     .await;
     mount_payouts(
         &mock,
-        "GET",
-        "/api/secure/budget/inquire/",
+        ("GET", "/api/secure/budget/inquire/"),
         200,
         json!({ "current_budget": "Your current budget is 500.00 LE" }),
     )
@@ -254,8 +247,7 @@ async fn test_onboarding_and_unified_adapter_ok() {
     mount_intention_ok(&mock).await;
     mount_accept(
         &mock,
-        "GET",
-        "/api/onboarding/merchant/987654",
+        ("GET", "/api/onboarding/merchant/987654"),
         200,
         json!({ "paymob_mid": 987654, "status": "approved", "is_live": true }),
     )
@@ -290,7 +282,6 @@ async fn test_webhooks_all_5_protocols_and_replay_conflict() {
     let state = build_test_state(&mock);
     let app = init_actix_app!(state);
 
-    // Protocol A (Transaction POST), Protocol C (Card Token), Protocol D (Subscription)
     let pa = transaction_processed_192036465();
     let pc = card_token_15978654();
     let pd = subscription_1264();
@@ -316,7 +307,6 @@ async fn test_webhooks_all_5_protocols_and_replay_conflict() {
         assert_eq!(test::call_service(&app, req).await.status(), StatusCode::OK);
     }
 
-    // Protocol B (Redirect GET) + Replay 409 Conflict
     let pb = transaction_response_316004();
     let uri = format!("/webhooks/paymob/redirect?{}", pb.payload_or_query);
     let req1 = test::TestRequest::get().uri(&uri).to_request();

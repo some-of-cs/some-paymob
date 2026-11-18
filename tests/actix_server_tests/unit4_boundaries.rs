@@ -78,8 +78,7 @@ async fn test_bulk_disbursement_item_boundaries_0_1_1000_1001() {
         .await;
     mount_payouts(
         &mock,
-        "POST",
-        "/api/secure/disburse/bulk/",
+        ("POST", "/api/secure/disburse/bulk/"),
         200,
         json!({ "status": "Pending", "status_code": "200", "results": [] }),
     )

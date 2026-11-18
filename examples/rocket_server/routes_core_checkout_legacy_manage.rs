@@ -476,7 +476,7 @@ fn health(state: &State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         region: format!("{:?}", config.region()),
-        is_sandbox: config.is_sandbox(),
+        is_sandbox: config.environment() == some_paymob::core::credentials::EnvironmentMode::Test,
     })
 }
 

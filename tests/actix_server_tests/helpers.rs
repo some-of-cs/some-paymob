@@ -37,12 +37,7 @@ pub fn build_test_state(mock: &PaymobMockServer) -> web::Data<AppState> {
 }
 
 /// Mounts a JSON endpoint on the Accept Acquiring mock host (`(method, path)`).
-pub async fn mount_accept(
-    mock: &PaymobMockServer,
-    route: (&str, &str),
-    status: u16,
-    body: Value,
-) {
+pub async fn mount_accept(mock: &PaymobMockServer, route: (&str, &str), status: u16, body: Value) {
     mock.mount_json(JsonEndpointMockConfig {
         host: MockHost::Accept,
         http_method: route.0,
@@ -54,12 +49,7 @@ pub async fn mount_accept(
 }
 
 /// Mounts a JSON endpoint on the Payouts mock host (`(method, path)`).
-pub async fn mount_payouts(
-    mock: &PaymobMockServer,
-    route: (&str, &str),
-    status: u16,
-    body: Value,
-) {
+pub async fn mount_payouts(mock: &PaymobMockServer, route: (&str, &str), status: u16, body: Value) {
     mock.mount_json(JsonEndpointMockConfig {
         host: MockHost::Payouts,
         http_method: route.0,

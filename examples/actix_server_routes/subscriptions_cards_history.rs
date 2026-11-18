@@ -5,8 +5,18 @@ use actix_web::{HttpResponse, web};
 use serde::Deserialize;
 use serde_json::json;
 use some_paymob::prelude::*;
+use some_paymob::resources::subscriptions::models::SubscriptionTransaction;
 
 use super::{ApiServerError, AppState};
+
+fn sub_tx_ok(tx: &SubscriptionTransaction) -> HttpResponse {
+    HttpResponse::Ok().json(json!({
+        "id": tx.id,
+        "amount_cents": tx.amount_cents,
+        "success": tx.success,
+        "is_refunded": tx.is_refunded,
+    }))
+}
 
 /// `GET /subscriptions/{sub_id}/cards` â€” Lists cards attached to a subscription.
 pub async fn list_cards(
@@ -120,82 +130,37 @@ pub async fn last_transaction(
     let tx = state
         .client
         .subscriptions()
-        .last_transaction(path.into_inner())
-        .await?;
-    Ok(HttpResponse::Ok().json(json!({
-        "id": tx.id,
-        "amount_cents": tx.amount_cents,
-        "success": tx.success,
-        "is_refunded": tx.is_refunded,
-    })))
-}
+        .last_transaction(path.into_inner())ˆ˜]ØZ]ÎÂˆÚÊİX—İÛÚÊ	
+JBŸB‚‹ËËÈÑUÜİXœØÜš\[ÛœËŞÜİX—ÚYKİ˜[œØXİ[ÛœØ8 %\İÈİXœØÜš\[Ûˆ˜[œØXİ[ÛœË‚œXˆ\Ş[˜È›ˆ\İİ˜[œØXİ[ÛœÊˆİ]NˆÙX‘]O\İ]O‹ˆ]ˆÙX”]M‹ŠHOˆ™\İ[™\ÜÛœÙK\TÙ\™\‘\œ›ÜˆÂˆ]ÈHİ]Bˆ˜ÛY[ˆœİXœØÜš\[ÛœÊ
+Bˆ›\İİ˜[œØİ[ÛœÊ]š[×Ú[›™\Š
+JBˆ˜]ØZ]ÎÂˆÚÊ™\ÜÛœÙN“ÚÊ
+KšœÛÛŠœÛÛˆJÈ˜Ûİ[ˆË›[Š
+HJJJBŸB‚ˆÖÙ\š]™JXYË\Ù\šX[^™JWBœXˆİXİ™Y[™\İ^[ØYÂˆXˆ[[İ[ØÙ[ÎˆÜ[ÛM‹ŸB‚‹ËËÈÔÕÜİXœØÜš\[ÛœËŞÜİX—ÚYKÜ™Y[™[\İ]˜[œØXİ[Û˜8 %™Y[™ÈH]\İİXœØÜš\[ÛˆÚ\™ÙK‚œXˆ\Ş[˜È›ˆ™Y[™Û\İİ˜[œØXİ[ÛŠˆİ]NˆÙX‘]O\İ]O‹ˆ]ˆÙX”]M‹ˆ›ÙNˆÙX’œÛÛ™Y[™\İ^[ØY‹ŠHOˆ™\İ[™\ÜÛœÙK\TÙ\™\‘\œ›ÜˆÂˆ]Hİ]Bˆ˜ÛY[ˆœİXœØÜš\[ÛœÊ
+Bˆœ™Y[™Û\İİ˜[œØXİ[ÛŠ]š[×Ú[›™\Š
+K›ÙK˜[[İ[ØÙ[ÊBˆ˜]ØZ]ÎÂˆÚÊİX—İÛÚÊ	
+JBŸB‚‹ËËÈ™YÚ\İ\œÈÙ\šXÙHÈ›İ]\Ë‚œXˆ›ˆÛÛ™šYİ\™JÙ™Îˆ	›]]ÙX”Ù\šXÙPÛÛ™šYÊHÂˆÙ™Ëœ›İ]J‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYKØØ\™È‹ÙX™Ù]
 
-/// `GET /subscriptions/{sub_id}/transactions` â€” Lists subscription transactions.
-pub async fn list_transactions(
-    state: web::Data<AppState>,
-    path: web::Path<u64>,
-) -> Result<HttpResponse, ApiServerError> {
-    let txs = state
-        .client
-        .subscriptions()
-        .list_transactions(path.into_inner())
-        .await?;
-    Ok(HttpResponse::Ok().json(json!({ "count": txs.len() })))
-}
+KÊ\İØØ\™ÊJBˆœ›İ]Jˆ‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYKØØ\™ËÜÙXÛÛ™\H‹ˆÙXœÜİ
 
-#[derive(Debug, Deserialize)]
-pub struct RefundLastTxPayload {
-    pub amount_cents: Option<u64>,
-}
+KÊYÜÙXÛÛ™\WØØ\™
+Kˆ
+Bˆœ›İ]Jˆ‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYKØØ\™ËÜš[X\H‹ˆÙXœÜİ
 
-/// `POST /subscriptions/{sub_id}/refund-last-transaction` â€” Refunds the latest subscription charge.
-pub async fn refund_last_transaction(
-    state: web::Data<AppState>,
-    path: web::Path<u64>,
-    body: web::Json<RefundLastTxPayload>,
-) -> Result<HttpResponse, ApiServerError> {
-    let resp = state
-        .client
-        .subscriptions()
-        .refund_last_transaction(path.into_inner(), body.amount_cents)
-        .await?;
-    Ok(HttpResponse::Ok().json(json!({
-        "id": resp.id,
-        "success": resp.success,
-        "is_refunded": resp.is_refunded,
-        "amount_cents": resp.amount_cents,
-    })))
-}
+KÊÚ[™ÙWÜš[X\WØØ\™
+Kˆ
+Bˆœ›İ]Jˆ‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYKØØ\™ËŞØØ\™ÚYH‹ˆÙX™[]J
+KÊ[]WÜÙXÛÛ™\WØØ\™
+Kˆ
+Bˆœ›İ]Jˆ‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYKİÙXšÛÚÈ‹ˆÙXœÜİ
 
-/// Registers Service 8c routes.
-pub fn configure(cfg: &mut web::ServiceConfig) {
-    cfg.route("/subscriptions/{sub_id}/cards", web::get().to(list_cards))
-        .route(
-            "/subscriptions/{sub_id}/cards/secondary",
-            web::post().to(add_secondary_card),
-        )
-        .route(
-            "/subscriptions/{sub_id}/cards/primary",
-            web::post().to(change_primary_card),
-        )
-        .route(
-            "/subscriptions/{sub_id}/cards/{card_id}",
-            web::delete().to(delete_secondary_card),
-        )
-        .route(
-            "/subscriptions/{sub_id}/webhook",
-            web::post().to(register_webhook),
-        )
-        .route(
-            "/subscriptions/{sub_id}/last-transaction",
-            web::get().to(last_transaction),
-        )
-        .route(
-            "/subscriptions/{sub_id}/transactions",
-            web::get().to(list_transactions),
-        )
-        .route(
-            "/subscriptions/{sub_id}/refund-last-transaction",
-            web::post().to(refund_last_transaction),
-        );
-}
+KÊ™YÚ\İ\—İÙXšÛÚÊKˆ
+Bˆœ›İ]Jˆ‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYKÛ\İ]˜[œØXİ[Ûˆ‹ˆÙX™Ù]
+
+KÊ\İİ˜[œØXİ[ÛŠKˆ
+Bˆœ›İ]Jˆ‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYKİ˜[œØXİ[ÛœÈ‹ˆÙX™Ù]
+
+KÊ\İİ˜[œØXİ[ÛœÊKˆ
+Bˆœ›İ]Jˆ‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYKÜ™Y[™[\İ]˜[œØXİ[Ûˆ‹ˆÙXœÜİ
+
+KÊ™Y[™Û\İİ˜[œØXİ[ÛŠKˆ
+NÂŸB

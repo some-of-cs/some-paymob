@@ -9,12 +9,13 @@ use rocket::{Route, State, get, post, put, routes};
 use serde::{Deserialize, Serialize};
 use some_paymob::{
     CaptureParams, CreateIntentionParams, CreatePartnerApiKeyParams, Currency, IntentionResponse,
-    MinorUnitAmount, OnboardingSchemaQuery, PartnerLoginCredentials, PartnerMerchantInquiryResponse,
-    PaymentMethodInput, PaymentProvider, PayoutProvider, RefundParams, RegisterMerchantParams,
-    RegisteredMerchantResponse, SubmitOnboardingStepParams, SubmitOnboardingStepResponse,
-    SubscriptionProvider, TransactionInquiryParams, UnifiedCaptureReceipt, UnifiedCaptureRequest,
-    UnifiedPaymentSessionRequest, UnifiedPayoutReceipt, UnifiedPayoutRequest, UnifiedRefundReceipt,
-    UnifiedRefundRequest, UnifiedSavedMethodChargeReceipt, UnifiedSavedMethodChargeRequest,
+    MinorUnitAmount, OnboardingSchemaQuery, PartnerLoginCredentials,
+    PartnerMerchantInquiryResponse, PaymentMethodInput, PaymentProvider, PayoutProvider,
+    RefundParams, RegisterMerchantParams, RegisteredMerchantResponse, SubmitOnboardingStepParams,
+    SubmitOnboardingStepResponse, SubscriptionProvider, TransactionInquiryParams,
+    UnifiedCaptureReceipt, UnifiedCaptureRequest, UnifiedPaymentSessionRequest,
+    UnifiedPayoutReceipt, UnifiedPayoutRequest, UnifiedRefundReceipt, UnifiedRefundRequest,
+    UnifiedSavedMethodChargeReceipt, UnifiedSavedMethodChargeRequest,
     UnifiedSubscriptionRefundReceipt, UnifiedSubscriptionRefundRequest, UnifiedVoidReceipt,
     UnifiedVoidRequest, UnifiedWebhookInput, UnifiedWebhookOutcome, UpdateIntentionParams,
     VoidParams, WebhookVerifier,
@@ -559,7 +560,10 @@ async fn unified_create_session(
     state: &State<AppState>,
     body: Json<UnifiedPaymentSessionRequest>,
 ) -> Result<Json<UnifiedSessionDto>, ApiServerError> {
-    let session = state.client.create_payment_session(&body.into_inner()).await?;
+    let session = state
+        .client
+        .create_payment_session(&body.into_inner())
+        .await?;
     Ok(Json(UnifiedSessionDto {
         session_id: session.session_id.clone(),
         order_id: session.order_id.clone(),
@@ -601,7 +605,8 @@ async fn unified_charge_saved(
     body: Json<UnifiedSavedChargeInput>,
 ) -> Result<Json<UnifiedSavedMethodChargeReceipt>, ApiServerError> {
     let input = body.into_inner();
-    let mut req = UnifiedSavedMethodChargeRequest::new(input.payment_token, input.saved_method_token);
+    let mut req =
+        UnifiedSavedMethodChargeRequest::new(input.payment_token, input.saved_method_token);
     if let Some(cvn) = input.cvn {
         req = req.with_cvn(cvn);
     }

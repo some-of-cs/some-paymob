@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use rocket::data::ByteUnit;
 use rocket::{Build, Rocket};
 use some_paymob::webhooks::InMemoryWebhookDeduplicator;
 use some_paymob::{PaymobClient, PaymobWebhookEngine};
@@ -28,7 +29,8 @@ pub struct AppState {
 
 /// Builds the Rocket instance with all 14-service and 5-protocol routes mounted.
 pub fn build_rocket(state: AppState) -> Rocket<Build> {
-    rocket::build()
+    let figment = rocket::Config::figment().merge(("limits.json", ByteUnit::Megabyte(16)));
+    rocket::custom(figment)
         .manage(state)
         .mount("/", routes_core_checkout_legacy_manage::routes())
         .mount("/", routes_saved_cards_subscriptions_payouts::routes())

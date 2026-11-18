@@ -20,13 +20,25 @@ use crate::core::http::{HttpError, HttpRequest, HttpResponse};
 #[derive(Debug, Clone, Copy)]
 pub struct ManageService<'a> {
     client: &'a PaymobClient,
+    use_legacy_v2_bearer: bool,
 }
 
 impl<'a> ManageService<'a> {
     /// Creates a new [`ManageService`] bound to `client`.
     #[must_use]
     pub(crate) const fn new(client: &'a PaymobClient) -> Self {
-        Self { client }
+        Self {
+            client,
+            use_legacy_v2_bearer: false,
+        }
+    }
+
+    /// Configures this [`ManageService`] handle to authenticate `void` and `capture`
+    /// requests using Legacy Accept v2 Regime 2 (`Authorization: Bearer <auth_token>`).
+    #[must_use]
+    pub const fn with_legacy_v2_bearer(mut self) -> Self {
+        self.use_legacy_v2_bearer = true;
+        self
     }
 
     /// Returns the underlying [`PaymobClient`].
@@ -39,7 +51,7 @@ impl<'a> ManageService<'a> {
         &self,
         missing_secret_reason: &'static str,
     ) -> Result<HeaderValue, PaymobError> {
-        if self.client().config().use_legacy_v2_bearer_for_capture() {
+        if self.use_legacy_v2_bearer || self.client().config().use_legacy_v2_bearer_for_capture() {
             return self.resolve_legacy_v2_bearer_header().await;
         }
         self.client().regime1_token_header(missing_secret_reason)

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! Unit 1 routes: Services 1-7 (core, SandboxGuard, intentions, checkout, legacy-v2, manage, inquiries, quicklinks, splits).
 
+use rocket::response::status::Created;
 use rocket::serde::json::Json;
 use rocket::{Route, State, get, post, put, routes as rocket_routes};
 use secrecy::{ExposeSecret, SecretString};
@@ -323,18 +324,47 @@ pub struct SplitsValidateAndQuoteResponse {
     pub total_with_fee_cents: Option<u64>,
 }
 
+/// Request payload for `POST /manage/void`.
+#[derive(Debug, Deserialize)]
+pub struct ManageVoidRequest {
+    /// Identifier of the unsettled transaction to void.
+    pub transaction_id: u64,
+    /// Optional flag to authenticate via Legacy Accept v2 Regime 2 (`Bearer <auth_token>`).
+    #[serde(default)]
+    pub use_legacy_v2_bearer: Option<bool>,
+}
+
+/// Request payload for `POST /manage/capture`.
+#[derive(Debug, Deserialize)]
+pub struct ManageCaptureRequest {
+    /// Identifier of the authorized parent transaction to capture.
+    pub transaction_id: u64,
+    /// Capture amount in integer minor currency units.
+    pub amount_cents: u64,
+    /// Optional flag to authenticate via Legacy Accept v2 Regime 2 (`Bearer <auth_token>`).
+    #[serde(default)]
+    pub use_legacy_v2_bearer: Option<bool>,
+}
+
+const SANDBOX_CHANNELS: &[(&str, SandboxPaymentChannel)] = &[
+    ("card", SandboxPaymentChannel::Card),
+    ("mobile_wallet", SandboxPaymentChannel::MobileWallet),
+    ("wallet", SandboxPaymentChannel::MobileWallet),
+    ("kiosk", SandboxPaymentChannel::Kiosk),
+    ("bnpl", SandboxPaymentChannel::Bnpl),
+    ("payouts", SandboxPaymentChannel::Payouts),
+];
+
 fn parse_sandbox_channel(raw: &str) -> Result<SandboxPaymentChannel, PaymobError> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "card" => Ok(SandboxPaymentChannel::Card),
-        "mobile_wallet" | "wallet" => Ok(SandboxPaymentChannel::MobileWallet),
-        "kiosk" => Ok(SandboxPaymentChannel::Kiosk),
-        "bnpl" => Ok(SandboxPaymentChannel::Bnpl),
-        "payouts" => Ok(SandboxPaymentChannel::Payouts),
-        _ => Err(PaymobError::ValidationError {
+    let normalized = raw.trim().to_ascii_lowercase();
+    SANDBOX_CHANNELS
+        .iter()
+        .find(|(name, _)| *name == normalized)
+        .map(|(_, ch)| *ch)
+        .ok_or_else(|| PaymobError::ValidationError {
             field: "channel",
             reason: format!("unsupported sandbox channel `{raw}`"),
-        }),
-    }
+        })
 }
 
 fn format_sandbox_warning(warning: &SandboxWarning) -> String {
@@ -392,22 +422,29 @@ fn build_legacy_items(items: Vec<LegacyOrderItemInput>) -> Vec<LegacyOrderItem> 
         .collect()
 }
 
-fn apply_create_intention_optionals(
+fn apply_create_intention_content(
+    mut builder: CreateIntentionParamsBuilder,
+    req: &mut CreateIntentionRequest,
+) -> CreateIntentionParamsBuilder {
+    if let Some(items) = req.items.take() {
+        builder = builder.items(items);
+    }
+    if let Some(billing_data) = req.billing_data.take() {
+        builder = builder.billing_data(billing_data);
+    }
+    if let Some(customer) = req.customer.take() {
+        builder = builder.customer(customer);
+    }
+    if let Some(extras) = req.extras.take() {
+        builder = builder.extras(extras);
+    }
+    builder
+}
+
+fn apply_create_intention_routing(
     mut builder: CreateIntentionParamsBuilder,
     req: CreateIntentionRequest,
 ) -> CreateIntentionParamsBuilder {
-    if let Some(items) = req.items {
-        builder = builder.items(items);
-    }
-    if let Some(billing_data) = req.billing_data {
-        builder = builder.billing_data(billing_data);
-    }
-    if let Some(customer) = req.customer {
-        builder = builder.customer(customer);
-    }
-    if let Some(extras) = req.extras {
-        builder = builder.extras(extras);
-    }
     if let Some(special_reference) = req.special_reference {
         builder = builder.special_reference(special_reference);
     }
@@ -421,6 +458,14 @@ fn apply_create_intention_optionals(
         builder = builder.card_tokens(card_tokens);
     }
     builder
+}
+
+fn apply_create_intention_optionals(
+    builder: CreateIntentionParamsBuilder,
+    mut req: CreateIntentionRequest,
+) -> CreateIntentionParamsBuilder {
+    let builder = apply_create_intention_content(builder, &mut req);
+    apply_create_intention_routing(builder, req)
 }
 
 fn apply_update_intention_core(
@@ -439,22 +484,29 @@ fn apply_update_intention_core(
     if let Some(ref items) = req.items {
         builder = builder.items(items.clone());
     }
-    if let Some(ref billing_data) = req.billing_data {
-        builder = builder.billing_data(billing_data.clone());
+    builder
+}
+
+fn apply_update_intention_parties(
+    mut builder: UpdateIntentionParamsBuilder,
+    req: &mut UpdateIntentionRequest,
+) -> UpdateIntentionParamsBuilder {
+    if let Some(billing_data) = req.billing_data.take() {
+        builder = builder.billing_data(billing_data);
+    }
+    if let Some(customer) = req.customer.take() {
+        builder = builder.customer(customer);
+    }
+    if let Some(extras) = req.extras.take() {
+        builder = builder.extras(extras);
     }
     builder
 }
 
-fn apply_update_intention_meta(
+fn apply_update_intention_routing(
     mut builder: UpdateIntentionParamsBuilder,
     req: UpdateIntentionRequest,
 ) -> UpdateIntentionParamsBuilder {
-    if let Some(customer) = req.customer {
-        builder = builder.customer(customer);
-    }
-    if let Some(extras) = req.extras {
-        builder = builder.extras(extras);
-    }
     if let Some(special_reference) = req.special_reference {
         builder = builder.special_reference(special_reference);
     }
@@ -468,6 +520,14 @@ fn apply_update_intention_meta(
         builder = builder.card_tokens(card_tokens);
     }
     builder
+}
+
+fn apply_update_intention_meta(
+    builder: UpdateIntentionParamsBuilder,
+    mut req: UpdateIntentionRequest,
+) -> UpdateIntentionParamsBuilder {
+    let builder = apply_update_intention_parties(builder, &mut req);
+    apply_update_intention_routing(builder, req)
 }
 
 #[get("/health")]
@@ -502,7 +562,7 @@ fn sandbox_check(
 async fn create_intention(
     state: &State<AppState>,
     payload: Json<CreateIntentionRequest>,
-) -> Result<Json<IntentionRouteResponse>, ApiServerError> {
+) -> Result<Created<Json<IntentionRouteResponse>>, ApiServerError> {
     let req = payload.into_inner();
     let builder = CreateIntentionParams::builder()
         .amount(MinorUnitAmount::new(req.amount_cents))
@@ -510,7 +570,7 @@ async fn create_intention(
         .payment_methods(req.payment_methods.clone());
     let params = apply_create_intention_optionals(builder, req).build()?;
     let resp = state.client.intentions().create(params).await?;
-    Ok(Json(intention_to_dto(resp)))
+    Ok(Created::new("").tagged_body(Json(intention_to_dto(resp))))
 }
 
 #[put("/intentions", data = "<payload>")]
@@ -568,7 +628,7 @@ fn checkout_affordability(
 async fn legacy_create_order(
     state: &State<AppState>,
     payload: Json<CreateLegacyOrderRequest>,
-) -> Result<Json<LegacyOrder>, ApiServerError> {
+) -> Result<Created<Json<LegacyOrder>>, ApiServerError> {
     let req = payload.into_inner();
     let mut params =
         CreateLegacyOrderParams::new(req.amount_cents, Currency::from_code(&req.currency));
@@ -580,14 +640,14 @@ async fn legacy_create_order(
     }
     let service = state.client.legacy_v2()?;
     let order = service.create_order(&params).await?;
-    Ok(Json(order))
+    Ok(Created::new("").tagged_body(Json(order)))
 }
 
 #[post("/legacy/payment-keys", data = "<payload>")]
 async fn legacy_create_payment_key(
     state: &State<AppState>,
     payload: Json<CreatePaymentKeyRequest>,
-) -> Result<Json<PaymentKeyRouteResponse>, ApiServerError> {
+) -> Result<Created<Json<PaymentKeyRouteResponse>>, ApiServerError> {
     let req = payload.into_inner();
     let billing = build_legacy_billing(req.billing_data);
     let params = CreatePaymentKeyParams::new(
@@ -599,16 +659,16 @@ async fn legacy_create_payment_key(
     );
     let service = state.client.legacy_v2()?;
     let resp = service.create_payment_key(&params).await?;
-    Ok(Json(PaymentKeyRouteResponse {
+    Ok(Created::new("").tagged_body(Json(PaymentKeyRouteResponse {
         token: resp.expose_token().to_owned(),
-    }))
+    })))
 }
 
 #[post("/legacy/checkout", data = "<payload>")]
 async fn legacy_create_checkout(
     state: &State<AppState>,
     payload: Json<LegacyCheckoutRequest>,
-) -> Result<Json<LegacyCheckoutRouteResponse>, ApiServerError> {
+) -> Result<Created<Json<LegacyCheckoutRouteResponse>>, ApiServerError> {
     let req = payload.into_inner();
     let billing = build_legacy_billing(req.billing_data);
     let mut params = LegacyCheckoutParams::new(
@@ -626,11 +686,11 @@ async fn legacy_create_checkout(
     }
     let service = state.client.legacy_v2()?;
     let session = service.create_checkout(&params).await?;
-    Ok(Json(LegacyCheckoutRouteResponse {
+    Ok(Created::new("").tagged_body(Json(LegacyCheckoutRouteResponse {
         order: session.order,
         payment_token: session.payment_key.expose_token().to_owned(),
         iframe_url: session.iframe_url.to_string(),
-    }))
+    })))
 }
 
 #[post("/manage/refund", data = "<payload>")]
@@ -645,18 +705,32 @@ async fn manage_refund(
 #[post("/manage/void", data = "<payload>")]
 async fn manage_void(
     state: &State<AppState>,
-    payload: Json<VoidParams>,
+    payload: Json<ManageVoidRequest>,
 ) -> Result<Json<some_paymob::resources::manage::Transaction>, ApiServerError> {
-    let tx = state.client.manage().void(payload.into_inner()).await?;
+    let req = payload.into_inner();
+    let params = VoidParams::new(req.transaction_id);
+    let service = if req.use_legacy_v2_bearer.unwrap_or(false) {
+        state.client.manage().with_legacy_v2_bearer()
+    } else {
+        state.client.manage()
+    };
+    let tx = service.void(params).await?;
     Ok(Json(tx))
 }
 
 #[post("/manage/capture", data = "<payload>")]
 async fn manage_capture(
     state: &State<AppState>,
-    payload: Json<CaptureParams>,
+    payload: Json<ManageCaptureRequest>,
 ) -> Result<Json<some_paymob::resources::manage::Transaction>, ApiServerError> {
-    let tx = state.client.manage().capture(payload.into_inner()).await?;
+    let req = payload.into_inner();
+    let params = CaptureParams::new(req.transaction_id, req.amount_cents);
+    let service = if req.use_legacy_v2_bearer.unwrap_or(false) {
+        state.client.manage().with_legacy_v2_bearer()
+    } else {
+        state.client.manage()
+    };
+    let tx = service.capture(params).await?;
     Ok(Json(tx))
 }
 
@@ -714,21 +788,29 @@ async fn inquiry_order_card_tokens(
     Ok(Json(items))
 }
 
-fn apply_quicklink_optionals(
+fn apply_quicklink_contact(
     mut params: CreateQuickLinkParams,
-    req: CreateQuickLinkRequest,
+    req: &mut CreateQuickLinkRequest,
 ) -> CreateQuickLinkParams {
-    if let Some(description) = req.description {
-        params = params.with_description(description);
-    }
-    if let Some(full_name) = req.full_name {
+    if let Some(full_name) = req.full_name.take() {
         params = params.with_full_name(full_name);
     }
-    if let Some(email) = req.email {
+    if let Some(email) = req.email.take() {
         params = params.with_email(email);
     }
-    if let Some(phone_number) = req.phone_number {
+    if let Some(phone_number) = req.phone_number.take() {
         params = params.with_phone_number(phone_number);
+    }
+    params
+}
+
+fn apply_quicklink_optionals(
+    params: CreateQuickLinkParams,
+    mut req: CreateQuickLinkRequest,
+) -> CreateQuickLinkParams {
+    let mut params = apply_quicklink_contact(params, &mut req);
+    if let Some(description) = req.description {
+        params = params.with_description(description);
     }
     if let Some(redirection_url) = req.redirection_url {
         params = params.with_redirection_url(redirection_url);
@@ -740,7 +822,7 @@ fn apply_quicklink_optionals(
 async fn create_quicklink(
     state: &State<AppState>,
     payload: Json<CreateQuickLinkRequest>,
-) -> Result<Json<QuickLinkResponse>, ApiServerError> {
+) -> Result<Created<Json<QuickLinkResponse>>, ApiServerError> {
     let req = payload.into_inner();
     let params = CreateQuickLinkParams::new(
         req.amount_cents,
@@ -749,7 +831,7 @@ async fn create_quicklink(
     );
     let params = apply_quicklink_optionals(params, req);
     let resp = state.client.quicklinks().create(&params).await?;
-    Ok(Json(resp))
+    Ok(Created::new("").tagged_body(Json(resp)))
 }
 
 #[post("/quicklinks/<link_id>/cancel")]

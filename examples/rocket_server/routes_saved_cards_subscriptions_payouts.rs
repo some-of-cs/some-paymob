@@ -3,6 +3,7 @@
 
 use base64::Engine as _;
 use rocket::http::Status;
+use rocket::response::status::Created;
 use rocket::serde::json::Json;
 use rocket::{Route, State, delete, get, post, put, routes};
 use secrecy::{ExposeSecret, SecretString};
@@ -33,6 +34,7 @@ use some_paymob::{Currency, MinorUnitAmount};
 use super::{ApiServerError, AppState};
 
 type ApiResult<T> = Result<Json<T>, ApiServerError>;
+type ApiCreatedResult<T> = Result<Created<Json<T>>, ApiServerError>;
 
 fn bad_request(message: impl Into<String>) -> ApiServerError {
     ApiServerError {
@@ -214,7 +216,7 @@ struct UpdatePlanRequest {
 async fn create_plan(
     app_state: &State<AppState>,
     body: Json<CreatePlanRequest>,
-) -> ApiResult<SubscriptionPlan> {
+) -> ApiCreatedResult<SubscriptionPlan> {
     let req = body.into_inner();
     let params = CreateSubscriptionPlanParams {
         frequency: PlanFrequency::from_days(req.frequency)?,
@@ -237,7 +239,7 @@ async fn create_plan(
         .plans()
         .create(&params)
         .await?;
-    Ok(Json(plan))
+    Ok(Created::new("").tagged_body(Json(plan)))
 }
 
 #[put("/subscriptions/plans/<plan_id>", data = "<body>")]
@@ -439,7 +441,7 @@ struct RefundLastTransactionRequest {
 async fn create_subscription(
     app_state: &State<AppState>,
     body: Json<CreateSubscriptionRequest>,
-) -> ApiResult<SubscriptionEnrollmentResponseDto> {
+) -> ApiCreatedResult<SubscriptionEnrollmentResponseDto> {
     let req = body.into_inner();
     let params = CreateSubscriptionParams {
         subscription_plan_id: req.subscription_plan_id,
@@ -453,7 +455,7 @@ async fn create_subscription(
         extras: req.extras,
     };
     let resp = app_state.client.subscriptions().create(&params).await?;
-    Ok(Json(resp.into()))
+    Ok(Created::new("").tagged_body(Json(resp.into())))
 }
 
 #[get("/subscriptions/<sub_id>")]
@@ -872,24 +874,35 @@ async fn dispatch_wallet_cashin(
     params: MobileWalletCashinParams,
 ) -> Result<DisbursementResponse, ApiServerError> {
     let cashin = app_state.client.payouts().cashin();
-    let resp = match issuer {
-        DisburseIssuer::Vodafone => cashin.vodafone(params).await?,
-        DisburseIssuer::Etisalat => cashin.etisalat(params).await?,
-        DisburseIssuer::Orange => cashin.orange(params).await?,
-        DisburseIssuer::BankWallet => cashin.bank_wallet(params).await?,
+    let res = match issuer {
+        DisburseIssuer::Vodafone => cashin.vodafone(params).await,
+        DisburseIssuer::Etisalat => cashin.etisalat(params).await,
+        DisburseIssuer::Orange => cashin.orange(params).await,
+        DisburseIssuer::BankWallet => cashin.bank_wallet(params).await,
         _ => return Err(bad_request("issuer is not a supported mobile wallet")),
     };
-    Ok(resp)
+    Ok(res?)
 }
 
+#[allow(clippy::manual_div_ceil)]
 fn decode_proof_bytes(
     req: BankTransferTopupRequest,
 ) -> Result<(Vec<u8>, BankTransferTopupMeta), ApiServerError> {
     let bytes = match (req.proof_base64, req.to_attach_proof) {
-        (Some(b64), _) => base64::engine::general_purpose::STANDARD
-            .decode(b64.trim())
-            .map_err(|err| bad_request(format!("invalid proof_base64: {err}")))?,
-        (None, Some(raw)) => raw,
+        (Some(b64), _) => {
+            if b64.trim().len() > ((some_paymob::MAX_TOPUP_PROOF_BYTES + 2) / 3) * 4 {
+                return Err(bad_request("proof_base64 exceeds maximum allowed length"));
+            }
+            base64::engine::general_purpose::STANDARD
+                .decode(b64.trim())
+                .map_err(|err| bad_request(format!("invalid proof_base64: {err}")))?
+        }
+        (None, Some(raw)) => {
+            if raw.len() > some_paymob::MAX_TOPUP_PROOF_BYTES {
+                return Err(bad_request("to_attach_proof exceeds maximum allowed size"));
+            }
+            raw
+        }
         (None, None) => return Err(bad_request("proof_base64 or to_attach_proof is required")),
     };
     let meta = BankTransferTopupMeta {

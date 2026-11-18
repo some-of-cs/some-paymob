@@ -277,20 +277,12 @@ async fn list_plans(
     app_state: &State<AppState>,
     page: Option<u32>,
 ) -> ApiResult<PaginatedResponse<SubscriptionPlan>> {
-    let plans = app_state
-        .client
-        .subscriptions()
-        .plans()
-        .list(page)
-        .await?;
+    let plans = app_state.client.subscriptions().plans().list(page).await?;
     Ok(Json(plans))
 }
 
 #[post("/subscriptions/plans/<plan_id>/suspend")]
-async fn suspend_plan(
-    app_state: &State<AppState>,
-    plan_id: u64,
-) -> ApiResult<SubscriptionPlan> {
+async fn suspend_plan(app_state: &State<AppState>, plan_id: u64) -> ApiResult<SubscriptionPlan> {
     let plan = app_state
         .client
         .subscriptions()
@@ -301,10 +293,7 @@ async fn suspend_plan(
 }
 
 #[post("/subscriptions/plans/<plan_id>/resume")]
-async fn resume_plan(
-    app_state: &State<AppState>,
-    plan_id: u64,
-) -> ApiResult<SubscriptionPlan> {
+async fn resume_plan(app_state: &State<AppState>, plan_id: u64) -> ApiResult<SubscriptionPlan> {
     let plan = app_state
         .client
         .subscriptions()
@@ -519,28 +508,19 @@ async fn update_subscription(
 }
 
 #[post("/subscriptions/<sub_id>/suspend")]
-async fn suspend_subscription(
-    app_state: &State<AppState>,
-    sub_id: u64,
-) -> ApiResult<Subscription> {
+async fn suspend_subscription(app_state: &State<AppState>, sub_id: u64) -> ApiResult<Subscription> {
     let sub = app_state.client.subscriptions().suspend(sub_id).await?;
     Ok(Json(sub))
 }
 
 #[post("/subscriptions/<sub_id>/resume")]
-async fn resume_subscription(
-    app_state: &State<AppState>,
-    sub_id: u64,
-) -> ApiResult<Subscription> {
+async fn resume_subscription(app_state: &State<AppState>, sub_id: u64) -> ApiResult<Subscription> {
     let sub = app_state.client.subscriptions().resume(sub_id).await?;
     Ok(Json(sub))
 }
 
 #[post("/subscriptions/<sub_id>/cancel")]
-async fn cancel_subscription(
-    app_state: &State<AppState>,
-    sub_id: u64,
-) -> ApiResult<Subscription> {
+async fn cancel_subscription(app_state: &State<AppState>, sub_id: u64) -> ApiResult<Subscription> {
     let sub = app_state.client.subscriptions().cancel(sub_id).await?;
     Ok(Json(sub))
 }
@@ -550,7 +530,12 @@ async fn list_subscription_cards(
     app_state: &State<AppState>,
     sub_id: u64,
 ) -> ApiResult<Vec<SubscriptionCardDto>> {
-    let cards = app_state.client.subscriptions().cards().list(sub_id).await?;
+    let cards = app_state
+        .client
+        .subscriptions()
+        .cards()
+        .list(sub_id)
+        .await?;
     Ok(Json(cards.into_iter().map(Into::into).collect()))
 }
 
@@ -897,7 +882,9 @@ async fn dispatch_wallet_cashin(
     Ok(resp)
 }
 
-fn decode_proof_bytes(req: BankTransferTopupRequest) -> Result<(Vec<u8>, BankTransferTopupMeta), ApiServerError> {
+fn decode_proof_bytes(
+    req: BankTransferTopupRequest,
+) -> Result<(Vec<u8>, BankTransferTopupMeta), ApiServerError> {
     let bytes = match (req.proof_base64, req.to_attach_proof) {
         (Some(b64), _) => base64::engine::general_purpose::STANDARD
             .decode(b64.trim())
@@ -980,7 +967,12 @@ async fn payouts_cashin_bank_card(
         client_reference_id: req.client_reference_id,
         customer_bears_fees: req.customer_bears_fees,
     };
-    let resp = app_state.client.payouts().cashin().bank_card(params).await?;
+    let resp = app_state
+        .client
+        .payouts()
+        .cashin()
+        .bank_card(params)
+        .await?;
     Ok(Json(resp))
 }
 
@@ -1099,9 +1091,7 @@ async fn payouts_inquiries_by_reference(
 }
 
 #[get("/payouts/inquiries/budget")]
-async fn payouts_inquiries_budget(
-    app_state: &State<AppState>,
-) -> ApiResult<UserBudgetResponseDto> {
+async fn payouts_inquiries_budget(app_state: &State<AppState>) -> ApiResult<UserBudgetResponseDto> {
     let resp = app_state.client.payouts().inquiries().user_budget().await?;
     Ok(Json(resp.into()))
 }

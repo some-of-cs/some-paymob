@@ -3,12 +3,12 @@
 
 use actix_web::{HttpResponse, web};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use some_paymob::prelude::*;
 
 use super::{ApiServerError, AppState};
 
-fn card_json(c: &SubscriptionCard) -> serde_json::Value {
+fn card_json(c: &SubscriptionCard) -> Value {
     json!({
         "id": c.id,
         "masked_pan": c.masked_pan,
@@ -18,18 +18,13 @@ fn card_json(c: &SubscriptionCard) -> serde_json::Value {
     })
 }
 
-fn tx_summary(
-    id: u64,
-    amount_cents: u64,
-    success: bool,
-    is_refunded: bool,
-) -> Result<HttpResponse, ApiServerError> {
-    Ok(HttpResponse::Ok().json(json!({
+fn tx_json(id: u64, amount_cents: u64, success: bool, is_refunded: bool) -> HttpResponse {
+    HttpResponse::Ok().json(json!({
         "id": id,
         "amount_cents": amount_cents,
         "success": success,
         "is_refunded": is_refunded,
-    })))
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,19 +68,42 @@ async fn mutate_card(
     Ok(HttpResponse::Ok().json(card_json(&card)))
 }
 
+#[derive(Clone, Copy)]
+enum ReadSubOp {
+    Cards,
+    LastTx,
+    TxList,
+}
+
+async fn run_read_op(
+    state: &web::Data<AppState>,
+    sub_id: u64,
+    op: ReadSubOp,
+) -> Result<HttpResponse, ApiServerError> {
+    let svc = state.client.subscriptions();
+    match op {
+        ReadSubOp::Cards => {
+            let cards = svc.cards().list(sub_id).await?;
+            let items: Vec<Value> = cards.iter().map(card_json).collect();
+            Ok(HttpResponse::Ok().json(json!({ "count": items.len(), "cards": items })))
+        }
+        ReadSubOp::LastTx => {
+            let tx = svc.last_transaction(sub_id).await?;
+            Ok(tx_json(tx.id, tx.amount_cents, tx.success, tx.is_refunded))
+        }
+        ReadSubOp::TxList => {
+            let txs = svc.list_transactions(sub_id).await?;
+            Ok(HttpResponse::Ok().json(json!({ "count": txs.len() })))
+        }
+    }
+}
+
 /// `GET /subscriptions/{sub_id}/cards` — Lists cards attached to a subscription.
 pub async fn list_cards(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let cards = state
-        .client
-        .subscriptions()
-        .cards()
-        .list(path.into_inner())
-        .await?;
-    let items: Vec<serde_json::Value> = cards.iter().map(card_json).collect();
-    Ok(HttpResponse::Ok().json(json!({ "count": items.len(), "cards": items })))
+    run_read_op(&state, path.into_inner(), ReadSubOp::Cards).await
 }
 
 /// `POST /subscriptions/{sub_id}/cards/secondary` — Adds a secondary card to a subscription.
@@ -152,12 +170,7 @@ pub async fn last_transaction(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let tx = state
-        .client
-        .subscriptions()
-        .last_transaction(path.into_inner())
-        .await?;
-    tx_summary(tx.id, tx.amount_cents, tx.success, tx.is_refunded)
+    run_read_op(&state, path.into_inner(), ReadSubOp::LastTx).await
 }
 
 /// `GET /subscriptions/{sub_id}/transactions` — Lists subscription transactions.
@@ -165,12 +178,7 @@ pub async fn list_transactions(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let txs = state
-        .client
-        .subscriptions()
-        .list_transactions(path.into_inner())
-        .await?;
-    Ok(HttpResponse::Ok().json(json!({ "count": txs.len() })))
+    run_read_op(&state, path.into_inner(), ReadSubOp::TxList).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -189,7 +197,7 @@ pub async fn refund_last_transaction(
         .subscriptions()
         .refund_last_transaction(path.into_inner(), body.amount_cents)
         .await?;
-    tx_summary(r.id, r.amount_cents, r.success, r.is_refunded)
+    Ok(tx_json(r.id, r.amount_cents, r.success, r.is_refunded))
 }
 
 /// Registers Service 8c routes.

@@ -131,7 +131,12 @@ pub async fn list_plans(
     state: web::Data<AppState>,
     query: web::Query<PageParams>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let resp = state.client.subscriptions().plans().list(query.page).await?;
+    let resp = state
+        .client
+        .subscriptions()
+        .plans()
+        .list(query.page)
+        .await?;
     Ok(HttpResponse::Ok().json(json!({
         "count": resp.results.len(),
         "total": resp.count,

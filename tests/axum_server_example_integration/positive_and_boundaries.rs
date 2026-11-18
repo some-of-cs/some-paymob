@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use some_paymob::test_utils::mock_server::PaymobMockServer;
 use some_paymob::test_utils::vectors::{
     OFFICIAL_CARD_TOKEN_15978654_JSON, OFFICIAL_REDIRECT_316004_QUERY,
-    OFFICIAL_SUBSCRIPTION_1264_JSON, OFFICIAL_TX_192036465_JSON, SAMPLE_CARD_TOKEN_15978654_HMAC,
-    SAMPLE_TX_192036465_HMAC,
+    OFFICIAL_TX_192036465_JSON, SAMPLE_CARD_TOKEN_15978654_HMAC, SAMPLE_SUBSCRIPTION_1264_HMAC,
+    SAMPLE_SUBSCRIPTION_1264_JSON, SAMPLE_TX_192036465_HMAC,
 };
 
 use super::common::{
@@ -61,7 +61,7 @@ async fn mount_subscription_mocks(server: &PaymobMockServer) {
         "integration": 4097558,
         "amount_cents": 50000
     });
-    let sub = json!({ "id": 1264, "state": "active", "plan_id": 42 });
+    let sub = json!({ "id": 1264, "state": "active", "plan_id": 42, "amount_cents": 50000 });
     mount_accept_post(
         server,
         "/api/acceptance/subscription-plans",
@@ -117,13 +117,13 @@ async fn mount_payouts_mocks(server: &PaymobMockServer) {
     });
     mount_payouts_json(server, "POST", "/api/secure/disburse/", 200, cashin).await;
     let bulk_resp = json!({ "status": "ok", "results": [] });
-    let bulk_path = "/disburse/api/v1/disburse/bulk_transaction/";
+    let bulk_path = "/disburse/api/v1/disburse/bulk_transaction";
     mount_payouts_json(server, "POST", bulk_path, 200, bulk_resp).await;
     let inq_resp = json!({ "results": [] });
     mount_payouts_json(
         server,
         "POST",
-        "/disburse/api/v1/bulk_transaction/inquire/",
+        "/disburse/api/v1/bulk_transaction/inquire",
         200,
         inq_resp,
     )
@@ -573,7 +573,7 @@ async fn e2e_webhooks_protocols_a_b_c_d_e_ok() {
     let tok_val: Value =
         serde_json::from_str(OFFICIAL_CARD_TOKEN_15978654_JSON).expect("valid tok json");
     let sub_val: Value =
-        serde_json::from_str(OFFICIAL_SUBSCRIPTION_1264_JSON).expect("valid sub json");
+        serde_json::from_str(SAMPLE_SUBSCRIPTION_1264_JSON).expect("valid sub json");
     let pa_uri = format!("/webhooks/paymob?hmac={SAMPLE_TX_192036465_HMAC}");
     assert_eq!(post_status(&router, &pa_uri, tx_val).await, StatusCode::OK);
     let pb_uri = format!("/webhooks/paymob/redirect?{OFFICIAL_REDIRECT_316004_QUERY}");
@@ -581,7 +581,7 @@ async fn e2e_webhooks_protocols_a_b_c_d_e_ok() {
     let pc_uri = format!("/webhooks/paymob?hmac={SAMPLE_CARD_TOKEN_15978654_HMAC}");
     assert_eq!(post_status(&router, &pc_uri, tok_val).await, StatusCode::OK);
     assert_eq!(
-        post_status(&router, "/webhooks/paymob", sub_val).await,
+        post_status(&router, &format!("/webhooks/paymob?hmac={SAMPLE_SUBSCRIPTION_1264_HMAC}"), sub_val).await,
         StatusCode::OK
     );
     let payout_body = json!({
@@ -630,7 +630,7 @@ async fn boundary_bulk_disbursements_0_1_1000_1001() {
     mount_payouts_json(
         &server,
         "POST",
-        "/disburse/api/v1/disburse/bulk_transaction/",
+        "/disburse/api/v1/disburse/bulk_transaction",
         200,
         ok_resp,
     )
@@ -659,7 +659,7 @@ async fn boundary_payout_inquiry_ids_0_1_500_501() {
     mount_payouts_json(
         &server,
         "POST",
-        "/disburse/api/v1/bulk_transaction/inquire/",
+        "/disburse/api/v1/bulk_transaction/inquire",
         200,
         ok_resp,
     )

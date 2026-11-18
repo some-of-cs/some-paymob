@@ -363,9 +363,8 @@ async fn propagates_http_429_retry_after_header() {
     assert!(err.is_rate_limited());
     assert_eq!(err.retry_after_secs(), Some(17));
     assert_eq!(map_error_to_status(&err), StatusCode::TOO_MANY_REQUESTS);
-    let resp = axum::response::IntoResponse::into_response(
-        super::axum_server::ApiServerError::from(err),
-    );
+    let resp =
+        axum::response::IntoResponse::into_response(super::axum_server::ApiServerError::from(err));
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(
         resp.headers()

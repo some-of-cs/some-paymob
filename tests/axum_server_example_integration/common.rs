@@ -9,7 +9,6 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
-use some_paymob::core::auth::payouts_oauth::PayoutsCredentials;
 use some_paymob::core::credentials::{
     ApiKey, HmacSecret, PartnerCredentials, PublicKey, SecretKey,
 };
@@ -35,7 +34,7 @@ pub async fn setup_test_app() -> (PaymobMockServer, Router, Arc<AppState>) {
                 .expect("valid payouts credentials"),
         )
         .partner_credentials(
-            PartnerCredentials::new("partner_user", "partner_pass")
+            PartnerCredentials::new("partner_user")
                 .expect("valid partner credentials"),
         )
         .timeout(Duration::from_secs(5))

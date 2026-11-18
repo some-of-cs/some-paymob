@@ -10,12 +10,12 @@ use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use some_paymob::core::auth::cache::CachedToken;
-use some_paymob::core::auth::payouts_oauth::{
-    PAYOUTS_OAUTH_TOKEN_PATH, PayoutsCredentials, PayoutsOAuthProvider,
-};
+use some_paymob::core::auth::payouts_oauth::{PAYOUTS_OAUTH_TOKEN_PATH, PayoutsOAuthProvider};
 use some_paymob::core::client::PaymobClient;
 use some_paymob::core::config::ClientConfig;
-use some_paymob::core::credentials::{ApiKey, EnvironmentMode, HmacSecret, SecretKey};
+use some_paymob::core::credentials::{
+    ApiKey, EnvironmentMode, HmacSecret, PayoutsCredentials, SecretKey,
+};
 use some_paymob::core::error::PaymobError;
 use some_paymob::core::types::Currency;
 use some_paymob::resources::intentions::{BillingData, CreateIntentionParams, PaymentMethodInput};

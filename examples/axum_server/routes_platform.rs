@@ -1038,7 +1038,8 @@ async fn unified_webhook(
     raw_body: String,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let input = UnifiedWebhookInput::new(&raw_body, query.hmac.as_deref());
-    Ok(ok_serialized(
-        WebhookVerifier::verify_webhook(client_ref(&state), &input)?,
-    ))
+    Ok(ok_serialized(WebhookVerifier::verify_webhook(
+        client_ref(&state),
+        &input,
+    )?))
 }

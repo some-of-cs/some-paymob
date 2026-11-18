@@ -62,7 +62,10 @@ fn merchant_scoped_router() -> Router<Arc<AppState>> {
             "/merchants/{mid}/transactions/{tx_id}",
             get(merchant_get_transaction),
         )
-        .route("/merchants/{mid}/orders/inquiry", post(merchant_order_inquiry))
+        .route(
+            "/merchants/{mid}/orders/inquiry",
+            post(merchant_order_inquiry),
+        )
         .route("/merchants/{mid}/manage/refund", post(merchant_refund))
         .route("/merchants/{mid}/manage/void", post(merchant_void))
         .route("/merchants/{mid}/manage/capture", post(merchant_capture))
@@ -312,7 +315,12 @@ async fn onboarding_submit_step(
     if let Some(partner) = body.partner {
         params = params.with_partner(partner);
     }
-    let resp = state.client.onboarding().flow().submit_step(&params).await?;
+    let resp = state
+        .client
+        .onboarding()
+        .flow()
+        .submit_step(&params)
+        .await?;
     Ok((StatusCode::OK, Json(json!(resp))))
 }
 
@@ -838,10 +846,8 @@ async fn unified_capture(
     State(state): State<Arc<AppState>>,
     Json(body): Json<UnifiedCapturePayload>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
-    let req = UnifiedCaptureRequest::new(
-        body.transaction_id,
-        MinorUnitAmount::new(body.amount_cents),
-    );
+    let req =
+        UnifiedCaptureRequest::new(body.transaction_id, MinorUnitAmount::new(body.amount_cents));
     let receipt = PaymentProvider::capture_payment(client_ref(&state), &req).await?;
     Ok((StatusCode::OK, Json(json!(receipt))))
 }

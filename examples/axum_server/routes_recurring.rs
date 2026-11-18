@@ -63,7 +63,10 @@ fn subscription_plans_router() -> Router<Arc<AppState>> {
             "/subscriptions/plans",
             post(create_subscription_plan).get(list_subscription_plans),
         )
-        .route("/subscriptions/plans/{plan_id}", put(update_subscription_plan))
+        .route(
+            "/subscriptions/plans/{plan_id}",
+            put(update_subscription_plan),
+        )
         .route(
             "/subscriptions/plans/{plan_id}/suspend",
             post(suspend_subscription_plan),
@@ -76,19 +79,28 @@ fn subscription_plans_router() -> Router<Arc<AppState>> {
 
 fn subscriptions_lifecycle_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/subscriptions", post(create_subscription).get(list_subscriptions))
+        .route(
+            "/subscriptions",
+            post(create_subscription).get(list_subscriptions),
+        )
         .route(
             "/subscriptions/{sub_id}",
             get(retrieve_subscription).put(update_subscription),
         )
-        .route("/subscriptions/{sub_id}/suspend", post(suspend_subscription))
+        .route(
+            "/subscriptions/{sub_id}/suspend",
+            post(suspend_subscription),
+        )
         .route("/subscriptions/{sub_id}/resume", post(resume_subscription))
         .route("/subscriptions/{sub_id}/cancel", post(cancel_subscription))
 }
 
 fn subscription_cards_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/subscriptions/{sub_id}/cards", get(list_subscription_cards))
+        .route(
+            "/subscriptions/{sub_id}/cards",
+            get(list_subscription_cards),
+        )
         .route(
             "/subscriptions/{sub_id}/cards/secondary",
             post(add_secondary_card),
@@ -133,8 +145,14 @@ fn payouts_router() -> Router<Arc<AppState>> {
         .route("/payouts/cashin/egyptian-post", post(cashin_egyptian_post))
         .route("/payouts/cashin/aman/cancel", post(cancel_aman_cashin))
         .route("/payouts/cashin/bulk", post(cashin_bulk))
-        .route("/payouts/inquiries/transactions", post(inquire_transactions))
-        .route("/payouts/inquiries/by-reference", post(inquire_by_reference))
+        .route(
+            "/payouts/inquiries/transactions",
+            post(inquire_transactions),
+        )
+        .route(
+            "/payouts/inquiries/by-reference",
+            post(inquire_by_reference),
+        )
         .route("/payouts/inquiries/budget", get(inquire_budget))
         .route("/payouts/inquiries/topups", get(inquire_topups))
         .route("/payouts/topups/bank-transfer", post(topup_bank_transfer))
@@ -214,7 +232,11 @@ async fn pay_with_token_mit(
     let cvn_secret = req.cvn.map(SecretString::from);
     validate_use_cvc_with_moto(req.use_cvc_with_moto, cvn_secret.as_ref())?;
     let params = build_mit_pay_params(req.payment_token, req.saved_token, cvn_secret)?;
-    let resp = state.client.saved_cards().pay_with_token_mit(&params).await?;
+    let resp = state
+        .client
+        .saved_cards()
+        .pay_with_token_mit(&params)
+        .await?;
     Ok(Json(resp.into()))
 }
 
@@ -398,7 +420,12 @@ async fn update_subscription_plan(
         fee: req.fee,
     };
     params.validate()?;
-    let plan = state.client.subscriptions().plans().update(plan_id, &params).await?;
+    let plan = state
+        .client
+        .subscriptions()
+        .plans()
+        .update(plan_id, &params)
+        .await?;
     Ok(Json(plan))
 }
 
@@ -407,7 +434,12 @@ async fn list_subscription_plans(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListPlansQuery>,
 ) -> Result<Json<PaginatedResponse<SubscriptionPlan>>, ApiServerError> {
-    let plans = state.client.subscriptions().plans().list(query.page).await?;
+    let plans = state
+        .client
+        .subscriptions()
+        .plans()
+        .list(query.page)
+        .await?;
     Ok(Json(plans))
 }
 
@@ -416,7 +448,12 @@ async fn suspend_subscription_plan(
     State(state): State<Arc<AppState>>,
     Path(plan_id): Path<u64>,
 ) -> Result<Json<SubscriptionPlan>, ApiServerError> {
-    let plan = state.client.subscriptions().plans().suspend(plan_id).await?;
+    let plan = state
+        .client
+        .subscriptions()
+        .plans()
+        .suspend(plan_id)
+        .await?;
     Ok(Json(plan))
 }
 
@@ -1162,7 +1199,12 @@ async fn refresh_payouts_token(
     Json(req): Json<RefreshPayoutsTokenRequest>,
 ) -> Result<Json<PayoutsTokenResponseDto>, ApiServerError> {
     let refresh = SecretString::from(req.refresh_token);
-    let token = state.client.payouts().auth().refresh_token(&refresh).await?;
+    let token = state
+        .client
+        .payouts()
+        .auth()
+        .refresh_token(&refresh)
+        .await?;
     Ok(Json(token.into()))
 }
 
@@ -1246,7 +1288,12 @@ async fn cashin_egyptian_post(
         client_reference_id: req.client_reference_id,
         customer_bears_fees: req.customer_bears_fees,
     };
-    let resp = state.client.payouts().cashin().egyptian_post(params).await?;
+    let resp = state
+        .client
+        .payouts()
+        .cashin()
+        .egyptian_post(params)
+        .await?;
     Ok(Json(resp))
 }
 
@@ -1283,7 +1330,12 @@ async fn inquire_transactions(
         is_bulk: req.is_bulk,
         bank_transactions: req.bank_transactions,
     };
-    let resp = state.client.payouts().inquiries().transactions(params).await?;
+    let resp = state
+        .client
+        .payouts()
+        .inquiries()
+        .transactions(params)
+        .await?;
     Ok(Json(resp.into()))
 }
 
@@ -1296,7 +1348,12 @@ async fn inquire_by_reference(
         client_reference_ids: req.client_reference_ids,
         bank_transactions: req.bank_transactions,
     };
-    let resp = state.client.payouts().inquiries().by_reference(params).await?;
+    let resp = state
+        .client
+        .payouts()
+        .inquiries()
+        .by_reference(params)
+        .await?;
     Ok(Json(resp.into()))
 }
 

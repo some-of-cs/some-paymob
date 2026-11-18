@@ -5,6 +5,7 @@ use rocket::serde::json::Json;
 use rocket::{Route, State, get, post, put, routes as rocket_routes};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
+use some_paymob::resources::inquiries::TransactionInquiryParams;
 use some_paymob::test_utils::sandbox::{
     SandboxCheckRequest, SandboxGuard, SandboxPaymentChannel, SandboxWarning,
 };
@@ -15,10 +16,10 @@ use some_paymob::{
     IntentionResponse, LegacyBillingData, LegacyCheckoutParams, LegacyOrder, LegacyOrderItem,
     MinorUnitAmount, OrderInquiryResponse, PaymentMethodInput, PaymobError, PixelConfig,
     PixelPaymentMethod, QuickLinkResponse, RefundParams, SplitDescription, SplitRecipientRule,
-    TransactionInquiryParams, UpdateIntentionParams, UpdateIntentionParamsBuilder, VoidParams,
+    UpdateIntentionParams, UpdateIntentionParamsBuilder, VoidParams,
 };
 
-use crate::{ApiServerError, AppState};
+use super::{ApiServerError, AppState};
 
 /// Response returned by `GET /health`.
 #[derive(Debug, Serialize)]
@@ -636,7 +637,7 @@ async fn legacy_create_checkout(
 async fn manage_refund(
     state: &State<AppState>,
     payload: Json<RefundParams>,
-) -> Result<Json<some_paymob::Transaction>, ApiServerError> {
+) -> Result<Json<some_paymob::resources::manage::Transaction>, ApiServerError> {
     let tx = state.client.manage().refund(payload.into_inner()).await?;
     Ok(Json(tx))
 }
@@ -645,7 +646,7 @@ async fn manage_refund(
 async fn manage_void(
     state: &State<AppState>,
     payload: Json<VoidParams>,
-) -> Result<Json<some_paymob::Transaction>, ApiServerError> {
+) -> Result<Json<some_paymob::resources::manage::Transaction>, ApiServerError> {
     let tx = state.client.manage().void(payload.into_inner()).await?;
     Ok(Json(tx))
 }
@@ -654,7 +655,7 @@ async fn manage_void(
 async fn manage_capture(
     state: &State<AppState>,
     payload: Json<CaptureParams>,
-) -> Result<Json<some_paymob::Transaction>, ApiServerError> {
+) -> Result<Json<some_paymob::resources::manage::Transaction>, ApiServerError> {
     let tx = state.client.manage().capture(payload.into_inner()).await?;
     Ok(Json(tx))
 }

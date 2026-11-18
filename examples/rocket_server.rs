@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use rocket::{Build, Rocket};
-use some_paymob::{InMemoryWebhookDeduplicator, PaymobClient, PaymobWebhookEngine};
+use some_paymob::webhooks::InMemoryWebhookDeduplicator;
+use some_paymob::{PaymobClient, PaymobWebhookEngine};
 
 #[path = "rocket_server/error.rs"]
 pub mod error;

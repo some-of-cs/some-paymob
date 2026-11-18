@@ -7,12 +7,13 @@ use rocket::request::{FromRequest, Outcome, Request};
 use rocket::serde::json::Json;
 use rocket::{Route, State, get, post, put, routes};
 use serde::{Deserialize, Serialize};
+use some_paymob::resources::inquiries::TransactionInquiryParams;
 use some_paymob::{
     CaptureParams, CreateIntentionParams, CreatePartnerApiKeyParams, Currency, IntentionResponse,
     MinorUnitAmount, OnboardingSchemaQuery, PartnerLoginCredentials,
     PartnerMerchantInquiryResponse, PaymentMethodInput, PaymentProvider, PayoutProvider,
     RefundParams, RegisterMerchantParams, RegisteredMerchantResponse, SubmitOnboardingStepParams,
-    SubmitOnboardingStepResponse, SubscriptionProvider, TransactionInquiryParams,
+    SubmitOnboardingStepResponse, SubscriptionProvider,
     UnifiedCaptureReceipt, UnifiedCaptureRequest, UnifiedPaymentSessionRequest,
     UnifiedPayoutReceipt, UnifiedPayoutRequest, UnifiedRefundReceipt, UnifiedRefundRequest,
     UnifiedSavedMethodChargeReceipt, UnifiedSavedMethodChargeRequest,

@@ -134,7 +134,7 @@ async fn post_raw(rocket: &Client, uri: &str, raw_body: &str) -> Status {
     rocket
         .post(uri)
         .header(ContentType::JSON)
-        .body(raw_body.to_owned())
+        .body(raw_body)
         .dispatch()
         .await
         .status()

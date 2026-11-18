@@ -693,7 +693,13 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
     let proto_e = post_json(
         &rocket,
         "/webhooks/paymob",
-        &json!({ "transaction_id": "tx_e1", "issuer": "vodafone", "disbursement_status": "successful", "amount": 200 }),
+        &json!({
+            "transaction_id": "tx_e1",
+            "issuer": "vodafone",
+            "amount_cents": 20_000,
+            "currency": "EGP",
+            "status": "successful"
+        }),
     )
     .await;
     assert_eq!(proto_e, Status::Ok);

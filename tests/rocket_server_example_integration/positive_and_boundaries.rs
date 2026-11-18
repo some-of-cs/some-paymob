@@ -639,7 +639,10 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let tx_vec = transaction_processed_192036465();
     let proto_a = rocket
-        .post(format!("/webhooks/paymob?hmac={}", tx_vec.expected_hmac_hex))
+        .post(format!(
+            "/webhooks/paymob?hmac={}",
+            tx_vec.expected_hmac_hex
+        ))
         .header(ContentType::JSON)
         .body(tx_vec.payload_or_query)
         .dispatch()

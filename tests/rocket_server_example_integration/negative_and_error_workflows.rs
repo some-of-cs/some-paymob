@@ -14,7 +14,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use some_paymob::core::auth::accept_jwt::AcceptJwtProvider;
 use some_paymob::core::auth::cache::{CachedToken, TokenCache};
 use some_paymob::core::auth::payouts_oauth::{PAYOUTS_OAUTH_TOKEN_PATH, PayoutsOAuthProvider};
-use some_paymob::core::credentials::{ApiKey, HmacSecret, PayoutsCredentials, PublicKey, SecretKey};
+use some_paymob::core::credentials::{
+    ApiKey, HmacSecret, PayoutsCredentials, PublicKey, SecretKey,
+};
 use some_paymob::prelude::*;
 use some_paymob::resources::manage::RefundParams;
 use some_paymob::resources::payouts::{
@@ -238,9 +240,8 @@ async fn recovery_regime2_401_cache_eviction_and_single_flight_retry() {
         })
         .await;
 
-    let provider =
-        AcceptJwtProvider::new(&server.accept_uri(), SecretString::from("test_api_key"))
-            .expect("valid provider");
+    let provider = AcceptJwtProvider::new(&server.accept_uri(), SecretString::from("test_api_key"))
+        .expect("valid provider");
     let http = reqwest::Client::new();
     let url = format!(
         "{}/api/ecommerce/orders/transaction_inquiry",
@@ -295,9 +296,13 @@ async fn recovery_regime3_oauth2_refresh_token_and_password_fallback() {
         Some(SecretString::from("stale-ref")),
         Duration::from_secs(5),
     ));
-    let provider =
-        PayoutsOAuthProvider::with_client_and_cache(&server.uri(), creds, reqwest::Client::new(), cache)
-            .expect("valid oauth provider");
+    let provider = PayoutsOAuthProvider::with_client_and_cache(
+        &server.uri(),
+        creds,
+        reqwest::Client::new(),
+        cache,
+    )
+    .expect("valid oauth provider");
     let tok = provider
         .access_token()
         .await

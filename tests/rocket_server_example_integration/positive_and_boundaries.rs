@@ -29,8 +29,7 @@ fn build_test_client(server: &PaymobMockServer) -> PaymobClient {
         .secret_key(SecretKey::new("egy_sk_test_rocket_unit4").expect("valid secret key"))
         .public_key(PublicKey::new("egy_pk_test_rocket_unit4").expect("valid public key"))
         .api_key(
-            ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5")
-                .expect("valid api key"),
+            ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5").expect("valid api key"),
         )
         .hmac_secret(HmacSecret::new(SAMPLE_HMAC_SECRET).expect("valid hmac secret"))
         .max_retries(0)
@@ -58,7 +57,13 @@ async fn tracked_rocket(server: &PaymobMockServer) -> Client {
         .expect("valid tracked rocket client")
 }
 
-async fn mount_accept(server: &PaymobMockServer, method: &str, path: &str, status: u16, body: Value) {
+async fn mount_accept(
+    server: &PaymobMockServer,
+    method: &str,
+    path: &str,
+    status: u16,
+    body: Value,
+) {
     server
         .mount_json(JsonEndpointMockConfig {
             host: MockHost::Accept,
@@ -366,7 +371,12 @@ async fn e2e_inquiries_tx_order_and_card_tokens_return_200() {
         Status::Ok
     );
     assert_eq!(
-        post_json(&rocket, "/inquiries/by-order", &json!({ "order_id": 217503754 })).await,
+        post_json(
+            &rocket,
+            "/inquiries/by-order",
+            &json!({ "order_id": 217503754 })
+        )
+        .await,
         Status::Ok
     );
     assert_eq!(
@@ -603,7 +613,10 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let tx_vec = transaction_processed_192036465();
     let proto_a = rocket
-        .post(format!("/webhooks/transaction?hmac={}", tx_vec.expected_hmac_hex))
+        .post(format!(
+            "/webhooks/transaction?hmac={}",
+            tx_vec.expected_hmac_hex
+        ))
         .header(ContentType::JSON)
         .body(tx_vec.payload_or_query)
         .dispatch()
@@ -621,7 +634,10 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let tok_vec = card_token_15978654();
     let proto_c = rocket
-        .post(format!("/webhooks/card-token?hmac={}", tok_vec.expected_hmac_hex))
+        .post(format!(
+            "/webhooks/card-token?hmac={}",
+            tok_vec.expected_hmac_hex
+        ))
         .header(ContentType::JSON)
         .body(tok_vec.payload_or_query)
         .dispatch()
@@ -697,7 +713,11 @@ async fn boundary_bulk_disbursements_0_1_1000_1001_items() {
     assert!(svc.bulk(one).await.is_ok());
 
     let thousand: Vec<_> = (0..1_000).map(sample_bulk_item).collect();
-    assert!(svc.bulk(BulkDisbursementParams::new(thousand)).await.is_ok());
+    assert!(
+        svc.bulk(BulkDisbursementParams::new(thousand))
+            .await
+            .is_ok()
+    );
 
     let over: Vec<_> = (0..1_001).map(sample_bulk_item).collect();
     assert!(matches!(
@@ -721,13 +741,18 @@ async fn boundary_inquiry_ids_0_1_500_501() {
     let svc = client.payouts().inquiries();
 
     assert!(matches!(
-        svc.transactions(TransactionInquiryParams::new(vec![])).await,
+        svc.transactions(TransactionInquiryParams::new(vec![]))
+            .await,
         Err(PaymobError::ValidationError { .. })
     ));
 
     for count in [1usize, 500, 501] {
         let ids = (0..count).map(|i| format!("tx_{i}")).collect();
-        assert!(svc.transactions(TransactionInquiryParams::new(ids)).await.is_ok());
+        assert!(
+            svc.transactions(TransactionInquiryParams::new(ids))
+                .await
+                .is_ok()
+        );
     }
 }
 
@@ -777,7 +802,10 @@ fn boundary_split_payments_cards_and_bps_not_10000() {
     let under_bps = SplitDescription::new(vec![SplitRecipientRule::percentage_bps("s1", 9_999)]);
     assert!(under_bps.is_ok());
     assert_ne!(
-        under_bps.expect("valid").total_percentage_bps().expect("bps"),
+        under_bps
+            .expect("valid")
+            .total_percentage_bps()
+            .expect("bps"),
         10_000
     );
     assert!(matches!(

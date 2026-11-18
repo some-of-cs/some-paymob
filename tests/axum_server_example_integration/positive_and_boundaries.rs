@@ -62,15 +62,48 @@ async fn mount_subscription_mocks(server: &PaymobMockServer) {
         "amount_cents": 50000
     });
     let sub = json!({ "id": 1264, "state": "active", "plan_id": 42 });
-    mount_accept_post(server, "/api/acceptance/subscription-plans", 201, plan.clone()).await;
+    mount_accept_post(
+        server,
+        "/api/acceptance/subscription-plans",
+        201,
+        plan.clone(),
+    )
+    .await;
     let plans = json!({ "results": [plan], "count": 1 });
     mount_accept_get(server, "/api/acceptance/subscription-plans", plans).await;
-    mount_accept_post(server, "/api/acceptance/subscriptions/1264/suspend", 200, sub.clone()).await;
-    mount_accept_post(server, "/api/acceptance/subscriptions/1264/resume", 200, sub).await;
-    mount_accept_get(server, "/api/acceptance/subscriptions/1264/cards", json!([])).await;
-    mount_accept_get(server, "/api/acceptance/subscriptions/1264/transactions", json!([])).await;
+    mount_accept_post(
+        server,
+        "/api/acceptance/subscriptions/1264/suspend",
+        200,
+        sub.clone(),
+    )
+    .await;
+    mount_accept_post(
+        server,
+        "/api/acceptance/subscriptions/1264/resume",
+        200,
+        sub,
+    )
+    .await;
+    mount_accept_get(
+        server,
+        "/api/acceptance/subscriptions/1264/cards",
+        json!([]),
+    )
+    .await;
+    mount_accept_get(
+        server,
+        "/api/acceptance/subscriptions/1264/transactions",
+        json!([]),
+    )
+    .await;
     let tx1 = sample_transaction_response(998877, 50000);
-    mount_accept_get(server, "/api/acceptance/subscriptions/1264/last-transaction", tx1).await;
+    mount_accept_get(
+        server,
+        "/api/acceptance/subscriptions/1264/last-transaction",
+        tx1,
+    )
+    .await;
     let tx2 = sample_transaction_response(998878, 50000);
     mount_accept_post(server, "/api/acceptance/void_refund/refund", 200, tx2).await;
 }
@@ -87,8 +120,14 @@ async fn mount_payouts_mocks(server: &PaymobMockServer) {
     let bulk_path = "/disburse/api/v1/disburse/bulk_transaction/";
     mount_payouts_json(server, "POST", bulk_path, 200, bulk_resp).await;
     let inq_resp = json!({ "results": [] });
-    mount_payouts_json(server, "POST", "/disburse/api/v1/bulk_transaction/inquire/", 200, inq_resp)
-        .await;
+    mount_payouts_json(
+        server,
+        "POST",
+        "/disburse/api/v1/bulk_transaction/inquire/",
+        200,
+        inq_resp,
+    )
+    .await;
     let budget = json!({ "current_budget": "Your current budget is 5000.00 LE" });
     mount_payouts_json(server, "GET", "/api/secure/budget/inquire/", 200, budget).await;
     let topup = json!({ "status": "pending", "id": 101 });
@@ -100,8 +139,13 @@ async fn mount_onboarding_mocks(server: &PaymobMockServer) {
     mount_accept_post(server, "/api/onboarding/register", 201, reg).await;
     let schema = json!({ "partner": "KeyPartner", "resubmission": false, "steps": [] });
     mount_accept_get(server, "/api/onboarding/flow/schema", schema).await;
-    mount_accept_post(server, "/api/onboarding/flow/step", 200, json!({ "status": "SUBMITTED" }))
-        .await;
+    mount_accept_post(
+        server,
+        "/api/onboarding/flow/step",
+        200,
+        json!({ "status": "SUBMITTED" }),
+    )
+    .await;
     let merchant = json!({
         "paymob_mid": 777888,
         "status": "APPROVED",
@@ -119,7 +163,13 @@ async fn mount_onboarding_mocks(server: &PaymobMockServer) {
 async fn mount_unified_mocks(server: &PaymobMockServer) {
     let tx = sample_transaction_response(192036466, 25000);
     mount_accept_post(server, "/v1/intention/", 201, sample_intention_response()).await;
-    mount_accept_post(server, "/api/acceptance/void_refund/refund", 200, tx.clone()).await;
+    mount_accept_post(
+        server,
+        "/api/acceptance/void_refund/refund",
+        200,
+        tx.clone(),
+    )
+    .await;
     mount_accept_post(server, "/api/acceptance/void_refund/void", 200, tx.clone()).await;
     mount_accept_post(server, "/api/acceptance/capture", 200, tx).await;
     mount_payouts_token(server, "po_uni_1").await;
@@ -155,7 +205,14 @@ async fn e2e_health_and_sandbox_check_ok() {
 async fn e2e_intentions_create_and_update_ok() {
     let (server, router, _state) = setup_test_app().await;
     mount_accept_post(&server, "/v1/intention/", 201, sample_intention_response()).await;
-    mount_accept_json(&server, "PUT", "/v1/intention/", 200, sample_intention_response()).await;
+    mount_accept_json(
+        &server,
+        "PUT",
+        "/v1/intention/",
+        200,
+        sample_intention_response(),
+    )
+    .await;
     let payload = json!({ "amount": 10000, "currency": "EGP", "payment_methods": [4097558] });
     let c_status = post_status(&router, "/intentions", payload).await;
     assert!(c_status == StatusCode::CREATED || c_status == StatusCode::OK);
@@ -168,9 +225,15 @@ async fn e2e_intentions_create_and_update_ok() {
 async fn e2e_checkout_pixel_and_affordability_ok() {
     let (_server, router, _state) = setup_test_app().await;
     let px = json!({ "client_secret": "egy_csk_test_1", "payment_methods": ["card"] });
-    assert_eq!(post_status(&router, "/checkout/pixel", px).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/checkout/pixel", px).await,
+        StatusCode::OK
+    );
     let aff = json!({ "amount_cents": 50000, "currency": "EGP" });
-    assert_eq!(post_status(&router, "/checkout/affordability", aff).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/checkout/affordability", aff).await,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
@@ -179,8 +242,13 @@ async fn e2e_legacy_v2_orders_keys_and_checkout_ok() {
     mount_accept_jwt(&server, "jwt_legacy_1").await;
     let order = json!({ "id": 7711, "amount_cents": 25000, "currency": "EGP" });
     mount_accept_post(&server, "/api/ecommerce/orders", 201, order).await;
-    mount_accept_post(&server, "/api/acceptance/payment_keys", 201, json!({ "token": "pk_leg_1" }))
-        .await;
+    mount_accept_post(
+        &server,
+        "/api/acceptance/payment_keys",
+        201,
+        json!({ "token": "pk_leg_1" }),
+    )
+    .await;
     let ord = json!({ "amount_cents": 25000, "currency": "EGP", "delivery_needed": false });
     let o_st = post_status(&router, "/legacy/orders", ord).await;
     assert!(o_st == StatusCode::CREATED || o_st == StatusCode::OK);
@@ -202,21 +270,38 @@ async fn e2e_legacy_v2_orders_keys_and_checkout_ok() {
         "iframe_id": 123,
         "billing_data": sample_legacy_billing()
     });
-    assert_eq!(post_status(&router, "/legacy/checkout", chk).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/legacy/checkout", chk).await,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
 async fn e2e_manage_refund_void_capture_ok() {
     let (server, router, _state) = setup_test_app().await;
     let tx = sample_transaction_response(192036466, 25000);
-    mount_accept_post(&server, "/api/acceptance/void_refund/refund", 200, tx.clone()).await;
+    mount_accept_post(
+        &server,
+        "/api/acceptance/void_refund/refund",
+        200,
+        tx.clone(),
+    )
+    .await;
     mount_accept_post(&server, "/api/acceptance/void_refund/void", 200, tx.clone()).await;
     mount_accept_post(&server, "/api/acceptance/capture", 200, tx).await;
     let ref_body = json!({ "transaction_id": 192036465, "amount_cents": 25000 });
     let r_st = post_status(&router, "/manage/refund", ref_body.clone()).await;
-    let v_st = post_status(&router, "/manage/void", json!({ "transaction_id": 192036465 })).await;
+    let v_st = post_status(
+        &router,
+        "/manage/void",
+        json!({ "transaction_id": 192036465 }),
+    )
+    .await;
     let c_st = post_status(&router, "/manage/capture", ref_body).await;
-    assert_eq!((r_st, v_st, c_st), (StatusCode::OK, StatusCode::OK, StatusCode::OK));
+    assert_eq!(
+        (r_st, v_st, c_st),
+        (StatusCode::OK, StatusCode::OK, StatusCode::OK)
+    );
 }
 
 #[tokio::test]
@@ -224,17 +309,44 @@ async fn e2e_inquiries_all_endpoints_ok() {
     let (server, router, _state) = setup_test_app().await;
     mount_accept_jwt(&server, "jwt_inq_1").await;
     let tx = sample_transaction_response(192036465, 10000);
-    mount_accept_get(&server, "/api/acceptance/transactions/192036465", tx.clone()).await;
-    mount_accept_post(&server, "/api/ecommerce/orders/transaction_inquiry", 200, tx).await;
+    mount_accept_get(
+        &server,
+        "/api/acceptance/transactions/192036465",
+        tx.clone(),
+    )
+    .await;
+    mount_accept_post(
+        &server,
+        "/api/ecommerce/orders/transaction_inquiry",
+        200,
+        tx,
+    )
+    .await;
     mount_accept_post(&server, "/api/acceptance/order_card_tokens", 200, json!([])).await;
     let ord = json!({ "id": 212245716, "amount_cents": 10000, "currency": "EGP" });
     mount_accept_get(&server, "/api/ecommerce/orders/212245716", ord).await;
-    assert_eq!(send_get(&router, "/inquiries/transactions/192036465").await.0, StatusCode::OK);
+    assert_eq!(
+        send_get(&router, "/inquiries/transactions/192036465")
+            .await
+            .0,
+        StatusCode::OK
+    );
     let by_ord_body = json!({ "order_id": 212245716 });
-    assert_eq!(post_status(&router, "/inquiries/by-order", by_ord_body).await, StatusCode::OK);
-    let tok_st = post_status(&router, "/inquiries/orders/212245716/card-tokens", json!({})).await;
+    assert_eq!(
+        post_status(&router, "/inquiries/by-order", by_ord_body).await,
+        StatusCode::OK
+    );
+    let tok_st = post_status(
+        &router,
+        "/inquiries/orders/212245716/card-tokens",
+        json!({}),
+    )
+    .await;
     assert_eq!(tok_st, StatusCode::OK);
-    assert_eq!(send_get(&router, "/inquiries/orders/212245716").await.0, StatusCode::OK);
+    assert_eq!(
+        send_get(&router, "/inquiries/orders/212245716").await.0,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
@@ -248,17 +360,29 @@ async fn e2e_quicklinks_and_splits_ok() {
     });
     mount_accept_post(&server, "/api/ecommerce/payment-links", 201, ql_resp).await;
     let cancel_resp = json!({ "detail": "cancelled" });
-    mount_accept_post(&server, "/api/ecommerce/payment-links/cancel", 200, cancel_resp).await;
+    mount_accept_post(
+        &server,
+        "/api/ecommerce/payment-links/cancel",
+        200,
+        cancel_resp,
+    )
+    .await;
     let ql = json!({ "amount_cents": 15000, "currency": "EGP", "integrations": [4097558] });
     let c_st = post_status(&router, "/quicklinks", ql).await;
     assert!(c_st == StatusCode::CREATED || c_st == StatusCode::OK);
-    assert_eq!(post_status(&router, "/quicklinks/ql_1/cancel", json!({})).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/quicklinks/ql_1/cancel", json!({})).await,
+        StatusCode::OK
+    );
     let split = json!({
         "amount_cents": 10000,
         "split_description": { "recipients": [{ "recipient_id": "1", "percentage_bps": 10000 }] },
         "split_payment": { "cards": [{ "amount_cents": 10000 }] }
     });
-    assert_eq!(post_status(&router, "/splits/validate-and-quote", split).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/splits/validate-and-quote", split).await,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
@@ -274,11 +398,20 @@ async fn e2e_saved_cards_all_modes_ok() {
     });
     mount_accept_post(&server, "/api/acceptance/payments/pay", 200, pay_resp).await;
     let mit = json!({ "payment_token": "pk_1", "saved_token": "tok_1" });
-    assert_eq!(post_status(&router, "/saved-cards/pay/mit", mit).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/saved-cards/pay/mit", mit).await,
+        StatusCode::OK
+    );
     let wallet = json!({ "payment_token": "pk_1", "wallet_phone": "01010101010" });
-    assert_eq!(post_status(&router, "/saved-cards/pay/wallet", wallet).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/saved-cards/pay/wallet", wallet).await,
+        StatusCode::OK
+    );
     let kiosk = json!({ "payment_token": "pk_1" });
-    assert_eq!(post_status(&router, "/saved-cards/pay/kiosk", kiosk).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/saved-cards/pay/kiosk", kiosk).await,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
@@ -295,14 +428,31 @@ async fn e2e_subscriptions_lifecycle_ok() {
     });
     let p_st = post_status(&router, "/subscriptions/plans", plan_req).await;
     assert!(p_st == StatusCode::CREATED || p_st == StatusCode::OK);
-    assert_eq!(send_get(&router, "/subscriptions/plans").await.0, StatusCode::OK);
+    assert_eq!(
+        send_get(&router, "/subscriptions/plans").await.0,
+        StatusCode::OK
+    );
     let susp = post_status(&router, "/subscriptions/1264/suspend", json!({})).await;
     assert_eq!(susp, StatusCode::OK);
-    assert_eq!(post_status(&router, "/subscriptions/1264/resume", json!({})).await, StatusCode::OK);
-    assert_eq!(send_get(&router, "/subscriptions/1264/cards").await.0, StatusCode::OK);
-    assert_eq!(send_get(&router, "/subscriptions/1264/transactions").await.0, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/subscriptions/1264/resume", json!({})).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send_get(&router, "/subscriptions/1264/cards").await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send_get(&router, "/subscriptions/1264/transactions")
+            .await
+            .0,
+        StatusCode::OK
+    );
     let ref_uri = "/subscriptions/1264/refund-last-transaction";
-    assert_eq!(post_status(&router, ref_uri, json!({})).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, ref_uri, json!({})).await,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
@@ -315,17 +465,29 @@ async fn e2e_payouts_instant_bulk_inquiries_budget_topup_ok() {
     assert_eq!(w_st, StatusCode::OK);
     let item = json!({ "issuer": "vodafone", "amount": 150, "msisdn": "01012345678" });
     let bulk = json!({ "transactions": [item] });
-    assert_eq!(post_status(&router, "/payouts/cashin/bulk", bulk).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/payouts/cashin/bulk", bulk).await,
+        StatusCode::OK
+    );
     let inq = json!({ "transactions_ids": ["tx_p1"], "is_bulk": true });
-    assert_eq!(post_status(&router, "/payouts/inquiries/transactions", inq).await, StatusCode::OK);
-    assert_eq!(send_get(&router, "/payouts/inquiries/budget").await.0, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/payouts/inquiries/transactions", inq).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send_get(&router, "/payouts/inquiries/budget").await.0,
+        StatusCode::OK
+    );
     let topup = json!({
         "amount": 1000,
         "currency": "egyptian_pound",
         "to_attach_proof_base64": BASE64_STANDARD.encode(b"proof-bytes"),
         "proof_filename": "receipt.pdf"
     });
-    assert_eq!(post_status(&router, "/payouts/topups/bank-transfer", topup).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/payouts/topups/bank-transfer", topup).await,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
@@ -345,8 +507,16 @@ async fn e2e_onboarding_and_scoped_merchants_ok() {
     let schema_uri = "/onboarding/flow/schema?partner=KeyPartner&paymob_mid=777888";
     assert_eq!(send_get(&router, schema_uri).await.0, StatusCode::OK);
     let step = json!({ "paymob_mid": 777888, "step_id": "kyc", "data": {} });
-    assert_eq!(post_status(&router, "/onboarding/flow/submit-step", step).await, StatusCode::OK);
-    assert_eq!(send_get(&router, "/onboarding/flow/merchants/777888").await.0, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/onboarding/flow/submit-step", step).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send_get(&router, "/onboarding/flow/merchants/777888")
+            .await
+            .0,
+        StatusCode::OK
+    );
     let intent = json!({
         "amount_cents": 15000,
         "currency": "EGP",
@@ -355,7 +525,12 @@ async fn e2e_onboarding_and_scoped_merchants_ok() {
     });
     let i_st = post_status(&router, "/merchants/777888/intentions", intent).await;
     assert!(i_st == StatusCode::OK || i_st == StatusCode::CREATED);
-    assert_eq!(send_get(&router, "/merchants/777888/transactions/555").await.0, StatusCode::OK);
+    assert_eq!(
+        send_get(&router, "/merchants/777888/transactions/555")
+            .await
+            .0,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
@@ -366,17 +541,29 @@ async fn e2e_unified_adapter_all_operations_ok() {
     let s_st = post_status(&router, "/unified/sessions", sess).await;
     assert!(s_st == StatusCode::CREATED || s_st == StatusCode::OK);
     let tx_amt = json!({ "transaction_id": 192036465, "amount_cents": 25000 });
-    assert_eq!(post_status(&router, "/unified/refund", tx_amt.clone()).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/unified/refund", tx_amt.clone()).await,
+        StatusCode::OK
+    );
     let void_body = json!({ "transaction_id": 192036465 });
-    assert_eq!(post_status(&router, "/unified/void", void_body).await, StatusCode::OK);
-    assert_eq!(post_status(&router, "/unified/capture", tx_amt).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/unified/void", void_body).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_status(&router, "/unified/capture", tx_amt).await,
+        StatusCode::OK
+    );
     let payout = json!({
         "recipient_identifier": "01012345678",
         "amount_cents": 15000,
         "currency": "EGP",
         "issuer": "vodafone"
     });
-    assert_eq!(post_status(&router, "/unified/payouts", payout).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/unified/payouts", payout).await,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
@@ -393,14 +580,20 @@ async fn e2e_webhooks_protocols_a_b_c_d_e_ok() {
     assert_eq!(send_get(&router, &pb_uri).await.0, StatusCode::OK);
     let pc_uri = format!("/webhooks/paymob?hmac={SAMPLE_CARD_TOKEN_15978654_HMAC}");
     assert_eq!(post_status(&router, &pc_uri, tok_val).await, StatusCode::OK);
-    assert_eq!(post_status(&router, "/webhooks/paymob", sub_val).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/webhooks/paymob", sub_val).await,
+        StatusCode::OK
+    );
     let payout_body = json!({
         "transaction_id": "tx_e_1",
         "issuer": "vodafone",
         "disbursement_status": "successful",
         "amount": 150
     });
-    assert_eq!(post_status(&router, "/webhooks/paymob", payout_body).await, StatusCode::OK);
+    assert_eq!(
+        post_status(&router, "/webhooks/paymob", payout_body).await,
+        StatusCode::OK
+    );
 }
 
 // ============================================================================
@@ -434,8 +627,14 @@ async fn boundary_bulk_disbursements_0_1_1000_1001() {
     let (server, router, _state) = setup_test_app().await;
     mount_payouts_token(&server, "po_bulk_1").await;
     let ok_resp = json!({ "status": "ok", "results": [] });
-    mount_payouts_json(&server, "POST", "/disburse/api/v1/disburse/bulk_transaction/", 200, ok_resp)
-        .await;
+    mount_payouts_json(
+        &server,
+        "POST",
+        "/disburse/api/v1/disburse/bulk_transaction/",
+        200,
+        ok_resp,
+    )
+    .await;
     let mk_items = |n: usize| -> Value {
         let items: Vec<Value> = (0..n)
             .map(|i| json!({ "issuer": "vodafone", "amount": 100, "msisdn": format!("010{i:08}") }))
@@ -457,8 +656,14 @@ async fn boundary_payout_inquiry_ids_0_1_500_501() {
     let (server, router, _state) = setup_test_app().await;
     mount_payouts_token(&server, "po_inq_1").await;
     let ok_resp = json!({ "results": [] });
-    mount_payouts_json(&server, "POST", "/disburse/api/v1/bulk_transaction/inquire/", 200, ok_resp)
-        .await;
+    mount_payouts_json(
+        &server,
+        "POST",
+        "/disburse/api/v1/bulk_transaction/inquire/",
+        200,
+        ok_resp,
+    )
+    .await;
     let mk_ids = |n: usize| -> Value {
         let ids: Vec<String> = (0..n).map(|i| format!("tx_{i}")).collect();
         json!({ "transactions_ids": ids, "is_bulk": true })
@@ -488,8 +693,18 @@ async fn boundary_bank_transfer_proof_size_0_2936012_2936013() {
         })
     };
     let st0 = post_status(&router, "/payouts/topups/bank-transfer", mk_topup(0)).await;
-    let st_max = post_status(&router, "/payouts/topups/bank-transfer", mk_topup(2_936_012)).await;
-    let st_over = post_status(&router, "/payouts/topups/bank-transfer", mk_topup(2_936_013)).await;
+    let st_max = post_status(
+        &router,
+        "/payouts/topups/bank-transfer",
+        mk_topup(2_936_012),
+    )
+    .await;
+    let st_over = post_status(
+        &router,
+        "/payouts/topups/bank-transfer",
+        mk_topup(2_936_013),
+    )
+    .await;
     assert_eq!(st0, StatusCode::BAD_REQUEST);
     assert_eq!(st_max, StatusCode::OK);
     assert_eq!(st_over, StatusCode::BAD_REQUEST);
@@ -499,7 +714,9 @@ async fn boundary_bank_transfer_proof_size_0_2936012_2936013() {
 async fn boundary_split_payments_cards_0_1_3_4_and_bps_not_10000() {
     let (_server, router, _state) = setup_test_app().await;
     let mk_split = |cards: usize, bps: u16| -> Value {
-        let card_list: Vec<Value> = (0..cards).map(|_| json!({ "amount_cents": 1000 })).collect();
+        let card_list: Vec<Value> = (0..cards)
+            .map(|_| json!({ "amount_cents": 1000 }))
+            .collect();
         json!({
             "amount_cents": 10000,
             "split_description": { "recipients": [{ "recipient_id": "1", "percentage_bps": bps }] },

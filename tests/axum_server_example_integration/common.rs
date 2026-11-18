@@ -134,7 +134,15 @@ pub async fn mount_accept_json(
     status: u16,
     body: Value,
 ) {
-    mount_json_on_host(server, MockHost::Accept, http_method, endpoint_path, status, body).await;
+    mount_json_on_host(
+        server,
+        MockHost::Accept,
+        http_method,
+        endpoint_path,
+        status,
+        body,
+    )
+    .await;
 }
 
 /// Mounts a `GET` `200 OK` JSON response on the Accept mock host.
@@ -155,7 +163,15 @@ pub async fn mount_payouts_json(
     status: u16,
     body: Value,
 ) {
-    mount_json_on_host(server, MockHost::Payouts, http_method, endpoint_path, status, body).await;
+    mount_json_on_host(
+        server,
+        MockHost::Payouts,
+        http_method,
+        endpoint_path,
+        status,
+        body,
+    )
+    .await;
 }
 
 /// Returns a minimal valid Paymob Intention response JSON fixture.

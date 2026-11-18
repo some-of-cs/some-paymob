@@ -160,14 +160,17 @@ impl From<SandboxReport> for SandboxReportResponse {
 
 async fn sandbox_check_handler(
     Json(input): Json<SandboxCheckInput>,
-) -> Json<SandboxReportResponse> {
+) -> Result<Json<SandboxReportResponse>, ApiServerError> {
     let req = SandboxCheckRequest {
         is_sandbox: input.is_sandbox,
         credential_age_days: input.credential_age_days,
         channel: input.channel.into(),
     };
     let report = SandboxGuard::check_constraints(&req);
-    Json(report.into())
+    if let Some(err) = report.errors.iter().next().cloned() {
+        return Err(ApiServerError::from(err));
+    }
+    Ok(Json(report.into()))
 }
 
 #[derive(Serialize)]

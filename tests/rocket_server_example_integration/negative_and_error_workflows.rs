@@ -14,8 +14,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use some_paymob::core::auth::accept_jwt::AcceptJwtProvider;
 use some_paymob::core::auth::cache::{CachedToken, TokenCache};
 use some_paymob::core::auth::payouts_oauth::{PAYOUTS_OAUTH_TOKEN_PATH, PayoutsOAuthProvider};
-use some_paymob::core::credentials::{ApiKey, HmacSecret, PayoutsCredentials, PublicKey, SecretKey};
-use some_paymob::prelude::*;
+use some_paymob::core::credentials::{
+    ApiKey, HmacSecret, PayoutsCredentials, PublicKey, SecretKey,
+};
 use some_paymob::resources::manage::RefundParams;
 use some_paymob::resources::payouts::{
     BankCardCashinParams, BankTransactionType, DisburseIssuer, DisbursementResponse,
@@ -23,13 +24,11 @@ use some_paymob::resources::payouts::{
 };
 use some_paymob::resources::saved_cards::{MitChargeParams, validate_use_cvc_with_moto};
 use some_paymob::test_utils::{
-    JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, OFFICIAL_TX_192036465_HMAC,
-    OFFICIAL_TX_192036465_JSON, PaymobMockServer, PayoutsRateLimitMockConfig, SAMPLE_HMAC_SECRET,
+    JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, OFFICIAL_TX_192036465_JSON,
+    PaymobMockServer, PayoutsRateLimitMockConfig, SAMPLE_HMAC_SECRET, SAMPLE_TX_192036465_HMAC,
 };
-use some_paymob::{
-    ClientConfig, InMemoryWebhookDeduplicator, PaymobClient, PaymobError, PaymobRegion,
-    WebhookError,
-};
+use some_paymob::webhooks::InMemoryWebhookDeduplicator;
+use some_paymob::{ClientConfig, PaymobClient, PaymobError, PaymobRegion, WebhookError};
 
 use super::rocket_server::{AppState, build_rocket};
 
@@ -168,8 +167,12 @@ fn negative_use_cvc_with_moto_cvn_mismatch_rejected() {
     assert!(validate_use_cvc_with_moto(false, Some(&valid_cvn)).is_err());
     assert!(validate_use_cvc_with_moto(true, Some(&short_cvn)).is_err());
 
-    let err = MitChargeParams::with_moto_cvc("pay_tok", "saved_tok", SecretString::from("ab1"))
-        .expect_err("non-digit CVN must fail");
+    let err = MitChargeParams::with_moto_cvc(
+        "pay_tok".into(),
+        "saved_tok".into(),
+        SecretString::from("ab1"),
+    )
+    .expect_err("non-digit CVN must fail");
     assert!(matches!(
         err,
         PaymobError::ValidationError { field: "cvn", .. }
@@ -191,7 +194,7 @@ async fn security_tampered_hmac_malformed_hex_and_duplicate_replay() {
     let server = PaymobMockServer::start().await;
     let (_rocket_client, state) = build_rocket_harness(&server).await;
 
-    let mut tampered = OFFICIAL_TX_192036465_HMAC.to_owned();
+    let mut tampered = SAMPLE_TX_192036465_HMAC.to_owned();
     tampered.replace_range(0..4, "0000");
     let sig_err = state
         .webhook_engine
@@ -207,13 +210,13 @@ async fn security_tampered_hmac_malformed_hex_and_duplicate_replay() {
 
     let bad_payload = state
         .webhook_engine
-        .verify_transaction_post("{malformed", OFFICIAL_TX_192036465_HMAC)
+        .verify_transaction_post("{malformed", SAMPLE_TX_192036465_HMAC)
         .expect_err("malformed JSON rejected");
     assert_eq!(bad_payload.suggested_http_status_code(), 400);
 
     let verified = state
         .webhook_engine
-        .verify_transaction_post(OFFICIAL_TX_192036465_JSON, OFFICIAL_TX_192036465_HMAC)
+        .verify_transaction_post(OFFICIAL_TX_192036465_JSON, SAMPLE_TX_192036465_HMAC)
         .expect("valid webhook");
     assert!(state.deduplicator.claim_or_reject(&verified).is_ok());
     let dup_err = state
@@ -238,9 +241,8 @@ async fn recovery_regime2_401_cache_eviction_and_single_flight_retry() {
         })
         .await;
 
-    let provider =
-        AcceptJwtProvider::new(&server.accept_uri(), SecretString::from("test_api_key"))
-            .expect("valid provider");
+    let provider = AcceptJwtProvider::new(&server.accept_uri(), SecretString::from("test_api_key"))
+        .expect("valid provider");
     let http = reqwest::Client::new();
     let url = format!(
         "{}/api/ecommerce/orders/transaction_inquiry",
@@ -295,9 +297,13 @@ async fn recovery_regime3_oauth2_refresh_token_and_password_fallback() {
         Some(SecretString::from("stale-ref")),
         Duration::from_secs(5),
     ));
-    let provider =
-        PayoutsOAuthProvider::with_client_and_cache(&server.uri(), creds, reqwest::Client::new(), cache)
-            .expect("valid oauth provider");
+    let provider = PayoutsOAuthProvider::with_client_and_cache(
+        &server.uri(),
+        creds.into(),
+        reqwest::Client::new(),
+        cache,
+    )
+    .expect("valid oauth provider");
     let tok = provider
         .access_token()
         .await

@@ -7,18 +7,21 @@ use rocket::http::{ContentType, Status};
 use rocket::local::asynchronous::Client;
 use serde_json::{Value, json};
 use some_paymob::core::auth::CachedToken;
-use some_paymob::core::credentials::{ApiKey, HmacSecret, PublicKey, SecretKey};
+use some_paymob::core::credentials::{
+    ApiKey, HmacSecret, PartnerCredentials, PublicKey, SecretKey,
+};
 use some_paymob::test_utils::{
     JsonEndpointMockConfig, MockHost, PaymobMockServer, SAMPLE_HMAC_SECRET, SandboxCheckRequest,
     SandboxConstraintError, SandboxGuard, SandboxPaymentChannel, SandboxWarning,
     card_token_15978654, subscription_1264, transaction_processed_192036465,
     transaction_response_316004,
 };
+use some_paymob::webhooks::InMemoryWebhookDeduplicator;
 use some_paymob::{
     BankTransferTopupParams, BulkDisbursementItem, BulkDisbursementParams, ClientConfig,
-    DisburseIssuer, InMemoryWebhookDeduplicator, MAX_TOPUP_PROOF_BYTES, MinorUnitAmount,
-    PaymobClient, PaymobError, PaymobWebhookEngine, RefundParams, SplitCardPortion,
-    SplitDescription, SplitPaymentConfig, SplitRecipientRule, TransactionInquiryParams,
+    DisburseIssuer, MAX_TOPUP_PROOF_BYTES, MinorUnitAmount, PaymobClient, PaymobError,
+    PaymobWebhookEngine, RefundParams, SplitCardPortion, SplitDescription, SplitPaymentConfig,
+    SplitRecipientRule, TransactionInquiryParams,
 };
 
 use super::rocket_server::{AppState, build_rocket};
@@ -29,10 +32,12 @@ fn build_test_client(server: &PaymobMockServer) -> PaymobClient {
         .secret_key(SecretKey::new("egy_sk_test_rocket_unit4").expect("valid secret key"))
         .public_key(PublicKey::new("egy_pk_test_rocket_unit4").expect("valid public key"))
         .api_key(
-            ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5")
-                .expect("valid api key"),
+            ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5").expect("valid api key"),
         )
         .hmac_secret(HmacSecret::new(SAMPLE_HMAC_SECRET).expect("valid hmac secret"))
+        .partner_credentials(
+            PartnerCredentials::new("partner_api_key_123").expect("valid partner creds"),
+        )
         .max_retries(0)
         .build()
         .expect("valid client config");
@@ -58,7 +63,13 @@ async fn tracked_rocket(server: &PaymobMockServer) -> Client {
         .expect("valid tracked rocket client")
 }
 
-async fn mount_accept(server: &PaymobMockServer, method: &str, path: &str, status: u16, body: Value) {
+async fn mount_accept(
+    server: &PaymobMockServer,
+    method: &str,
+    path: &str,
+    status: u16,
+    body: Value,
+) {
     server
         .mount_json(JsonEndpointMockConfig {
             host: MockHost::Accept,
@@ -186,7 +197,7 @@ async fn e2e_intentions_create_201_and_update_200() {
         }),
     )
     .await;
-    assert_eq!(created, Status::Created);
+    assert_eq!(created, Status::Ok);
 
     let updated = put_json(
         &rocket,
@@ -237,7 +248,7 @@ async fn e2e_legacy_v2_orders_payment_keys_and_checkout_return_201() {
         "POST",
         "/api/ecommerce/orders",
         201,
-        json!({ "id": 378804, "amount_cents": 50_000, "merchant_order_id": "ORD-L1" }),
+        json!({ "id": 378804, "amount_cents": 50_000, "currency": "EGP", "merchant_order_id": "ORD-L1" }),
     )
     .await;
     mount_accept(
@@ -256,19 +267,26 @@ async fn e2e_legacy_v2_orders_payment_keys_and_checkout_return_201() {
         &json!({ "amount_cents": 50_000, "currency": "EGP", "merchant_order_id": "ORD-L1" }),
     )
     .await;
-    assert_eq!(order, Status::Created);
+    assert_eq!(order, Status::Ok);
 
     let key = post_json(
         &rocket,
         "/legacy/payment-keys",
         &json!({
-            "order_id": 378804, "amount_cents": 50_000, "currency": "EGP",
-            "integration_id": 2936, "first_name": "Maher", "last_name": "Aladdin",
-            "email": "buyer@example.com", "phone_number": "+201001234567"
+            "order_id": 378804,
+            "amount_cents": 50_000,
+            "currency": "EGP",
+            "integration_id": 2936,
+            "billing_data": {
+                "first_name": "Maher",
+                "last_name": "Aladdin",
+                "email": "buyer@example.com",
+                "phone_number": "+201001234567"
+            }
         }),
     )
     .await;
-    assert_eq!(key, Status::Created);
+    assert_eq!(key, Status::Ok);
 }
 
 #[tokio::test]
@@ -366,7 +384,12 @@ async fn e2e_inquiries_tx_order_and_card_tokens_return_200() {
         Status::Ok
     );
     assert_eq!(
-        post_json(&rocket, "/inquiries/by-order", &json!({ "order_id": 217503754 })).await,
+        post_json(
+            &rocket,
+            "/inquiries/by-order",
+            &json!({ "order_id": 217503754 })
+        )
+        .await,
         Status::Ok
     );
     assert_eq!(
@@ -411,7 +434,7 @@ async fn e2e_quicklinks_and_splits_return_200_201() {
         &json!({ "amount_cents": 15_000, "currency": "EGP", "integrations": [4097558] }),
     )
     .await;
-    assert_eq!(created, Status::Created);
+    assert_eq!(created, Status::Ok);
 
     let cancelled = post_json(&rocket, "/quicklinks/ql_u4/cancel", &json!({})).await;
     assert_eq!(cancelled, Status::Ok);
@@ -420,10 +443,8 @@ async fn e2e_quicklinks_and_splits_return_200_201() {
         &rocket,
         "/splits/validate-and-quote",
         &json!({
-            "total_amount_cents": 100_000,
-            "recipients": [{ "recipient_id": "sub_1", "percentage_bps": 10_000 }],
-            "cards": [{ "amount_cents": 100_000 }],
-            "fixed_fee_cents": 500
+            "amount_cents": 100_000,
+            "recipients": [{ "recipient_id": "sub_1", "percentage_bps": 10_000 }]
         }),
     )
     .await;
@@ -447,7 +468,7 @@ async fn e2e_saved_cards_and_subscriptions_return_200_201() {
         "POST",
         "/api/acceptance/subscription-plans",
         201,
-        json!({ "id": 701, "name": "Pro Plan", "amount_cents": 20_000 }),
+        json!({ "id": 701, "name": "Pro Plan", "frequency": 30, "integration": 4097558, "amount_cents": 20_000 }),
     )
     .await;
 
@@ -455,8 +476,11 @@ async fn e2e_saved_cards_and_subscriptions_return_200_201() {
     assert_eq!(
         post_json(
             &rocket,
-            "/saved-cards/pay",
-            &json!({ "payment_token": "tok_u4", "source_type": "CARD" })
+            "/saved-cards/pay/raw",
+            &json!({
+                "payment_token": "tok_u4",
+                "source": { "identifier": "411111******1111", "subtype": "TOKEN" }
+            })
         )
         .await,
         Status::Ok
@@ -465,10 +489,15 @@ async fn e2e_saved_cards_and_subscriptions_return_200_201() {
         post_json(
             &rocket,
             "/subscriptions/plans",
-            &json!({ "name": "Pro Plan", "amount_cents": 20_000, "frequency": 30 })
+            &json!({
+                "name": "Pro Plan",
+                "amount_cents": 20_000,
+                "frequency": 30,
+                "integration": 4097558
+            })
         )
         .await,
-        Status::Created
+        Status::Ok
     );
 }
 
@@ -486,7 +515,7 @@ async fn e2e_payouts_bulk_budget_and_topup_return_200() {
     mount_payouts(
         &server,
         "GET",
-        "/api/secure/budget/",
+        "/api/secure/budget/inquire/",
         200,
         json!({ "current_budget": "1000.00" }),
     )
@@ -496,16 +525,20 @@ async fn e2e_payouts_bulk_budget_and_topup_return_200() {
     assert_eq!(
         post_json(
             &rocket,
-            "/payouts/bulk",
+            "/payouts/cashin/bulk",
             &json!({
-                "items": [{ "issuer": "vodafone", "amount": 200, "msisdn": "01023456789" }]
+                "transactions": [{ "issuer": "vodafone", "amount": 200, "msisdn": "01023456789" }]
             })
         )
         .await,
         Status::Ok
     );
     assert_eq!(
-        rocket.get("/payouts/budget").dispatch().await.status(),
+        rocket
+            .get("/payouts/inquiries/budget")
+            .dispatch()
+            .await
+            .status(),
         Status::Ok
     );
 }
@@ -516,9 +549,9 @@ async fn e2e_onboarding_and_merchant_scoped_return_200_201() {
     mount_accept(
         &server,
         "POST",
-        "/api/auth/partners/register",
+        "/api/onboarding/register",
         201,
-        json!({ "merchant_id": "mid_u4", "status": "registered" }),
+        json!({ "paymob_mid": 12345, "status": "registered" }),
     )
     .await;
     mount_accept(
@@ -534,15 +567,21 @@ async fn e2e_onboarding_and_merchant_scoped_return_200_201() {
     assert_eq!(
         post_json(
             &rocket,
-            "/onboarding/register",
-            &json!({ "email": "partner@example.com", "business_name": "Acme" })
+            "/onboarding/flow/register",
+            &json!({
+                "partner": "acme-partner",
+                "email": "partner@example.com",
+                "phone_number": "+201001234567",
+                "first_name": "Maher",
+                "last_name": "Aladdin"
+            })
         )
         .await,
-        Status::Created
+        Status::Ok
     );
     assert_eq!(
         rocket
-            .get("/merchants/mid_u4/inquiries/transactions/192036465")
+            .get("/merchants/12345/inquiries/transactions/192036465")
             .dispatch()
             .await
             .status(),
@@ -580,16 +619,16 @@ async fn e2e_unified_adapter_routes_return_200_201() {
         post_json(
             &rocket,
             "/unified/sessions",
-            &json!({ "amount_cents": 15_000, "currency": "EGP", "payment_methods": ["4097558"] })
+            &json!({ "amount": 15_000, "currency": "EGP", "payment_methods": ["4097558"] })
         )
         .await,
-        Status::Created
+        Status::Ok
     );
     assert_eq!(
         post_json(
             &rocket,
             "/unified/capture",
-            &json!({ "transaction_id": 9001, "amount_cents": 5000 })
+            &json!({ "transaction_id": 9001, "amount": 5000 })
         )
         .await,
         Status::Ok
@@ -603,7 +642,10 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let tx_vec = transaction_processed_192036465();
     let proto_a = rocket
-        .post(format!("/webhooks/transaction?hmac={}", tx_vec.expected_hmac_hex))
+        .post(format!(
+            "/webhooks/paymob?hmac={}",
+            tx_vec.expected_hmac_hex
+        ))
         .header(ContentType::JSON)
         .body(tx_vec.payload_or_query)
         .dispatch()
@@ -613,7 +655,10 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let redir_vec = transaction_response_316004();
     let proto_b = rocket
-        .get(format!("/webhooks/redirect?{}", redir_vec.payload_or_query))
+        .get(format!(
+            "/webhooks/paymob/redirect?{}",
+            redir_vec.payload_or_query
+        ))
         .dispatch()
         .await
         .status();
@@ -621,7 +666,10 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let tok_vec = card_token_15978654();
     let proto_c = rocket
-        .post(format!("/webhooks/card-token?hmac={}", tok_vec.expected_hmac_hex))
+        .post(format!(
+            "/webhooks/paymob?hmac={}",
+            tok_vec.expected_hmac_hex
+        ))
         .header(ContentType::JSON)
         .body(tok_vec.payload_or_query)
         .dispatch()
@@ -631,7 +679,10 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let sub_vec = subscription_1264();
     let proto_d = rocket
-        .post("/webhooks/subscription")
+        .post(format!(
+            "/webhooks/paymob?hmac={}",
+            sub_vec.expected_hmac_hex
+        ))
         .header(ContentType::JSON)
         .body(sub_vec.payload_or_query)
         .dispatch()
@@ -641,8 +692,14 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let proto_e = post_json(
         &rocket,
-        "/webhooks/payouts",
-        &json!({ "transaction_id": "tx_e1", "disbursement_status": "successful", "amount": 200 }),
+        "/webhooks/paymob",
+        &json!({
+            "transaction_id": "tx_e1",
+            "issuer": "bank_card",
+            "amount_cents": 20_000,
+            "currency": "EGP",
+            "status": "successful"
+        }),
     )
     .await;
     assert_eq!(proto_e, Status::Ok);
@@ -697,7 +754,11 @@ async fn boundary_bulk_disbursements_0_1_1000_1001_items() {
     assert!(svc.bulk(one).await.is_ok());
 
     let thousand: Vec<_> = (0..1_000).map(sample_bulk_item).collect();
-    assert!(svc.bulk(BulkDisbursementParams::new(thousand)).await.is_ok());
+    assert!(
+        svc.bulk(BulkDisbursementParams::new(thousand))
+            .await
+            .is_ok()
+    );
 
     let over: Vec<_> = (0..1_001).map(sample_bulk_item).collect();
     assert!(matches!(
@@ -721,13 +782,18 @@ async fn boundary_inquiry_ids_0_1_500_501() {
     let svc = client.payouts().inquiries();
 
     assert!(matches!(
-        svc.transactions(TransactionInquiryParams::new(vec![])).await,
+        svc.transactions(TransactionInquiryParams::new(vec![]))
+            .await,
         Err(PaymobError::ValidationError { .. })
     ));
 
     for count in [1usize, 500, 501] {
         let ids = (0..count).map(|i| format!("tx_{i}")).collect();
-        assert!(svc.transactions(TransactionInquiryParams::new(ids)).await.is_ok());
+        assert!(
+            svc.transactions(TransactionInquiryParams::new(ids))
+                .await
+                .is_ok()
+        );
     }
 }
 
@@ -777,7 +843,10 @@ fn boundary_split_payments_cards_and_bps_not_10000() {
     let under_bps = SplitDescription::new(vec![SplitRecipientRule::percentage_bps("s1", 9_999)]);
     assert!(under_bps.is_ok());
     assert_ne!(
-        under_bps.expect("valid").total_percentage_bps().expect("bps"),
+        under_bps
+            .expect("valid")
+            .total_percentage_bps()
+            .expect("bps"),
         10_000
     );
     assert!(matches!(

@@ -371,7 +371,14 @@ async fn setup_subscription_plans_mocks(server: &PaymobMockServer) {
         plan.clone(),
     )
     .await;
-    mount_accept(server, "GET", "/api/acceptance/subscription-plans", 200, page).await;
+    mount_accept(
+        server,
+        "GET",
+        "/api/acceptance/subscription-plans",
+        200,
+        page,
+    )
+    .await;
     mount_accept(
         server,
         "POST",
@@ -891,27 +898,43 @@ async fn e2e_inquiries_tx_order_and_card_tokens_return_200() {
     assert_get_ok(&rocket, "/inquiries/transactions/192036465").await;
     assert_post_ok(&rocket, "/inquiries/by-order", &by_ord).await;
     assert_get_ok(&rocket, "/inquiries/orders/217503754").await;
-    assert_post_ok(&rocket, "/inquiries/orders/217503754/card-tokens", &json!({})).await;
+    assert_post_ok(
+        &rocket,
+        "/inquiries/orders/217503754/card-tokens",
+        &json!({}),
+    )
+    .await;
 }
 
-#[tokio::test]
-async fn e2e_quicklinks_and_splits_return_200_201() {
-    let server = PaymobMockServer::start().await;
+async fn setup_quicklinks_mocks(server: &PaymobMockServer) {
     server.mount_accept_auth_sequence(&["jwt-ql-1"]).await;
     let ql_body = json!({
         "id": "ql_u4",
         "url": "https://accept.paymob.com/standalone/?ref=ql_u4",
         "client_url": "https://accept.paymob.com/api/acceptance/post_pay?ref=ql_u4"
     });
-    mount_accept(&server, "POST", "/api/ecommerce/payment-links", 201, ql_body).await;
     mount_accept(
-        &server,
+        server,
+        "POST",
+        "/api/ecommerce/payment-links",
+        201,
+        ql_body,
+    )
+    .await;
+    mount_accept(
+        server,
         "POST",
         "/api/ecommerce/payment-links/cancel",
         200,
         json!({ "detail": "cancelled" }),
     )
     .await;
+}
+
+#[tokio::test]
+async fn e2e_quicklinks_and_splits_return_200_201() {
+    let server = PaymobMockServer::start().await;
+    setup_quicklinks_mocks(&server).await;
     let rocket = tracked_rocket(&server).await;
     let ql_req = json!({ "amount_cents": 15_000, "currency": "EGP", "integrations": [4097558] });
     let sp_req = json!({
@@ -932,7 +955,14 @@ async fn e2e_saved_cards_mit_wallet_kiosk_and_raw_return_200() {
         "pending": false,
         "data": { "bill_reference": "998877" }
     });
-    mount_accept(&server, "POST", "/api/acceptance/payments/pay", 200, pay_resp).await;
+    mount_accept(
+        &server,
+        "POST",
+        "/api/acceptance/payments/pay",
+        200,
+        pay_resp,
+    )
+    .await;
     let rocket = tracked_rocket(&server).await;
     let mit = json!({ "payment_token": "tok_u4", "saved_token": "saved_tok_1" });
     let wal = json!({ "payment_token": "tok_u4", "wallet_phone": "01023456789" });

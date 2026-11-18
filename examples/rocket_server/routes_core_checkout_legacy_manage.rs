@@ -686,11 +686,13 @@ async fn legacy_create_checkout(
     }
     let service = state.client.legacy_v2()?;
     let session = service.create_checkout(&params).await?;
-    Ok(Created::new("").tagged_body(Json(LegacyCheckoutRouteResponse {
-        order: session.order,
-        payment_token: session.payment_key.expose_token().to_owned(),
-        iframe_url: session.iframe_url.to_string(),
-    })))
+    Ok(
+        Created::new("").tagged_body(Json(LegacyCheckoutRouteResponse {
+            order: session.order,
+            payment_token: session.payment_key.expose_token().to_owned(),
+            iframe_url: session.iframe_url.to_string(),
+        })),
+    )
 }
 
 #[post("/manage/refund", data = "<payload>")]

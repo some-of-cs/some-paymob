@@ -15,7 +15,7 @@ pub fn configure_app(cfg: &mut web::ServiceConfig) {
     routes::configure_unit_2(cfg);
 }
 
-[!actix_web::main]
+#[actix_web::main]
 async fn main() -> std::io::Result<()> {
     Ok(())
 }

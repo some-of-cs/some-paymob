@@ -23,6 +23,28 @@ fn parse_frequency(raw: &str) -> Result<PlanFrequency, ApiServerError> {
     }
 }
 
+fn plan_json(plan: &SubscriptionPlan) -> serde_json::Value {
+    json!({
+        "id": plan.id,
+        "name": plan.name,
+        "is_active": plan.is_active,
+    })
+}
+
+async fn toggle_plan(
+    state: &web::Data<AppState>,
+    plan_id: u64,
+    resume: bool,
+) -> Result<HttpResponse, ApiServerError> {
+    let plans = state.client.subscriptions().plans();
+    let plan = if resume {
+        plans.resume(plan_id).await?
+    } else {
+        plans.suspend(plan_id).await?
+    };
+    Ok(HttpResponse::Ok().json(plan_json(&plan)))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreatePlanPayload {
     pub frequency: String,
@@ -57,11 +79,7 @@ pub async fn create_plan(
     }
     let params = b.build()?;
     let plan = state.client.subscriptions().plans().create(&params).await?;
-    Ok(HttpResponse::Created().json(json!({
-        "id": plan.id,
-        "name": plan.name,
-        "is_active": plan.is_active,
-    })))
+    Ok(HttpResponse::Created().json(plan_json(&plan)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,11 +112,7 @@ pub async fn update_plan(
         .plans()
         .update(path.into_inner(), &params)
         .await?;
-    Ok(HttpResponse::Ok().json(json!({
-        "id": plan.id,
-        "name": plan.name,
-        "is_active": plan.is_active,
-    })))
+    Ok(HttpResponse::Ok().json(plan_json(&plan)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,13 +138,7 @@ pub async fn suspend_plan(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let plan = state
-        .client
-        .subscriptions()
-        .plans()
-        .suspend(path.into_inner())
-        .await?;
-    Ok(HttpResponse::Ok().json(json!({ "id": plan.id, "is_active": plan.is_active })))
+    toggle_plan(&state, path.into_inner(), false).await
 }
 
 /// `POST /subscriptions/plans/{plan_id}/resume` — Resumes a plan.
@@ -138,13 +146,7 @@ pub async fn resume_plan(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let plan = state
-        .client
-        .subscriptions()
-        .plans()
-        .resume(path.into_inner())
-        .await?;
-    Ok(HttpResponse::Ok().json(json!({ "id": plan.id, "is_active": plan.is_active })))
+    toggle_plan(&state, path.into_inner(), true).await
 }
 
 /// Registers Service 8a routes.
@@ -157,7 +159,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             web::post().to(suspend_plan),
         )
         .route(
-            "/subscriptions/{sub_id}/resume",
-            web::post().to(resume_plan))
+            "/subscriptions/plans/{plan_id}/resume",
+            web::post().to(resume_plan),
         );
 }

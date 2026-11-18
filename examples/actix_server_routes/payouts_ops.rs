@@ -2,11 +2,32 @@
 //! Service 9b: Paymob Send Payouts Inquiries, Budget & Topups.
 
 use actix_web::{HttpResponse, web};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use some_paymob::prelude::*;
 
 use super::{ApiServerError, AppState};
+
+fn inquiry_summary(
+    count: usize,
+    status_code: impl Serialize,
+    status_description: impl Serialize,
+) -> serde_json::Value {
+    json!({
+        "count": count,
+        "status_code": status_code,
+        "status_description": status_description,
+    })
+}
+
+fn topup_json(rec: &TopupRecord) -> serde_json::Value {
+    json!({
+        "id": rec.id,
+        "amount": rec.amount,
+        "status": rec.status,
+        "transfer_type": rec.transfer_type,
+    })
+}
 
 #[derive(Debug, Deserialize)]
 pub struct TxInquiryPayload {
@@ -26,11 +47,11 @@ pub async fn inquire_transactions(
         params = params.with_bank_transactions(bt);
     }
     let resp = state.client.payouts().inquiries().transactions(&params).await?;
-    Ok(HttpResponse::Ok().json(json!({
-        "count": resp.results.len(),
-        "status_code": resp.status_code,
-        "status_description": resp.status_description,
-    })))
+    Ok(HttpResponse::Ok().json(inquiry_summary(
+        resp.results.len(),
+        resp.status_code,
+        resp.status_description,
+    )))
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,11 +70,11 @@ pub async fn inquire_by_reference(
         params = params.with_bank_transactions(bt);
     }
     let resp = state.client.payouts().inquiries().by_reference(&params).await?;
-    Ok(HttpResponse::Ok().json(json!({
-        "count": resp.results.len(),
-        "status_code": resp.status_code,
-        "status_description": resp.status_description,
-    })))
+    Ok(HttpResponse::Ok().json(inquiry_summary(
+        resp.results.len(),
+        resp.status_code,
+        resp.status_description,
+    )))
 }
 
 /// `GET /payouts/inquiries/budget` — Fetches current Paymob Send user budget.
@@ -109,13 +130,8 @@ pub async fn topup_bank_transfer(
         from_bank_name: body.from_bank_name.clone(),
         reference_number: body.reference_number.clone(),
     };
-    let rec = state.client.payouts().topups().from_bank_transaction(params).await?;
-    Ok(HttpResponse::Ok().json(json!({
-        "id": rec.id,
-        "amount": rec.amount,
-        "status": rec.status,
-        "transfer_type": rec.transfer_type,
-    })))
+    let rec = state.client.payouts().topups().from_bank_transfer(params).await?;
+    Ok(HttpResponse::Ok().json(topup_json(&rec)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,13 +148,9 @@ pub async fn topup_accept_balance(
 ) -> Result<HttpResponse, ApiServerError> {
     let params = AcceptBalanceTopupParams::new(body.amount, &body.currency, &body.username);
     let rec = state.client.payouts().topups().from_accept_balance(params).await?;
-    Ok(HttpResponse::Ok().json(json!({
-        "id": rec.id,
-        "amount": rec.amount,
-        "status": rec.status,
-        "transfer_type": rec.transfer_type,
-    })))
+    Ok(HttpResponse::Ok().json(topup_json(&rec)))
 }
+
 
 /// Registers Service 9b routes.
 pub fn configure(cfg: &mut web::ServiceConfig) {
@@ -146,6 +158,6 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/payouts/inquiries/by-reference", web::post().to(inquire_by_reference))
         .route("/payouts/inquiries/budget", web::get().to(inquire_budget))
         .route("/payouts/inquiries/topups", web::get().to(inquire_topups))
-        .route("/payouts/topups/bank-transfer", web::post().to(topup_bank_transfer))
+        .route("/payouts/topups/bank_transfer", web::post().to(topup_bank_transfer))
         .route("/payouts/topups/accept-balance", web::post().to(topup_accept_balance));
 }

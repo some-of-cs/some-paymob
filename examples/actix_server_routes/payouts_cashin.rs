@@ -14,16 +14,20 @@ pub struct RefreshTokenPayload {
     pub refresh_token: String,
 }
 
-/// `POST /payouts/auth/token` — Acquires a Regime 3 OAuth 2.0 token.
-pub async fn auth_token(state: web::Data<AppState>) -> Result<HttpResponse, ApiServerError> {
-    let tok = state.client.payouts().auth().generate_token().await?;
-    Ok(HttpResponse::Ok().json(json!({
+fn token_json(tok: &PayoutsTokenResponse) -> serde_json::Value {
+    json!({
         "token_type": tok.token_type,
         "expires_in": tok.expires_in,
         "scope": tok.scope,
         "access_token": "[REDACTED]",
         "refresh_token": "[REDACTED]",
-    })))
+    })
+}
+
+/// `POST /payouts/auth/token` — Acquires a Regime 3 OAuth 2.0 token.
+pub async fn auth_token(state: web::Data<AppState>) -> Result<HttpResponse, ApiServerError> {
+    let tok = state.client.payouts().auth().generate_token().await?;
+    Ok(HttpResponse::Ok().json(token_json(&tok)))
 }
 
 /// `POST /payouts/auth/refresh` — Refreshes a Regime 3 OAuth 2.0 token.
@@ -33,13 +37,7 @@ pub async fn auth_refresh(
 ) -> Result<HttpResponse, ApiServerError> {
     let rt = SecretString::from(body.refresh_token.clone());
     let tok = state.client.payouts().auth().refresh_token(&rt).await?;
-    Ok(HttpResponse::Ok().json(json!({
-        "token_type": tok.token_type,
-        "expires_in": tok.expires_in,
-        "scope": tok.scope,
-        "access_token": "[REDACTED]",
-        "refresh_token": "[REDACTED]",
-    })))
+    Ok(HttpResponse::Ok().json(token_json(&tok)))
 }
 
 #[derive(Debug, Deserialize)]

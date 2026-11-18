@@ -8,7 +8,7 @@ use some_paymob::prelude::*;
 
 use super::{ApiServerError, AppState};
 
-fn inquiry_resp(resp: &PayoutInquiryResponse) -> Result<HttpResponse, ApiServerError> {
+fn inquiry_resp(resp: &TransactionInquiryResponse) -> Result<HttpResponse, ApiServerError> {
     Ok(HttpResponse::Ok().json(json!({
         "count": resp.results.len(),
         "status_code": resp.status_code,
@@ -47,14 +47,14 @@ async fn run_inquiry(
         if let Some(bt) = body.bank_transactions {
             p = p.with_bank_transactions(bt);
         }
-        inq.by_reference(&p).await?
+        inq.by_reference(p).await?
     } else {
         let mut p =
             TransactionInquiryParams::new(body.transactions_ids.clone()).with_bulk(body.is_bulk);
         if let Some(bt) = body.bank_transactions {
             p = p.with_bank_transactions(bt);
         }
-        inq.transactions(&p).await?
+        inq.transactions(p).await?
     };
     inquiry_resp(&resp)
 }
@@ -98,7 +98,7 @@ pub async fn inquire_topups(
         page: query.page,
         id: query.id,
     };
-    let resp = state.client.payouts().inquiries().topup(&params).await?;
+    let resp = state.client.payouts().inquiries().topup(params).await?;
     Ok(HttpResponse::Ok().json(json!({
         "count": resp.results.len(),
         "total": resp.count,

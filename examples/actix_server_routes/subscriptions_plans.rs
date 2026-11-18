@@ -9,12 +9,18 @@ use some_paymob::prelude::*;
 use super::{ApiServerError, AppState};
 
 fn parse_frequency(raw: &str) -> Result<PlanFrequency, ApiServerError> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "weekly" => Ok(PlanFrequency::Weekly),
-        "biweekly" | "bi_weekly" => Ok(PlanFrequency::BiWeekly),
-        "monthly" => Ok(PlanFrequency::Monthly),
-        "quarterly" => Ok(PlanFrequency::Quarterly),
-        "yearly" => Ok(PlanFrequency::Yearly),
+    let trimmed = raw.trim();
+    if let Ok(days) = trimmed.parse::<u16>() {
+        return Ok(PlanFrequency::from_days(days)?);
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "weekly" => Ok(PlanFrequency::Days7),
+        "biweekly" | "bi_weekly" => Ok(PlanFrequency::Days15),
+        "monthly" => Ok(PlanFrequency::Days30),
+        "bimonthly" | "bi_monthly" => Ok(PlanFrequency::Days60),
+        "quarterly" => Ok(PlanFrequency::Days90),
+        "semiannual" | "semi_annual" => Ok(PlanFrequency::Days180),
+        "yearly" | "annual" => Ok(PlanFrequency::Days360),
         _ => Err(PaymobError::ValidationError {
             field: "frequency",
             reason: "unsupported plan frequency".to_owned(),
@@ -125,8 +131,7 @@ pub async fn list_plans(
     state: web::Data<AppState>,
     query: web::Query<PageParams>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let page = PageQuery::new(query.page.unwrap_or(1));
-    let resp = state.client.subscriptions().plans().list(page).await?;
+    let resp = state.client.subscriptions().plans().list(query.page).await?;
     Ok(HttpResponse::Ok().json(json!({
         "count": resp.results.len(),
         "total": resp.count,

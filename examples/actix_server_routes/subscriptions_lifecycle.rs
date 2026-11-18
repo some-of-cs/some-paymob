@@ -27,7 +27,7 @@ pub async fn create_subscription(
     body: web::Json<CreateSubPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
     let currency = parse_currency(&body.currency)?;
-    let amount = MinorUnitAmount::new(body.amount_cents)?;
+    let amount = MinorUnitAmount::new(body.amount_cents);
     let mut params = CreateSubscriptionParams::new(
         body.subscription_plan_id,
         amount,
@@ -65,7 +65,6 @@ fn sub_ok(sub: Subscription) -> Result<HttpResponse, ApiServerError> {
         "state": sub.state,
         "plan_id": sub.plan_id,
         "amount_cents": sub.amount_cents,
-        "is_active": sub.is_active,
     })))
 }
 
@@ -116,7 +115,7 @@ pub async fn list_subscriptions(
         filter.page = Some(p);
     }
     if let Some(s) = &query.state {
-        filter.state = Some(s.clone());
+        filter.state = Some(SubscriptionState::from_state(s));
     }
     let resp = state.client.subscriptions().list(&filter).await?;
     Ok(HttpResponse::Ok().json(json!({
@@ -141,7 +140,7 @@ pub async fn update_subscription(
 ) -> Result<HttpResponse, ApiServerError> {
     let mut params = UpdateSubscriptionParams::new();
     if let Some(amt) = body.amount_cents {
-        params = params.with_amount_cents(MinorUnitAmount::new(amt)?);
+        params = params.with_amount_cents(MinorUnitAmount::new(amt));
     }
     if let Some(pid) = body.plan_id {
         params = params.with_plan_id(pid);

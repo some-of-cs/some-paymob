@@ -5,16 +5,30 @@ use actix_web::{HttpResponse, web};
 use serde::Deserialize;
 use serde_json::json;
 use some_paymob::prelude::*;
-use some_paymob::resources::subscriptions::models::SubscriptionTransaction;
 
 use super::{ApiServerError, AppState};
 
-fn sub_tx_ok(tx: SubscriptionTransaction) -> Result<HttpResponse, ApiServerError> {
+fn card_json(c: &SubscriptionCard) -> serde_json::Value {
+    json!({
+        "id": c.id,
+        "masked_pan": c.masked_pan,
+        "is_primary": c.is_primary,
+        "failed_attempts": c.failed_attempts,
+        "token": "[REDACTED]",
+    })
+}
+
+fn tx_summary(
+    id: u64,
+    amount_cents: u64,
+    success: bool,
+    is_refunded: bool,
+) -> Result<HttpResponse, ApiServerError> {
     Ok(HttpResponse::Ok().json(json!({
-        "id": tx.id,
-        "amount_cents": tx.amount_cents,
-        "success": tx.success,
-        "is_refunded": tx.is_refunded,
+        "id": id,
+        "amount_cents": amount_cents,
+        "success": success,
+        "is_refunded": is_refunded,
     })))
 }
 
@@ -52,11 +66,11 @@ async fn mutate_card(
             p = p.with_integration_id(id);
         }
         if let Some(url) = &body.redirect_url {
-            p = p.with_redirect_url(url);
+            p = p.with_redirect_url(url)?;
         }
         cards.add_secondary(sub_id, p).await?
     };
-    Ok(HttpResponse::Ok().json(card))
+    Ok(HttpResponse::Ok().json(card_json(&card)))
 }
 
 /// `GET /subscriptions/{sub_id}/cards` — Lists cards attached to a subscription.
@@ -70,7 +84,8 @@ pub async fn list_cards(
         .cards()
         .list(path.into_inner())
         .await?;
-    Ok(HttpResponse::Ok().json(json!({ "count": cards.len(), "cards": cards })))
+    let items: Vec<serde_json::Value> = cards.iter().map(card_json).collect();
+    Ok(HttpResponse::Ok().json(json!({ "count": items.len(), "cards": items })))
 }
 
 /// `POST /subscriptions/{sub_id}/cards/secondary` — Adds a secondary card to a subscription.
@@ -137,13 +152,12 @@ pub async fn last_transaction(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    sub_tx_ok(
-        state
-            .client
-            .subscriptions()
-            .last_transaction(path.into_inner())
-            .await?,
-    )
+    let tx = state
+        .client
+        .subscriptions()
+        .last_transaction(path.into_inner())
+        .await?;
+    tx_summary(tx.id, tx.amount_cents, tx.success, tx.is_refunded)
 }
 
 /// `GET /subscriptions/{sub_id}/transactions` — Lists subscription transactions.
@@ -170,13 +184,12 @@ pub async fn refund_last_transaction(
     path: web::Path<u64>,
     body: web::Json<RefundLastTxPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
-    sub_tx_ok(
-        state
-            .client
-            .subscriptions()
-            .refund_last_transaction(path.into_inner(), body.amount_cents)
-            .await?,
-    )
+    let r = state
+        .client
+        .subscriptions()
+        .refund_last_transaction(path.into_inner(), body.amount_cents)
+        .await?;
+    tx_summary(r.id, r.amount_cents, r.success, r.is_refunded)
 }
 
 /// Registers Service 8c routes.

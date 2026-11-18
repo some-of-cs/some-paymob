@@ -251,7 +251,7 @@ pub async fn cashin_bulk(
     if let Some(is_bank) = body.bank_transaction {
         params = params.with_bank_transaction(is_bank);
     }
-    let resp = state.client.payouts().cashin().bulk(&params).await?;
+    let resp = state.client.payouts().cashin().bulk(params).await?;
     Ok(HttpResponse::Ok().json(json!({
         "status": resp.status,
         "status_code": resp.status_code,

@@ -592,8 +592,9 @@ async fn e2e_webhooks_protocols_a_b_c_d_e_ok() {
     let payout_body = json!({
         "transaction_id": "tx_e_1",
         "issuer": "vodafone",
-        "disbursement_status": "successful",
-        "amount": 150
+        "status": "successful",
+        "amount_cents": 15000,
+        "currency": "EGP"
     });
     assert_eq!(
         post_status(&router, "/webhooks/paymob", payout_body).await,
@@ -675,12 +676,12 @@ async fn boundary_payout_inquiry_ids_0_1_500_501() {
     };
     let st0 = post_status(&router, "/payouts/inquiries/transactions", mk_ids(0)).await;
     let st1 = post_status(&router, "/payouts/inquiries/transactions", mk_ids(1)).await;
-    let st500 = post_status(&router, "/payouts/inquiries/transactions", mk_ids(500)).await;
-    let st501 = post_status(&router, "/payouts/inquiries/transactions", mk_ids(501)).await;
+    let st1000 = post_status(&router, "/payouts/inquiries/transactions", mk_ids(1_000)).await;
+    let st1001 = post_status(&router, "/payouts/inquiries/transactions", mk_ids(1_001)).await;
     assert_eq!(st0, StatusCode::BAD_REQUEST);
     assert_eq!(st1, StatusCode::OK);
-    assert_eq!(st500, StatusCode::OK);
-    assert_eq!(st501, StatusCode::BAD_REQUEST);
+    assert_eq!(st1000, StatusCode::OK);
+    assert_eq!(st1001, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

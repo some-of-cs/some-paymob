@@ -34,7 +34,8 @@ pub async fn setup_test_app() -> (PaymobMockServer, Router, Arc<AppState>) {
                 .expect("valid payouts credentials"),
         )
         .partner_credentials(
-            PartnerCredentials::new("partner_user").expect("valid partner credentials"),
+            PartnerCredentials::with_bearer_token("partner_user", "partner_bearer_jwt")
+                .expect("valid partner credentials"),
         )
         .timeout(Duration::from_secs(5))
         .max_retries(1)
@@ -88,6 +89,12 @@ pub async fn send_json(
 /// `(StatusCode, Value)`.
 pub async fn send_get(router: &Router, uri: &str) -> (StatusCode, Value) {
     send_request(router, Method::GET, uri, None).await
+}
+
+/// Sends an HTTP `DELETE` request through `router` using `oneshot` and returns
+/// `(StatusCode, Value)`.
+pub async fn send_delete(router: &Router, uri: &str) -> (StatusCode, Value) {
+    send_request(router, Method::DELETE, uri, None).await
 }
 
 /// Sends an HTTP `POST` request with a JSON body and returns only its [`StatusCode`].

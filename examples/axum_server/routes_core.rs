@@ -173,26 +173,45 @@ async fn sandbox_check_handler(
     Ok(Json(report.into()))
 }
 
+/// Serializable response DTO for v1 Payment Intentions with redacted `client_secret`.
 #[derive(Serialize)]
-struct IntentionResponseDto {
-    id: String,
-    intention_order_id: u64,
-    client_secret: &'static str,
-    payment_keys_count: usize,
-    card_tokens_count: usize,
-    confirmed: bool,
-    status: String,
-    special_reference: Option<String>,
-    created: Option<String>,
-    object: Option<String>,
+pub struct IntentionResponseDto {
+    /// Paymob Payment Intention identifier.
+    pub id: String,
+    /// Associated Paymob order identifier.
+    pub intention_order_id: u64,
+    /// Redacted client secret marker (`"[REDACTED]"`).
+    pub client_secret: &'static str,
+    /// Regional Unified Checkout redirect URL, if `public_key` is configured.
+    pub unified_checkout_url: Option<String>,
+    /// Number of payment keys returned.
+    pub payment_keys_count: usize,
+    /// Number of saved card tokens returned.
+    pub card_tokens_count: usize,
+    /// Whether the intention is confirmed.
+    pub confirmed: bool,
+    /// Current intention lifecycle status.
+    pub status: String,
+    /// Optional merchant special reference.
+    pub special_reference: Option<String>,
+    /// Optional creation timestamp.
+    pub created: Option<String>,
+    /// Optional object type discriminator.
+    pub object: Option<String>,
 }
 
 impl IntentionResponseDto {
-    fn from_sdk(resp: &IntentionResponse) -> Self {
+    fn from_sdk(resp: &IntentionResponse, paymob: &PaymobClient) -> Self {
+        let unified_checkout_url = paymob
+            .checkout()
+            .unified_url(&resp.client_secret)
+            .ok()
+            .map(|u| u.to_string());
         Self {
             id: resp.id.clone(),
             intention_order_id: resp.intention_order_id,
             client_secret: REDACTED_MARKER,
+            unified_checkout_url,
             payment_keys_count: resp.payment_keys.len(),
             card_tokens_count: resp.card_tokens.len(),
             confirmed: resp.confirmed,
@@ -217,7 +236,7 @@ async fn create_intention_handler(
     Json(params): Json<CreateIntentionParams>,
 ) -> Result<Json<IntentionResponseDto>, ApiServerError> {
     let resp = build_intentions_service(&state).create(params).await?;
-    Ok(Json(IntentionResponseDto::from_sdk(&resp)))
+    Ok(Json(IntentionResponseDto::from_sdk(&resp, &state.paymob)))
 }
 
 async fn update_intention_handler(
@@ -225,7 +244,7 @@ async fn update_intention_handler(
     Json(params): Json<UpdateIntentionParams>,
 ) -> Result<Json<IntentionResponseDto>, ApiServerError> {
     let resp = build_intentions_service(&state).update(params).await?;
-    Ok(Json(IntentionResponseDto::from_sdk(&resp)))
+    Ok(Json(IntentionResponseDto::from_sdk(&resp, &state.paymob)))
 }
 
 #[derive(Deserialize)]

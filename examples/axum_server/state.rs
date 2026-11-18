@@ -262,10 +262,26 @@ fn build_retry_headers(retry_after: Option<u64>) -> HeaderMap {
 
 fn sanitize_error_message(raw: &str) -> String {
     const SECRET_MARKERS: &[&str] = &[
-        "sk_live_", "sk_test_", "pk_live_", "pk_test_", "egy_sk_", "ksa_sk_", "uae_sk_", "omn_sk_",
-        "pak_sk_", "eyJ",
+        "sk_live_",
+        "sk_test_",
+        "pk_live_",
+        "pk_test_",
+        "egy_sk_",
+        "ksa_sk_",
+        "uae_sk_",
+        "omn_sk_",
+        "pak_sk_",
+        "eyJ",
+        "Bearer ",
+        "Token ",
+        "Basic ",
+        "refresh_token",
+        "access_token",
+        "password",
+        "client_secret",
+        "@",
     ];
-    if SECRET_MARKERS.iter().any(|prefix| raw.contains(prefix)) {
+    if SECRET_MARKERS.iter().any(|marker| raw.contains(marker)) {
         return String::from("[REDACTED]");
     }
     raw.to_owned()

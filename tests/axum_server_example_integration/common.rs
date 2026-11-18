@@ -10,7 +10,9 @@ use axum::http::{Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use some_paymob::core::auth::payouts_oauth::PayoutsCredentials;
-use some_paymob::core::credentials::{ApiKey, HmacSecret, PartnerCredentials, PublicKey, SecretKey};
+use some_paymob::core::credentials::{
+    ApiKey, HmacSecret, PartnerCredentials, PublicKey, SecretKey,
+};
 use some_paymob::prelude::*;
 use some_paymob::test_utils::mock_server::{JsonEndpointMockConfig, MockHost, PaymobMockServer};
 use some_paymob::test_utils::vectors::SAMPLE_HMAC_SECRET;

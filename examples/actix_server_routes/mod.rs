@@ -5,6 +5,7 @@ pub mod core_health;
 pub mod intentions_checkout;
 pub mod legacy_v2;
 pub mod manage_inquiries;
+pub mod onboarding;
 pub mod payouts_cashin;
 pub mod payouts_ops;
 pub mod quicklinks_splits;
@@ -12,6 +13,8 @@ pub mod saved_cards;
 pub mod subscriptions_cards_history;
 pub mod subscriptions_lifecycle;
 pub mod subscriptions_plans;
+pub mod unified_adapter;
+pub mod webhooks;
 
 use std::fmt;
 use std::sync::Arc;
@@ -20,6 +23,9 @@ use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError, web};
 use serde_json::json;
 use some_paymob::prelude::*;
+
+/// Maximum allowed JSON payload size (4 MiB) for Actix-Web routes (`SA-R2-03`).
+pub const MAX_JSON_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 
 /// Shared Actix-Web application state wrapping an `Arc`-backed [`PaymobClient`]
 /// and an in-memory webhook replay deduplicator.
@@ -165,4 +171,11 @@ pub fn configure_unit_2(cfg: &mut web::ServiceConfig) {
     subscriptions_cards_history::configure(cfg);
     payouts_cashin::configure(cfg);
     payouts_ops::configure(cfg);
+}
+
+/// Configures Unit 3 routes (Services 10–11).
+pub fn configure_unit_3(cfg: &mut web::ServiceConfig) {
+    onboarding::configure(cfg);
+    webhooks::configure(cfg);
+    unified_adapter::configure(cfg);
 }

@@ -34,7 +34,7 @@ use some_paymob::{
     UpdateIntentionParams, VoidParams,
 };
 
-use crate::state::{ApiServerError, AppState};
+use super::state::{ApiServerError, AppState};
 
 const REDACTED_MARKER: &str = "[REDACTED]";
 
@@ -681,7 +681,7 @@ fn compute_convenience_quote(
     if let Some(ref bin) = input.bin_prefix {
         ctx = ctx.with_bin_prefix(bin);
     }
-    let fee = fee_cfg.compute_fee_for_card_cents(input.amount_cents, ctx)?;
+    let fee = fee_cfg.compute_fee_for_card_cents(input.amount_cents, &ctx)?;
     let total =
         input
             .amount_cents

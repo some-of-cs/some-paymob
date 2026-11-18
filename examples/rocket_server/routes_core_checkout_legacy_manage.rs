@@ -13,7 +13,7 @@ use some_paymob::{
     CreateIntentionParams, CreateIntentionParamsBuilder, CreateLegacyOrderParams,
     CreatePaymentKeyParams, CreateQuickLinkParams, Currency, IntentionCustomer, IntentionItem,
     IntentionResponse, LegacyBillingData, LegacyCheckoutParams, LegacyOrder, LegacyOrderItem,
-    MinorUnitAmount, OrderInquiryResponse, PaymobError, PaymentMethodInput, PixelConfig,
+    MinorUnitAmount, OrderInquiryResponse, PaymentMethodInput, PaymobError, PixelConfig,
     PixelPaymentMethod, QuickLinkResponse, RefundParams, SplitDescription, SplitRecipientRule,
     TransactionInquiryParams, UpdateIntentionParams, UpdateIntentionParamsBuilder, VoidParams,
 };

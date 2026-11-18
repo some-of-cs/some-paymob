@@ -52,9 +52,7 @@ impl ApiServerError {
 fn map_client_paymob_error(err: &PaymobError) -> Option<(Status, &'static str)> {
     match err {
         PaymobError::ValidationError { .. } => Some((Status::BadRequest, "validation_error")),
-        PaymobError::AuthenticationError(_) => {
-            Some((Status::Unauthorized, "authentication_error"))
-        }
+        PaymobError::AuthenticationError(_) => Some((Status::Unauthorized, "authentication_error")),
         PaymobError::EnvironmentMismatch(_) => {
             Some((Status::UnprocessableEntity, "environment_mismatch"))
         }
@@ -124,9 +122,7 @@ impl<'r> Responder<'r, 'static> for ApiServerError {
             error: self.error,
             message: self.message,
         })
-        .unwrap_or_else(|_| {
-            r#"{"error":"serialization_error","message":"failed"}"#.to_string()
-        });
+        .unwrap_or_else(|_| r#"{"error":"serialization_error","message":"failed"}"#.to_string());
         let mut builder = Response::build();
         builder
             .status(self.status)

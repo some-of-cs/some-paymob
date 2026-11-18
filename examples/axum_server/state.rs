@@ -164,9 +164,12 @@ fn map_paymob_client_error(
     err: &PaymobError,
 ) -> Option<(StatusCode, Option<u64>, &'static str, String)> {
     match err {
-        PaymobError::ValidationError { .. } => {
-            Some((StatusCode::BAD_REQUEST, None, "validation_error", err.to_string()))
-        }
+        PaymobError::ValidationError { .. } => Some((
+            StatusCode::BAD_REQUEST,
+            None,
+            "validation_error",
+            err.to_string(),
+        )),
         PaymobError::AuthenticationError(_) => Some((
             StatusCode::UNAUTHORIZED,
             None,
@@ -209,9 +212,12 @@ fn map_paymob_upstream_error(err: &PaymobError) -> (StatusCode, Option<u64>, &'s
             "transport_error",
             err.to_string(),
         ),
-        PaymobError::WebhookError(_) => {
-            (StatusCode::BAD_REQUEST, None, "webhook_error", err.to_string())
-        }
+        PaymobError::WebhookError(_) => (
+            StatusCode::BAD_REQUEST,
+            None,
+            "webhook_error",
+            err.to_string(),
+        ),
         _ => (
             StatusCode::INTERNAL_SERVER_ERROR,
             None,
@@ -257,16 +263,8 @@ fn build_retry_headers(retry_after: Option<u64>) -> HeaderMap {
 
 fn sanitize_error_message(raw: &str) -> String {
     const SECRET_MARKERS: &[&str] = &[
-        "sk_live_",
-        "sk_test_",
-        "pk_live_",
-        "pk_test_",
-        "egy_sk_",
-        "ksa_sk_",
-        "uae_sk_",
-        "omn_sk_",
-        "pak_sk_",
-        "eyJ",
+        "sk_live_", "sk_test_", "pk_live_", "pk_test_", "egy_sk_", "ksa_sk_", "uae_sk_", "omn_sk_",
+        "pak_sk_", "eyJ",
     ];
     if SECRET_MARKERS.iter().any(|prefix| raw.contains(prefix)) {
         return String::from("[REDACTED]");

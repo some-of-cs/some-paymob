@@ -4,6 +4,7 @@
 use rocket::data::{ByteUnit, Data};
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome, Request};
+use rocket::response::status::Created;
 use rocket::serde::json::Json;
 use rocket::{Route, State, get, post, put, routes};
 use serde::{Deserialize, Serialize};
@@ -18,8 +19,7 @@ use some_paymob::{
     UnifiedPayoutRequest, UnifiedRefundReceipt, UnifiedRefundRequest,
     UnifiedSavedMethodChargeReceipt, UnifiedSavedMethodChargeRequest,
     UnifiedSubscriptionRefundReceipt, UnifiedSubscriptionRefundRequest, UnifiedVoidReceipt,
-    UnifiedVoidRequest, UnifiedWebhookInput, UnifiedWebhookOutcome, UpdateIntentionParams,
-    VoidParams, WebhookVerifier,
+    UnifiedVoidRequest, UnifiedWebhookOutcome, UpdateIntentionParams, VoidParams,
 };
 
 use super::{ApiServerError, AppState};
@@ -98,7 +98,7 @@ struct ScopedUpdateIntentionInput {
     redirection_url: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Hash, Serialize)]
 struct IntentionSummaryDto {
     id: String,
     intention_order_id: u64,
@@ -126,7 +126,7 @@ struct RedirectWebhookAckDto {
     deduplicated: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Hash, Serialize)]
 struct UnifiedSessionDto {
     session_id: String,
     order_id: String,
@@ -153,22 +153,30 @@ fn intention_summary(resp: IntentionResponse) -> IntentionSummaryDto {
     }
 }
 
-fn build_scoped_create_params(
-    input: ScopedCreateIntentionInput,
-) -> Result<CreateIntentionParams, ApiServerError> {
-    let mut builder = CreateIntentionParams::builder()
-        .amount(input.amount)
-        .currency(input.currency)
-        .payment_methods(input.payment_methods);
-    if let Some(reference) = input.special_reference {
+fn apply_scoped_create_urls(
+    mut builder: some_paymob::CreateIntentionParamsBuilder,
+    input: &mut ScopedCreateIntentionInput,
+) -> some_paymob::CreateIntentionParamsBuilder {
+    if let Some(reference) = input.special_reference.take() {
         builder = builder.special_reference(reference);
     }
-    if let Some(url) = input.notification_url {
+    if let Some(url) = input.notification_url.take() {
         builder = builder.notification_url(url);
     }
-    if let Some(url) = input.redirection_url {
+    if let Some(url) = input.redirection_url.take() {
         builder = builder.redirection_url(url);
     }
+    builder
+}
+
+fn build_scoped_create_params(
+    mut input: ScopedCreateIntentionInput,
+) -> Result<CreateIntentionParams, ApiServerError> {
+    let builder = CreateIntentionParams::builder()
+        .amount(input.amount)
+        .currency(input.currency.clone())
+        .payment_methods(std::mem::take(&mut input.payment_methods));
+    let mut builder = apply_scoped_create_urls(builder, &mut input);
     if let Some(exp) = input.expiration {
         builder = builder.expiration(exp);
     }
@@ -178,19 +186,26 @@ fn build_scoped_create_params(
     builder.build().map_err(ApiServerError::from)
 }
 
-fn build_scoped_update_params(
-    input: ScopedUpdateIntentionInput,
-) -> Result<UpdateIntentionParams, ApiServerError> {
-    let mut builder = UpdateIntentionParams::builder();
-    if let Some(amount) = input.amount {
+fn apply_scoped_update_core(
+    mut builder: some_paymob::UpdateIntentionParamsBuilder,
+    input: &mut ScopedUpdateIntentionInput,
+) -> some_paymob::UpdateIntentionParamsBuilder {
+    if let Some(amount) = input.amount.take() {
         builder = builder.amount(amount);
     }
-    if let Some(currency) = input.currency {
+    if let Some(currency) = input.currency.take() {
         builder = builder.currency(currency);
     }
-    if let Some(methods) = input.payment_methods {
+    if let Some(methods) = input.payment_methods.take() {
         builder = builder.payment_methods(methods);
     }
+    builder
+}
+
+fn apply_scoped_update_urls(
+    mut builder: some_paymob::UpdateIntentionParamsBuilder,
+    input: ScopedUpdateIntentionInput,
+) -> some_paymob::UpdateIntentionParamsBuilder {
     if let Some(reference) = input.special_reference {
         builder = builder.special_reference(reference);
     }
@@ -200,6 +215,14 @@ fn build_scoped_update_params(
     if let Some(url) = input.redirection_url {
         builder = builder.redirection_url(url);
     }
+    builder
+}
+
+fn build_scoped_update_params(
+    mut input: ScopedUpdateIntentionInput,
+) -> Result<UpdateIntentionParams, ApiServerError> {
+    let builder = apply_scoped_update_core(UpdateIntentionParams::builder(), &mut input);
+    let builder = apply_scoped_update_urls(builder, input);
     builder.build().map_err(ApiServerError::from)
 }
 
@@ -321,14 +344,14 @@ async fn onboarding_flow_schema(
 async fn onboarding_flow_register(
     state: &State<AppState>,
     body: Json<RegisterMerchantParams>,
-) -> Result<Json<RegisteredMerchantResponse>, ApiServerError> {
+) -> Result<Created<Json<RegisteredMerchantResponse>>, ApiServerError> {
     let resp = state
         .client
         .onboarding()
         .flow()
         .register_merchant(&body.into_inner())
         .await?;
-    Ok(Json(resp))
+    Ok(Created::new("").body(Json(resp)))
 }
 
 #[post("/onboarding/flow/submit-step", data = "<body>")]
@@ -368,11 +391,11 @@ async fn merchant_create_intention(
     state: &State<AppState>,
     mid: u64,
     body: Json<ScopedCreateIntentionInput>,
-) -> Result<Json<IntentionSummaryDto>, ApiServerError> {
+) -> Result<Created<Json<IntentionSummaryDto>>, ApiServerError> {
     let params = build_scoped_create_params(body.into_inner())?;
     let scoped = state.client.with_merchant(mid)?;
     let resp = scoped.intentions().create(&params).await?;
-    Ok(Json(intention_summary(resp)))
+    Ok(Created::new("").tagged_body(Json(intention_summary(resp))))
 }
 
 #[put("/merchants/<mid>/intentions", data = "<body>")]
@@ -560,17 +583,17 @@ async fn webhook_paymob_redirect(
 async fn unified_create_session(
     state: &State<AppState>,
     body: Json<UnifiedPaymentSessionRequest>,
-) -> Result<Json<UnifiedSessionDto>, ApiServerError> {
+) -> Result<Created<Json<UnifiedSessionDto>>, ApiServerError> {
     let session = state
         .client
         .create_payment_session(&body.into_inner())
         .await?;
-    Ok(Json(UnifiedSessionDto {
+    Ok(Created::new("").tagged_body(Json(UnifiedSessionDto {
         session_id: session.session_id.clone(),
         order_id: session.order_id.clone(),
         status: session.status.clone(),
         confirmed: session.confirmed,
-    }))
+    })))
 }
 
 #[post("/unified/capture", data = "<body>")]
@@ -643,10 +666,11 @@ async fn unified_webhook(
     body: Data<'_>,
 ) -> Result<Json<UnifiedWebhookOutcome>, ApiServerError> {
     let raw_body = read_body_text(body).await?;
-    let outcome = state
-        .client
-        .verify_webhook(&UnifiedWebhookInput::new(&raw_body, hmac.as_deref()))?;
-    Ok(Json(outcome))
+    let event = state
+        .webhook_engine
+        .construct_event(&raw_body, hmac.as_deref())?;
+    state.deduplicator.claim_or_reject(&event)?;
+    Ok(Json(some_paymob::normalize_webhook_event(&event)))
 }
 
 /// Returns all Unit 3 Rocket routes.

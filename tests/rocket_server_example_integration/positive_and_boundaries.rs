@@ -695,7 +695,7 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
         "/webhooks/paymob",
         &json!({
             "transaction_id": "tx_e1",
-            "issuer": "vodafone",
+            "issuer": "bank_card",
             "amount_cents": 20_000,
             "currency": "EGP",
             "status": "successful"

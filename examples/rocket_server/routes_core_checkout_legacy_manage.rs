@@ -108,7 +108,7 @@ pub struct UpdateIntentionRequest {
 }
 
 /// Serializable response DTO for `POST /intentions` and `PUT /intentions`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Hash, Serialize)]
 pub struct IntentionRouteResponse {
     /// Paymob Payment Intention identifier.
     pub id: String,
@@ -211,7 +211,7 @@ pub struct CreatePaymentKeyRequest {
 }
 
 /// Response returned by `POST /legacy/payment-keys`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Hash, Serialize)]
 pub struct PaymentKeyRouteResponse {
     /// Short-lived payment key token.
     pub token: String,
@@ -640,7 +640,7 @@ async fn legacy_create_order(
     }
     let service = state.client.legacy_v2()?;
     let order = service.create_order(&params).await?;
-    Ok(Created::new("").tagged_body(Json(order)))
+    Ok(Created::new("").body(Json(order)))
 }
 
 #[post("/legacy/payment-keys", data = "<payload>")]
@@ -686,13 +686,12 @@ async fn legacy_create_checkout(
     }
     let service = state.client.legacy_v2()?;
     let session = service.create_checkout(&params).await?;
-    Ok(
-        Created::new("").tagged_body(Json(LegacyCheckoutRouteResponse {
-            order: session.order,
-            payment_token: session.payment_key.expose_token().to_owned(),
-            iframe_url: session.iframe_url.to_string(),
-        })),
-    )
+    let dto = LegacyCheckoutRouteResponse {
+        order: session.order,
+        payment_token: session.payment_key.expose_token().to_owned(),
+        iframe_url: session.iframe_url.to_string(),
+    };
+    Ok(Created::new("").body(Json(dto)))
 }
 
 #[post("/manage/refund", data = "<payload>")]
@@ -833,7 +832,7 @@ async fn create_quicklink(
     );
     let params = apply_quicklink_optionals(params, req);
     let resp = state.client.quicklinks().create(&params).await?;
-    Ok(Created::new("").tagged_body(Json(resp)))
+    Ok(Created::new("").body(Json(resp)))
 }
 
 #[post("/quicklinks/<link_id>/cancel")]

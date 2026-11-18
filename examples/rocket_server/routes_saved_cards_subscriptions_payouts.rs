@@ -239,7 +239,7 @@ async fn create_plan(
         .plans()
         .create(&params)
         .await?;
-    Ok(Created::new("").tagged_body(Json(plan)))
+    Ok(Created::new("").body(Json(plan)))
 }
 
 #[put("/subscriptions/plans/<plan_id>", data = "<body>")]
@@ -455,7 +455,7 @@ async fn create_subscription(
         extras: req.extras,
     };
     let resp = app_state.client.subscriptions().create(&params).await?;
-    Ok(Created::new("").tagged_body(Json(resp.into())))
+    Ok(Created::new("").body(Json(resp.into())))
 }
 
 #[get("/subscriptions/<sub_id>")]

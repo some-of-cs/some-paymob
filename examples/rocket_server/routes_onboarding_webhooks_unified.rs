@@ -98,7 +98,7 @@ struct ScopedUpdateIntentionInput {
     redirection_url: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Hash, Serialize)]
 struct IntentionSummaryDto {
     id: String,
     intention_order_id: u64,
@@ -126,7 +126,7 @@ struct RedirectWebhookAckDto {
     deduplicated: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Hash, Serialize)]
 struct UnifiedSessionDto {
     session_id: String,
     order_id: String,
@@ -351,7 +351,7 @@ async fn onboarding_flow_register(
         .flow()
         .register_merchant(&body.into_inner())
         .await?;
-    Ok(Created::new("").tagged_body(Json(resp)))
+    Ok(Created::new("").body(Json(resp)))
 }
 
 #[post("/onboarding/flow/submit-step", data = "<body>")]

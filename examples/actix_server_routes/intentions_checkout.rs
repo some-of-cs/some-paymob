@@ -57,7 +57,7 @@ fn parse_env_mode(raw: &str) -> Result<EnvironmentMode, ApiServerError> {
         "test" => Ok(EnvironmentMode::Test),
         "live" => Ok(EnvironmentMode::Live),
         _ => Err(PaymobError::ValidationError {
-            field: "integration_mode".to_owned(),
+            field: "integration_mode",
             reason: "expected 'test' or 'live'".to_owned(),
         }
         .into()),
@@ -97,7 +97,7 @@ pub async fn create_intention(
         .map(PaymentMethodInput::IntegrationId)
         .collect();
     let b = CreateIntentionParams::builder()
-        .amount(MinorUnitAmount::from_minor(body.amount_cents))
+        .amount(MinorUnitAmount::new(body.amount_cents))
         .currency(currency)
         .payment_methods(methods)
         .billing_data(billing);
@@ -107,7 +107,7 @@ pub async fn create_intention(
     {
         svc = svc.with_integration_mode(*first_id, parse_env_mode(mode_str)?);
     }
-    let resp = svc.create(&params).await?;
+    let resp = svc.create(params).await?;
     Ok(HttpResponse::Created().json(json!({
         "id": resp.id,
         "status": resp.status,
@@ -132,7 +132,7 @@ pub async fn update_intention(
 ) -> Result<HttpResponse, ApiServerError> {
     let mut b = UpdateIntentionParams::builder();
     if let Some(amt) = body.amount_cents {
-        b = b.amount(MinorUnitAmount::from_minor(amt));
+        b = b.amount(MinorUnitAmount::new(amt));
     }
     if let Some(cur) = &body.currency {
         b = b.currency(parse_currency(cur)?);
@@ -147,7 +147,7 @@ pub async fn update_intention(
     let resp = state
         .client
         .intentions()
-        .update(&SecretString::from(body.client_secret.clone()), &params)
+        .update(params)
         .await?;
     Ok(HttpResponse::Ok().json(json!({
         "id": resp.id,
@@ -201,7 +201,7 @@ pub async fn checkout_affordability(
     let currency = parse_currency(&body.currency)?;
     let mut b = AffordabilityWidgetConfig::builder(
         &pk,
-        MinorUnitAmount::from_minor(body.amount_cents),
+        MinorUnitAmount::new(body.amount_cents),
         currency,
     );
     if let Some(plan) = body.pre_selected_plan {

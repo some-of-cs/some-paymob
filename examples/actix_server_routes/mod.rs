@@ -89,7 +89,6 @@ fn map_paymob_status(err: &PaymobError) -> StatusCode {
             StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
         }
         PaymobError::TransportError(_) => StatusCode::BAD_GATEWAY,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -136,7 +135,7 @@ pub(crate) fn parse_currency(raw: &str) -> Result<Currency, ApiServerError> {
         "PKR" => Ok(Currency::PKR),
         "USD" => Ok(Currency::USD),
         _ => Err(PaymobError::ValidationError {
-            field: "currency".to_owned(),
+            field: "currency",
             reason: "unsupported currency code".to_owned(),
         }
         .into()),

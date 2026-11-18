@@ -5,8 +5,18 @@ use actix_web::{HttpResponse, web};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use some_paymob::prelude::*;
+use some_paymob::resources::manage::models::Transaction;
 
 use super::{ApiServerError, AppState};
+
+fn manage_tx_json(tx: &Transaction, flag_key: &str, flag_val: bool) -> HttpResponse {
+    HttpResponse::Ok().json(json!({
+        "id": tx.id,
+        "success": tx.success,
+        flag_key: flag_val,
+        "amount_cents": tx.amount_cents,
+    }))
+}
 
 #[derive(Debug, Deserialize)]
 pub struct RefundPayload {
@@ -21,12 +31,7 @@ pub async fn manage_refund(
 ) -> Result<HttpResponse, ApiServerError> {
     let params = RefundParams::try_new(body.transaction_id, body.amount_cents)?;
     let tx = state.client.manage().refund(params).await?;
-    Ok(HttpResponse::Ok().json(json!({
-        "id": tx.id,
-        "success": tx.success,
-        "is_refund": tx.is_refund,
-        "amount_cents": tx.amount_cents,
-    })))
+    Ok(manage_tx_json(&tx, "is_refund", tx.is_refund))
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,11 +46,7 @@ pub async fn manage_void(
 ) -> Result<HttpResponse, ApiServerError> {
     let params = VoidParams::try_new(body.transaction_id)?;
     let tx = state.client.manage().void(params).await?;
-    Ok(HttpResponse::Ok().json(json!({
-        "id": tx.id,
-        "success": tx.success,
-        "is_void": tx.is_void,
-    })))
+    Ok(manage_tx_json(&tx, "is_void", tx.is_void))
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,12 +62,7 @@ pub async fn manage_capture(
 ) -> Result<HttpResponse, ApiServerError> {
     let params = CaptureParams::try_new(body.transaction_id, body.amount_cents)?;
     let tx = state.client.manage().capture(params).await?;
-    Ok(HttpResponse::Ok().json(json!({
-        "id": tx.id,
-        "success": tx.success,
-        "is_capture": tx.is_capture,
-        "amount_cents": tx.amount_cents,
-    })))
+    Ok(manage_tx_json(&tx, "is_capture", tx.is_capture))
 }
 
 /// `GET /inquiries/transactions/{tx_id}` — Fetches a transaction by ID.

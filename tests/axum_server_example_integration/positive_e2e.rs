@@ -402,7 +402,12 @@ async fn e2e_subscription_plans_and_lifecycle_ok() {
     });
     assert_post_created_or_ok(&router, "/subscriptions/plans", plan_req).await;
     assert_get_ok(&router, "/subscriptions/plans").await;
-    assert_put_ok(&router, "/subscriptions/plans/42", json!({ "name": "Pro+" })).await;
+    assert_put_ok(
+        &router,
+        "/subscriptions/plans/42",
+        json!({ "name": "Pro+" }),
+    )
+    .await;
     assert_post_ok(&router, "/subscriptions/plans/42/suspend", json!({})).await;
     assert_post_ok(&router, "/subscriptions/plans/42/resume", json!({})).await;
     let sub_req = json!({
@@ -496,7 +501,12 @@ async fn e2e_payouts_bank_post_aman_and_bulk_ok() {
     let aman = json!({ "transaction_id": "tx_aman_1" });
     assert_post_ok(&router, "/payouts/cashin/aman/cancel", aman).await;
     let item = json!({ "issuer": "vodafone", "amount": 150, "msisdn": "01012345678" });
-    assert_post_ok(&router, "/payouts/cashin/bulk", json!({ "transactions": [item] })).await;
+    assert_post_ok(
+        &router,
+        "/payouts/cashin/bulk",
+        json!({ "transactions": [item] }),
+    )
+    .await;
 }
 
 #[tokio::test]

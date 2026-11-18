@@ -16,7 +16,9 @@ pub struct HmacQuery {
     pub hmac: Option<String>,
 }
 
-pub(crate) fn build_webhook_engine(state: &AppState) -> Result<PaymobWebhookEngine, ApiServerError> {
+pub(crate) fn build_webhook_engine(
+    state: &AppState,
+) -> Result<PaymobWebhookEngine, ApiServerError> {
     let secret = state.client.config().hmac_secret().ok_or_else(|| {
         PaymobError::AuthenticationError("HMAC secret is not configured".to_owned())
     })?;

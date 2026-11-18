@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 //! Shared state, error mapping, and route registration for `examples/actix_server.rs`.
 
-pub mod core_checkout;
-pub mod legacy_manage_inquiries;
+pub mod core_health;
+pub mod intentions_checkout;
+pub mod legacy_v2;
+pub mod manage_inquiries;
 pub mod quicklinks_splits;
 
 use std::fmt;
@@ -143,7 +145,9 @@ pub(crate) fn parse_currency(raw: &str) -> Result<Currency, ApiServerError> {
 
 /// Configures Unit 1 routes (Services 1–6).
 pub fn configure_unit_1(cfg: &mut web::ServiceConfig) {
-    core_checkout::configure(cfg);
-    legacy_manage_inquiries::configure(cfg);
+    core_health::configure(cfg);
+    intentions_checkout::configure(cfg);
+    legacy_v2::configure(cfg);
+    manage_inquiries::configure(cfg);
     quicklinks_splits::configure(cfg);
 }

@@ -1,0 +1,39 @@
+{
+  "module_id": "example-rocket-server",
+  "base_branch": "main",
+  "module_branch": "feat/example-rocket-server",
+  "story_branch": "feat/us-rocket-server-and-tests",
+  "status": "in_progress",
+  "units": {
+    "unit-1": {
+      "branch": "feat/us-rocket/unit-1-core-checkout-legacy-manage",
+      "scope": "ApiServerError Responder + Services 1-7 routes",
+      "status": "pending",
+      "pr_number": null
+    },
+    "unit-2": {
+      "branch": "feat/us-rocket/unit-2-saved-cards-subscriptions-payouts",
+      "scope": "Services 9-12 routes (saved-cards, subscriptions, payouts)",
+      "status": "pending",
+      "pr_number": null
+    },
+    "unit-3": {
+      "branch": "feat/us-rocket/unit-3-onboarding-webhooks-unified-adapter",
+      "scope": "Services 13-14 routes (onboarding, webhooks, unified adapter) + build_rocket wiring",
+      "status": "pending",
+      "pr_number": null
+    },
+    "unit-4": {
+      "branch": "feat/us-rocket/unit-4-integration-tests-positive-and-boundaries",
+      "scope": "Positive E2E & boundary condition integration tests",
+      "status": "pending",
+      "pr_number": null
+    },
+    "unit-5": {
+      "branch": "feat/us-rocket/unit-5-integration-tests-negative-and-error-workflows",
+      "scope": "Negative validation, security/redaction, and error recovery integration tests",
+      "status": "pending",
+      "pr_number": null
+    }
+  }
+}

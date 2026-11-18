@@ -55,8 +55,14 @@ wiremock = { version = "0.6", optional = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
+rocket = { version = "0.5", features = ["json"] }
 tokio = { version = "1.40", features = ["full"] }
 wiremock = "0.6"
+
+[[example]]
+name = "rocket_server"
+path = "examples/rocket_server.rs"
+required-features = ["full"]
 
 [package.metadata.docs.rs]
 all-features = true

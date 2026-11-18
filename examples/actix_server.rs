@@ -1,1 +1,836 @@
-#![forbid(unsafe_code)]\n//! Reference Actix-Web HTTP Server demonstrating all 14 `some-paymob` services\n//! and all 5 constant-time HMAC-SHA512 webhook verification protocols (`A`–`E`).\n\nuse std::fmt;\nuse std::sync::Arc;\n\nuse actix_web::http::StatusCode;\nuse actix_web::{HttpResponse, ResponseError, web};\nuse secrecy::SecretString;\nuse serde::Deserialize;\nuse serde_json::{Value, json};\nuse some_paymob::prelude::*;\n\n/// Shared Actix-Web application state wrapping an `Arc`-backed [`PaymobClient`]\n/// and an in-memory webhook replay deduplicator.\n#[derive(Clone)]\npub struct AppState {\n    /// Configured `some-paymob` microkernel client.\n    pub client: PaymobClient,\n    /// Thread-safe in-memory webhook replay guard.\n    pub webhook_dedup: Arc<InMemoryWebhookDeduplicator>,\n}\n\nimpl AppState {\n    /// Creates a new [`AppState`] with a default [`InMemoryWebhookDeduplicator`].\n    #[must_use]\n    pub fn new(client: PaymobClient) -> Self {\n        Self {\n            client,\n            webhook_dedup: Arc::new(InMemoryWebhookDeduplicator::new()),\n        }\n    }\n}\n\n/// Deterministic HTTP error wrapper mapping `some-paymob` SDK, webhook, and\n/// sandbox constraint errors to Actix-Web `ResponseError` status codes.\n#[derive(Debug)]\npub enum ApiServerError {\n    /// Core or resource SDK error.\n    Paymob(PaymobError),\n    /// Cryptographic webhook verification or replay error.\n    Webhook(WebhookError),\n    /// Sandbox constraint error (credential age >= 30 days or unsupported channel).\n    Sandbox(SandboxConstraintError),\n}\n\nimpl fmt::Display for ApiServerError {\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        match self {\n            Self::Paymob(err) => write!(f, "{err}"),\n            Self::Webhook(err) => write!(f, "{err}"),\n            Self::Sandbox(err) => write!(f, "{err}"),\n        }\n    }\n}\n\nimpl From<PaymobError> for ApiServerError {\n    fn from(err: PaymobError) -> Self {\n        Self::Paymob(err)\n    }\n}\n\nimpl From<WebhookError> for ApiServerError {\n    fn from(err: WebhookError) -> Self {\n        Self::Webhook(err)\n    }\n}\n\nimpl From<SandboxConstraintError> for ApiServerError {\n    fn from(err: SandboxConstraintError) -> Self {\n        Self::Sandbox(err)\n    }\n}\n\nfn map_paymob_status(err: &PaymobError) -> StatusCode {\n    match err {\n        PaymobError::ValidationError { .. } | PaymobError::WebhookError(_) => {\n            StatusCode::BAD_REQUEST\n        }\n        PaymobError::AuthenticationError(_) => StatusCode::UNAUTHORIZED,\n        PaymobError::EnvironmentMismatch(_) |\n        PaymobError::RefundExceedsPermissibleAmount { .. } => StatusCode::UNPROCESSABLE_ENTITY,\n        PaymobError::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,\n        PaymobError::ApiError { status, .. } => {\n            StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)\n        }\n        PaymobError::TransportError(_) => StatusCode::BAD_GATEWAY,\n        _ => StatusCode::INTERNAL_SERVER_ERROR,\n    }\n}\n\nfn map_webhook_status(err: &WebhookError) -> StatusCode {\n    match err {\n        WebhookError::SignatureMismatch => StatusCode::UNAUTHORIZED,\n        WebhookError::DuplicateWebhookDelivery { .. } => StatusCode::CONFLICT,\n        _ => StatusCode::BAD_REQUEST,\n    }\n}\n\nimpl ResponseError for ApiServerError {\n    fn status_code(&self) -> StatusCode {\n        match self {\n            Self::Paymob(err) => map_paymob_status(err),\n            Self::Webhook(err) => map_webhook_status(err),\n            Self::Sandbox(_) => StatusCode::UNPROCESSABLE_ENTITY,\n        }\n    }\n\n    fn error_response(&self) -> HttpResponse {\n        let status = self.status_code();\n        let mut builder = HttpResponse::build(status);\n        if let Self::Paymob(PaymobError::RateLimited {\n            retry_after_secs: Some(secs),\n            ..\n        }) = self\n        {\n            builder.insert_header(("Retry-After", secs.to_string()));\n        }\n        builder.json(json!({\n            "error": self.to_string(),\n            "status": status.as_u16(),\n        }))\n    }\n}\n\npub(crate) fn parse_currency(raw: &str) -> Result<Currency, ApiServerError> {\n    match raw.trim().to_ascii_uppercase().as_str() {\n        "EGP" => Ok(Currency::EGP),\n        "SAR" => Ok(Currency::SAR),\n        "AED" => Ok(Currency::AED),\n        "OMR" => Ok(Currency::OMR),\n        "PKR" => Ok(Currency::PKR),\n        "USD" => Ok(Currency::USD),\n        _ => Err(PaymobError::ValidationError {\n            field: "currency".to_owned(),\n            reason: "unsupported currency code".to_owned(),\n        }\n        .into()),\n    }\n}\n\n// ---------------------------------------------------------------------------\n// Service 1: Health & Sandbox Guard\n// ---------------------------------------------------------------------------\n\n/// `GET /health` — Service health probe.\npub async fn health_check(state: web::Data<AppState>) -> HttpResponse {\n    HttpResponse::Ok().json(json!({\n        "status": "ok",\n        "region": format!("{:?}", state.client.config().region()),\n    }))\n}\n\n#[derive(Debug, Deserialize)]\npub struct SandboxCheckPayload {\n    pub is_sandbox: bool,\n    pub credential_age_days: u64,\n    pub channel: String,\n}\n\nfn parse_sandbox_channel(raw: &str) -> Result<SandboxPaymentChannel, ApiServerError> {\n    match raw.trim().to_ascii_lowercase().as_str() {\n        "card" => Ok(SandboxPaymentChannel::Card),\n        "wallet" => Ok(SandboxPaymentChannel::Wallet),\n        "kiosk" => Ok(SandboxPaymentChannel::Kiosk),\n        "bnpl" => Ok(SandboxPaymentChannel::Bnpl),\n        _ => Err(PaymobError::ValidationError {\n            field: "channel".to_owned(),\n            reason: "expected one of: card, wallet, kiosk, bnpl".to_owned(),\n        }\n        .into()),\n    }\n}\n\n/// `POST /sandbox/check` — Validates sandbox credential age and channel support.\npub async fn sandbox_check(\n    body: web::Json<SandboxCheckPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let channel = parse_sandbox_channel(&body.channel)?;\n    let report = SandboxGuard::check_constraints(&SandboxCheckRequest {\n        is_sandbox: body.is_sandbox,\n        credential_age_days: body.credential_age_days,\n        channel,\n    });\n    if let Some(first_err) = report.errors.first() {\n        return Err(ApiServerError::Sandbox(first_err.clone()));\n    }\n    let warnings: Vec<String> = report.warnings.iter().map(ToString::to_string).collect();\n    Ok(HttpResponse::Ok().json(json!({\n        "ok": report.is_ok(),\n        "warnings": warnings,\n    })))\n}\n\n// ---------------------------------------------------------------------------\n// Service 2: Unified Payment Intentions & Checkout\n// ---------------------------------------------------------------------------\n\n#[derive(Debug, Deserialize)]\npub struct BillingPayload {\n    pub phone_number: String,\n    pub first_name: Option<String>,\n    pub last_name: Option<String>,\n    pub email: Option<String>,\n    pub city: Option<String>,\n    pub country: Option<String>,\n}\n\n#[derive(Debug, Deserialize)]\npub struct CreateIntentionPayload {\n    pub amount_cents: u64,\n    pub currency: String,\n    pub payment_methods: Vec<u64>,\n    pub billing_data: BillingPayload,\n    pub special_reference: Option<String>,\n    pub notification_url: Option<String>,\n    pub redirection_url: Option<String>,\n    pub pre_selected_plan: Option<u64>,\n    pub integration_mode: Option<String>,\n}\n\nfn build_billing_data(p: &BillingPayload) -> Result<BillingData, ApiServerError> {\n    let mut builder = BillingData::builder().phone_number(&p.phone_number);\n    if let Some(v) = &p.first_name {\n        builder = builder.first_name(v);\n    }\n    if let Some(v) = &p.last_name {\n        builder = builder.last_name(v);\n    }\n    if let Some(v) = &p.email {\n        builder = builder.email(v);\n    }\n    if let Some(v) = &p.city {\n        builder = builder.city(v);\n    }\n    if let Some(v) = &p.country {\n        builder = builder.country(v);\n    }\n    Ok(builder.build()?)\n}\n\nfn parse_env_mode(raw: &str) -> Result<EnvironmentMode, ApiServerError> {\n    match raw.trim().to_ascii_lowercase().as_str() {\n        "test" => Ok(EnvironmentMode::Test),\n        "live" => Ok(EnvironmentMode::Live),\n        _ => Err(PaymobError::ValidationError {\n            field: "integration_mode".to_owned(),\n            reason: "expected 'test' or 'live'".to_owned(),\n        }\n        .into()),\n    }\n}\n\nfn apply_intention_optionals(\n    mut builder: CreateIntentionParamsBuilder,\n    body: &CreateIntentionPayload,\n) -> CreateIntentionParamsBuilder {\n    if let Some(r) = &body.special_reference {\n        builder = builder.special_reference(r);\n    }\n    if let Some(u) = &body.notification_url {\n        builder = builder.notification_url(u);\n    }\n    if let Some(u) = &body.redirection_url {\n        builder = builder.redirection_url(u);\n    }\n    if let Some(p) = body.pre_selected_plan {\n        builder = builder.pre_selected_plan(p);\n    }\n    builder\n}\n\n/// `POST /intentions` — Creates a v1 payment intention.\npub async fn create_intention(\n    state: web::Data<AppState>,\n    body: web::Json<CreateIntentionPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let currency = parse_currency(&body.currency)?;\n    let billing = build_billing_data(&body.billing_data)?;\n    let methods: Vec<PaymentMethodInput> = body\n        .payment_methods\n        .iter()\n        .copied()\n        .map(PaymentMethodInput::IntegrationId)\n        .collect();\n    let builder = CreateIntentionParams::builder()\n        .amount(MinorUnitAmount::from_minor(body.amount_cents))\n        .currency(currency)\n        .payment_methods(methods)\n        .billing_data(billing);\n    let params = apply_intention_optionals(builder, &body).build()?;\n    let mut svc = state.client.intentions();\n    if let (Some(mode_str), Some(first_id)) = (&body.integration_mode, body.payment_methods.first())\n    {\n        svc = svc.with_integration_mode(*first_id, parse_env_mode(mode_str)?);\n    }\n    let resp = svc.create(&params).await?;\n    Ok(HttpResponse::Created().json(json!({\n        "id": resp.id,\n        "status": resp.status,\n        "intention_order_id": resp.intention_order_id,\n        "client_secret": "[REDACTED]",\n    })))\n}\n\n#[derive(Debug, Deserialize)]\npub struct UpdateIntentionPayload {\n    pub client_secret: String,\n    pub amount_cents: Option<u64>,\n    pub currency: Option<String>,\n    pub notification_url: Option<String>,\n    pub redirection_url: Option<String>,\n}\n\n/// `PUT /intentions` — Updates an existing v1 payment intention.\npub async fn update_intention(\n    state: web::Data<AppState>,\n    body: web::Json<UpdateIntentionPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let mut builder = UpdateIntentionParams::builder();\n    if let Some(amt) = body.amount_cents {\n        builder = builder.amount(MinorUnitAmount::from_minor(amt));\n    }\n    if let Some(cur) = &body.currency {\n        builder = builder.currency(parse_currency(cur)?);\n    }\n    if let Some(u) = &body.notification_url {\n        builder = builder.notification_url(u);\n    }\n    if let Some(u) = &body.redirection_url {\n        builder = builder.redirection_url(u);\n    }\n    let params = builder.build()?;\n    let resp = state\n        .client\n        .intentions()\n        .update(&SecretString::from(body.client_secret.clone()), &params)\n        .await?;\n    Ok(HttpResponse::Ok().json(json!({\n        "id": resp.id,\n        "status": resp.status,\n        "intention_order_id": resp.intention_order_id,\n    })))\n}\n\n#[derive(Debug, Deserialize)]\npub struct PixelPayload {\n    pub public_key: String,\n    pub client_secret: String,\n    pub show_save_card: Option<bool>,\n    pub force_save_card: Option<bool>,\n}\n\n/// `POST /checkout/pixel` — Builds an embedded Pixel JS configuration.\npub async fn checkout_pixel(\n    body: web::Json<PixelPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let pk = PublicKey::new(body.public_key.clone())?;\n    let mut builder = PixelConfig::builder(&pk, SecretString::from(body.client_secret.clone()))\n        .add_payment_method(PixelPaymentMethod::Card);\n    if let Some(s) = body.show_save_card {\n        builder = builder.show_save_card(s);\n    }\n    if let Some(f) = body.force_save_card {\n        builder = builder.force_save_card(f);\n    }\n    let cfg = builder.build()?;\n    Ok(HttpResponse::Ok().json(json!({\n        "public_key": cfg.public_key,\n        "show_save_card": cfg.show_save_card,\n        "force_save_card": cfg.force_save_card,\n        "payment_methods_count": cfg.payment_methods.len(),\n    })))\n}\n\n#[derive(Debug, Deserialize)]\npub struct AffordabilityPayload {\n    pub public_key: String,\n    pub amount_cents: u64,\n    pub currency: String,\n    pub pre_selected_plan: Option<u64>,\n    pub tenure_months: Option<u16>,\n}\n\n/// `POST /checkout/affordability` — Builds a bank installment Affordability Widget config.\npub async fn checkout_affordability(\n    body: web::Json<AffordabilityPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let pk = PublicKey::new(body.public_key.clone())?;\n    let currency = parse_currency(&body.currency)?;\n    let mut builder = AffordabilityWidgetConfig::builder(\n        &pk,\n        MinorUnitAmount::from_minor(body.amount_cents),\n        currency,\n    );\n    if let Some(plan) = body.pre_selected_plan {\n        builder = builder.pre_selected_plan(plan);\n    }\n    if let Some(months) = body.tenure_months {\n        builder = builder.tenure_months(months);\n    }\n    let cfg = builder.build()?;\n    Ok(HttpResponse::Ok().json(json!({\n        "public_key": cfg.public_key,\n        "amount_cents": cfg.amount_cents(),\n        "selected_plan_id": cfg.selected_plan_id(),\n    })))\n}\n\n// ---------------------------------------------------------------------------\n// Service 3: Legacy Accept v2 3-Step Checkout\n// ---------------------------------------------------------------------------\n\n#[derive(Debug, Deserialize)]\npub struct LegacyOrderPayload {\n    pub amount_cents: u64,\n    pub currency: String,\n    pub merchant_order_id: Option<String>,\n}\n\n/// `POST /legacy/orders` — Creates a Legacy v2 order.\npub async fn legacy_create_order(\n    state: web::Data<AppState>,\n    body: web::Json<LegacyOrderPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let currency = parse_currency(&body.currency)?;\n    let mut params = CreateLegacyOrderParams::new(body.amount_cents, currency);\n    if let Some(ref_id) = &body.merchant_order_id {\n        params = params.merchant_order_id(ref_id);\n    }\n    let legacy = LegacyV2Service::new(state.client.clone())?;\n    let order = legacy.create_order(&params).await?;\n    Ok(HttpResponse::Created().json(json!({\n        "id": order.id,\n        "amount_cents": order.amount_cents,\n        "merchant_order_id": order.merchant_order_id,\n    })))\n}\n\n#[derive(Debug, Deserialize)]\npub struct LegacyPaymentKeyPayload {\n    pub order_id: u64,\n    pub amount_cents: u64,\n    pub currency: String,\n    pub integration_id: u64,\n    pub first_name: String,\n    pub last_name: String,\n    pub email: String,\n    pub phone_number: String,\n}\n\n/// `POST /legacy/payment-keys` — Generates a Legacy v2 payment key.\npub async fn legacy_create_payment_key(\n    state: web::Data<AppState>,\n    body: web::Json<LegacyPaymentKeyPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let currency = parse_currency(&body.currency)?;\n    let billing = LegacyBillingData::new(\n        &body.first_name,\n        &body.last_name,\n        &body.email,\n        &body.phone_number,\n    );\n    let params = CreatePaymentKeyParams::new(\n        body.order_id,\n        body.amount_cents,\n        currency,\n        body.integration_id,\n        billing,\n    );\n    let legacy = LegacyV2Service::new(state.client.clone())?;\n    let key = legacy.create_payment_key(&params).await?;\n    Ok(HttpResponse::Created().json(json!({\n        "token_present": !key.expose_token().is_empty(),\n    })))\n}\n\n#[derive(Debug, Deserialize)]\npub struct LegacyCheckoutPayload {\n    pub amount_cents: u64,\n    pub currency: String,\n    pub integration_id: u64,\n    pub iframe_id: u64,\n    pub first_name: String,\n    pub last_name: String,\n    pub email: String,\n    pub phone_number: String,\n}\n\n/// `POST /legacy/checkout` — Orchestrates full Legacy v2 3-step checkout.\npub async fn legacy_create_checkout(\n    state: web::Data<AppState>,\n    body: web::Json<LegacyCheckoutPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let currency = parse_currency(&body.currency)?;\n    let billing = LegacyBillingData::new(\n        &body.first_name,\n        &body.last_name,\n        &body.email,\n        &body.phone_number,\n    );\n    let params = LegacyCheckoutParams::new(\n        body.amount_cents,\n        currency,\n        body.integration_id,\n        body.iframe_id,\n        billing,\n    );\n    let legacy = LegacyV2Service::new(state.client.clone())?;\n    let session = legacy.create_checkout(&params).await?;\n    Ok(HttpResponse::Created().json(json!({\n        "order_id": session.order.id,\n        "iframe_url": session.iframe_url.as_str(),\n    })))\n}\n\n// ---------------------------------------------------------------------------\n// Service 4: Payment Lifecycle Management (Refund, Void, Capture)\n// ---------------------------------------------------------------------------\n\n#[derive(Debug, Deserialize)]\npub struct RefundPayload {\n    pub transaction_id: u64,\n    pub amount_cents: u64,\n}\n\n/// `POST /manage/refund` — Full or partial refund.\npub async fn manage_refund(\n    state: web::Data<AppState>,\n    body: web::Json<RefundPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let params = RefundParams::try_new(body.transaction_id, body.amount_cents)?;\n    let tx = state.client.manage().refund(params).await?;\n    Ok(HttpResponse::Ok().json(json!({\n        "id": tx.id,\n        "success": tx.success,\n        "is_refund": tx.is_refund,\n        "amount_cents": tx.amount_cents,\n    })))\n}\n\n#[derive(Debug, Deserialize)]\npub struct VoidPayload {\n    pub transaction_id: u64,\n}\n\n/// `POST /manage/void` — Voids an unsettled transaction.\npub async fn manage_void(\n    state: web::Data<AppState>,\n    body: web::Json<VoidPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let params = VoidParams::try_new(body.transaction_id)?;\n    let tx = state.client.manage().void(params).await?;\n    Ok(HttpResponse::Ok().json(json!({\n        "id": tx.id,\n        "success": tx.success,\n        "is_void": tx.is_void,\n    })))\n}\n\n#[derive(Debug, Deserialize)]\npub struct CapturePayload {\n    pub transaction_id: u64,\n    pub amount_cents: u64,\n}\n\n/// `POST /manage/capture` — Captures an authorized transaction.\npub async fn manage_capture(\n    state: web::Data<AppState>,\n    body: web::Json<CapturePayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let params = CaptureParams::try_new(body.transaction_id, body.amount_cents)?;\n    let tx = state.client.manage().capture(params).await?;\n    Ok(HttpResponse::Ok().json(json!({\n        "id": tx.id,\n        "success": tx.success,\n        "is_capture": tx.is_capture,\n        "amount_cents": tx.amount_cents,\n    })))\n}\n\n// ---------------------------------------------------------------------------\n// Service 5: Transaction, Order & Card Token Inquiries\n// ---------------------------------------------------------------------------\n\n/// `GET /inquiries/transactions/{tx_id}` — Fetches a transaction by ID.\npub async fn inquiry_transaction(\n    state: web::Data<AppState>,\n    path: web::Path<u64>,\n) -> Result<HttpResponse, ApiServerError> {\n    let tx = state\n        .client\n        .inquiries()\n        .by_transaction_id(path.into_inner())\n        .await?;\n    Ok(HttpResponse::Ok().json(json!({\n        "id": tx.id,\n        "success": tx.success,\n        "amount_cents": tx.amount_cents,\n        "currency": tx.currency,\n    })))\n}\n\n#[derive(Debug, Deserialize)]\npub struct ByOrderPayload {\n    pub order_id: Option<u64>,\n    pub merchant_order_id: Option<String>,\n}\n\n/// `POST /inquiries/by-order` — Fetches a transaction by order ID or merchant reference.\npub async fn inquiry_by_order(\n    state: web::Data<AppState>,\n    body: web::Json<ByOrderPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let params = if let Some(oid) = body.order_id {\n        some_paymob::resources::inquiries::TransactionInquiryParams {\n            order_id: Some(oid),\n            merchant_order_id: None,\n        }\n    } else if let Some(ref_id) = &body.merchant_order_id {\n        some_paymob::resources::inquiries::TransactionInquiryParams::by_merchant_order_id(ref_id)\n    } else {\n        return Err(PaymobError::ValidationError {\n            field: "order_id".to_owned(),\n            reason: "order_id or merchant_order_id is required".to_owned(),\n        }\n        .into());\n    };\n    let tx = state\n        .client\n        .inquiries()\n        .by_order_or_reference(&params)\n        .await?;\n    Ok(HttpResponse::Ok().json(json!({\n        "id": tx.id,\n        "success": tx.success,\n        "amount_cents": tx.amount_cents,\n    })))\n}\n\n/// `GET /inquiries/orders/{order_id}` — Fetches full order details.\npub async fn inquiry_order(\n    state: web::Data<AppState>,\n    path: web::Path<u64>,\n) -> Result<HttpResponse, ApiServerError> {\n    let order = state.client.inquiries().order(path.into_inner()).await?;\n    Ok(HttpResponse::Ok().json(json!({\n        "id": order.id,\n        "amount_cents": order.amount_cents,\n        "paid_amount_cents": order.paid_amount_cents,\n        "payment_status": order.payment_status,\n    })))\n}\n\n/// `POST /inquiries/orders/{order_id}/card-tokens` — Lists saved card tokens for an order.\npub async fn inquiry_card_tokens(\n    state: web::Data<AppState>,\n    path: web::Path<u64>,\n) -> Result<HttpResponse, ApiServerError> {\n    let tokens = state\n        .client\n        .inquiries()\n        .card_tokens(path.into_inner())\n        .await?;\n    let items: Vec<Value> = tokens\n        .iter()\n        .map(|t| {\n            json!({\n                "token_type": t.token_type,\n                "id": t.obj.id,\n                "masked_pan": t.obj.masked_pan,\n                "card_subtype": t.obj.card_subtype,\n            })\n        })\n        .collect();\n    Ok(HttpResponse::Ok().json(json!({ "tokens": items })))\n}\n\n// ---------------------------------------------------------------------------\n// Service 6: QuickLinks & Marketplace Splits / Convenience Fees\n// ---------------------------------------------------------------------------\n\n#[derive(Debug, Deserialize)]\npub struct QuickLinkPayload {\n    pub amount_cents: u64,\n    pub currency: String,\n    pub integrations: Vec<u64>,\n    pub description: Option<String>,\n}\n\n/// `POST /quicklinks` — Creates a QuickLink payment URL.\npub async fn create_quicklink(\n    state: web::Data<AppState>,\n    body: web::Json<QuickLinkPayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let mut params = CreateQuickLinkParams::new(\n        body.amount_cents,\n        &body.currency,\n        body.integrations.clone(),\n    );\n    if let Some(desc) = &body.description {\n        params = params.with_description(desc);\n    }\n    let resp = state.client.quicklinks().create(&params).await?;\n    Ok(HttpResponse::Created().json(json!({\n        "id": resp.id,\n        "url": resp.url,\n        "client_url": resp.client_url,\n    })))\n}\n\n/// `POST /quicklinks/{link_id}/cancel` — Cancels an active QuickLink.\npub async fn cancel_quicklink(\n    state: web::Data<AppState>,\n    path: web::Path<String>,\n) -> Result<HttpResponse, ApiServerError> {\n    state.client.quicklinks().cancel(&path.into_inner()).await?;\n    Ok(HttpResponse::Ok().json(json!({ "cancelled": true })))\n}\n\n#[derive(Debug, Deserialize)]\npub struct SplitRecipientInput {\n    pub recipient_id: String,\n    pub amount_cents: Option<u64>,\n    pub percentage_bps: Option<u32>,\n}\n\n#[derive(Debug, Deserialize)]\npub struct SplitCardInput {\n    pub amount_cents: u64,\n    pub integration_id: Option<u64>,\n}\n\n#[derive(Debug, Deserialize)]\npub struct SplitsQuotePayload {\n    pub total_amount_cents: u64,\n    pub recipients: Vec<SplitRecipientInput>,\n    pub cards: Vec<SplitCardInput>,\n    pub fixed_fee_cents: Option<u64>,\n}\n\nfn build_split_rule(r: &SplitRecipientInput) -> Result<SplitRecipientRule, ApiServerError> {\n    match (r.amount_cents, r.percentage_bps) {\n        (Some(amt), None) => Ok(SplitRecipientRule::fixed(&r.recipient_id, amt)),\n        (None, Some(bps)) => Ok(SplitRecipientRule::percentage_bps(&r.recipient_id, bps)),\n        _ => Err(PaymobError::ValidationError {\n            field: "recipients".to_owned(),\n            reason: "specify exactly one of amount_cents or percentage_bps".to_owned(),\n        }\n        .into()),\n    }\n}\n\n/// `POST /splits/validate-and-quote` — Validates split rules, card portions, and convenience fees.\npub async fn splits_validate_and_quote(\n    body: web::Json<SplitsQuotePayload>,\n) -> Result<HttpResponse, ApiServerError> {\n    let mut rules = Vec::with_capacity(body.recipients.len());\n    for r in &body.recipients {\n        rules.push(build_split_rule(r)?);\n    }\n    let split_desc = SplitDescription::new(rules)?;\n    let cards: Vec<SplitCardPortion> = body\n        .cards\n        .iter()\n        .map(|c| {\n            let mut p = SplitCardPortion::new(c.amount_cents);\n            if let Some(id) = c.integration_id {\n                p = p.with_integration_id(id);\n            }\n            p\n        })\n        .collect();\n    let card_cfg = SplitPaymentConfig::new(cards)?;\n    card_cfg.validate_total(body.total_amount_cents)?;\n    let fee_cfg = ConvenienceFeeConfig::new(FeeCalculationMode::Fixed {\n        fee_cents: body.fixed_fee_cents.unwrap_or(0),\n    });\n    let total_with_fee = fee_cfg.total_with_fee_cents(body.total_amount_cents)?;\n    Ok(HttpResponse::Ok().json(json!({\n        "recipients_count": split_desc.recipients.len(),\n        "cards_count": card_cfg.cards.len(),\n        "total_with_fee_cents": total_with_fee,\n    })))\n}\n\n/// Configures Unit 1 routes (Services 1–6).\npub fn configure_unit_1(cfg: &mut web::ServiceConfig) {\n    cfg.route("/health", web::get().to(health_check))\n        .route("/sandbox/check", web::post().to(sandbox_check))\n        .route("/intentions", web::post().to(create_intention))\n        .route("/intentions", web::put().to(update_intention))\n        .route("/checkout/pixel", web::post().to(checkout_pixel))\n        .route(\n            "/checkout/affordability",\n            web::post().to(checkout_affordability),\n        )\n        .route("/legacy/orders", web::post().to(legacy_create_order))\n        .route(\n            "/legacy/payment-keys",\n            web::post().to(legacy_create_payment_key),\n        )\n        .route("/legacy/checkout", web::post().to(legacy_create_checkout))\n        .route("/manage/refund", web::post().to(manage_refund))\n        .route("/manage/void", web::post().to(manage_void))\n        .route("/manage/capture", web::post().to(manage_capture))\n        .route(\n            "/inquiries/transactions/{tx_id}",\n            web::get().to(inquiry_transaction),\n        )\n        .route("/inquiries/by-order", web::post().to(inquiry_by_order))\n        .route("/inquiries/orders/{order_id}", web::get().to(inquiry_order))\n        .route(\n            "/inquiries/orders/{order_id}/card-tokens",\n            web::post().to(inquiry_card_tokens),\n        )\n        .route("/quicklinks", web::post().to(create_quicklink))\n        .route(\n            "/quicklinks/{link_id}/cancel",\n            web::post().to(cancel_quicklink),\n        )\n        .route(\n            "/splits/validate-and-quote",\n            web::post().to(splits_validate_and_quote),\n        );\n}\n\n/// Configures the full Actix-Web service surface.\npub fn configure_app(cfg: &mut web::ServiceConfig) {\n    configure_unit_1(cfg);\n}\n\n#[actix_web::main]\nasync fn main() -> std::io::Result<()> {\n    Ok(())\n}\n
+#![forbid(unsafe_code)]
+//! Reference Actix-Web HTTP Server demonstrating all 14 `some-paymob` services
+//! and all 5 constant-time HMAC-SHA512 webhook verification protocols (`A`–`E`).
+
+use std::fmt;
+use std::sync::Arc;
+
+use actix_web::http::StatusCode;
+use actix_web::{HttpResponse, ResponseError, web};
+use secrecy::SecretString;
+use serde::Deserialize;
+use serde_json::{Value, json};
+use some_paymob::prelude::*;
+
+/// Shared Actix-Web application state wrapping an `Arc`-backed [`PaymobClient`]
+/// and an in-memory webhook replay deduplicator.
+#[derive(Clone)]
+pub struct AppState {
+    /// Configured `some-paymob` microkernel client.
+    pub client: PaymobClient,
+    /// Thread-safe in-memory webhook replay guard.
+    pub webhook_dedup: Arc<InMemoryWebhookDeduplicator>,
+}
+
+impl AppState {
+    /// Creates a new [`AppState`] with a default [`InMemoryWebhookDeduplicator`].
+    #[must_use]
+    pub fn new(client: PaymobClient) -> Self {
+        Self {
+            client,
+            webhook_dedup: Arc::new(InMemoryWebhookDeduplicator::new()),
+        }
+    }
+}
+
+/// Deterministic HTTP error wrapper mapping `some-paymob` SDK, webhook, and
+/// sandbox constraint errors to Actix-Web `ResponseError` status codes.
+#[derive(Debug)]
+pub enum ApiServerError {
+    /// Core or resource SDK error.
+    Paymob(PaymobError),
+    /// Cryptographic webhook verification or replay error.
+    Webhook(WebhookError),
+    /// Sandbox constraint error (credential age >= 30 days or unsupported channel).
+    Sandbox(SandboxConstraintError),
+}
+
+impl fmt::Display for ApiServerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Paymob(err) => write!(f, "{err}"),
+            Self::Webhook(err) => write!(f, "{err}"),
+            Self::Sandbox(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl From<PaymobError> for ApiServerError {
+    fn from(err: PaymobError) -> Self {
+        Self::Paymob(err)
+    }
+}
+
+impl From<WebhookError> for ApiServerError {
+    fn from(err: WebhookError) -> Self {
+        Self::Webhook(err)
+    }
+}
+
+impl From<SandboxConstraintError> for ApiServerError {
+    fn from(err: SandboxConstraintError) -> Self {
+        Self::Sandbox(err)
+    }
+}
+
+fn map_paymob_status(err: &PaymobError) -> StatusCode {
+    match err {
+        PaymobError::ValidationError { .. } | PaymobError::WebhookError(_) => {
+            StatusCode::BAD_REQUEST
+        }
+        PaymobError::AuthenticationError(_) => StatusCode::UNAUTHORIZED,
+        PaymobError::EnvironmentMismatch(_)
+        | PaymobError::RefundExceedsPermissibleAmount { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        PaymobError::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
+        PaymobError::ApiError { status, .. } => {
+            StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
+        }
+        PaymobError::TransportError(_) => StatusCode::BAD_GATEWAY,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+fn map_webhook_status(err: &WebhookError) -> StatusCode {
+    match err {
+        WebhookError::SignatureMismatch => StatusCode::UNAUTHORIZED,
+        WebhookError::DuplicateWebhookDelivery { .. } => StatusCode::CONFLICT,
+        _ => StatusCode::BAD_REQUEST,
+    }
+}
+
+impl ResponseError for ApiServerError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            Self::Paymob(err) => map_paymob_status(err),
+            Self::Webhook(err) => map_webhook_status(err),
+            Self::Sandbox(_) => StatusCode::UNPROCESSABLE_ENTITY,
+        }
+    }
+
+    fn error_response(&self) -> HttpResponse {
+        let status = self.status_code();
+        let mut builder = HttpResponse::build(status);
+        if let Self::Paymob(PaymobError::RateLimited {
+            retry_after_secs: Some(secs),
+            ..
+        }) = self
+        {
+            builder.insert_header(("Retry-After", secs.to_string()));
+        }
+        builder.json(json!({
+            "error": self.to_string(),
+            "status": status.as_u16(),
+        }))
+    }
+}
+
+pub(crate) fn parse_currency(raw: &str) -> Result<Currency, ApiServerError> {
+    match raw.trim().to_ascii_uppercase().as_str() {
+        "EGP" => Ok(Currency::EGP),
+        "SAR" => Ok(Currency::SAR),
+        "AED" => Ok(Currency::AED),
+        "OMR" => Ok(Currency::OMR),
+        "PKR" => Ok(Currency::PKR),
+        "USD" => Ok(Currency::USD),
+        _ => Err(PaymobError::ValidationError {
+            field: "currency".to_owned(),
+            reason: "unsupported currency code".to_owned(),
+        }
+        .into()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Service 1: Health & Sandbox Guard
+// ---------------------------------------------------------------------------
+
+/// `GET /health` — Service health probe.
+pub async fn health_check(state: web::Data<AppState>) -> HttpResponse {
+    HttpResponse::Ok().json(json!({
+        "status": "ok",
+        "region": format!("{:?}", state.client.config().region()),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SandboxCheckPayload {
+    pub is_sandbox: bool,
+    pub credential_age_days: u64,
+    pub channel: String,
+}
+
+fn parse_sandbox_channel(raw: &str) -> Result<SandboxPaymentChannel, ApiServerError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "card" => Ok(SandboxPaymentChannel::Card),
+        "wallet" => Ok(SandboxPaymentChannel::Wallet),
+        "kiosk" => Ok(SandboxPaymentChannel::Kiosk),
+        "bnpl" => Ok(SandboxPaymentChannel::Bnpl),
+        _ => Err(PaymobError::ValidationError {
+            field: "channel".to_owned(),
+            reason: "expected one of: card, wallet, kiosk, bnpl".to_owned(),
+        }
+        .into()),
+    }
+}
+
+/// `POST /sandbox/check` — Validates sandbox credential age and channel support.
+pub async fn sandbox_check(
+    body: web::Json<SandboxCheckPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let channel = parse_sandbox_channel(&body.channel)?;
+    let report = SandboxGuard::check_constraints(&SandboxCheckRequest {
+        is_sandbox: body.is_sandbox,
+        credential_age_days: body.credential_age_days,
+        channel,
+    });
+    if let Some(first_err) = report.errors.first() {
+        return Err(ApiServerError::Sandbox(first_err.clone()));
+    }
+    let warnings: Vec<String> = report.warnings.iter().map(ToString::to_string).collect();
+    Ok(HttpResponse::Ok().json(json!({
+        "ok": report.is_ok(),
+        "warnings": warnings,
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// Service 2: Unified Payment Intentions & Checkout
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct BillingPayload {
+    pub phone_number: String,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub email: Option<String>,
+    pub city: Option<String>,
+    pub country: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateIntentionPayload {
+    pub amount_cents: u64,
+    pub currency: String,
+    pub payment_methods: Vec<u64>,
+    pub billing_data: BillingPayload,
+    pub special_reference: Option<String>,
+    pub notification_url: Option<String>,
+    pub redirection_url: Option<String>,
+    pub pre_selected_plan: Option<u64>,
+    pub integration_mode: Option<String>,
+}
+
+fn build_billing_data(p: &BillingPayload) -> Result<BillingData, ApiServerError> {
+    let mut builder = BillingData::builder().phone_number(&p.phone_number);
+    if let Some(v) = &p.first_name {
+        builder = builder.first_name(v);
+    }
+    if let Some(v) = &p.last_name {
+        builder = builder.last_name(v);
+    }
+    if let Some(v) = &p.email {
+        builder = builder.email(v);
+    }
+    if let Some(v) = &p.city {
+        builder = builder.city(v);
+    }
+    if let Some(v) = &p.country {
+        builder = builder.country(v);
+    }
+    Ok(builder.build()?)
+}
+
+fn parse_env_mode(raw: &str) -> Result<EnvironmentMode, ApiServerError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "test" => Ok(EnvironmentMode::Test),
+        "live" => Ok(EnvironmentMode::Live),
+        _ => Err(PaymobError::ValidationError {
+            field: "integration_mode".to_owned(),
+            reason: "expected 'test' or 'live'".to_owned(),
+        }
+        .into()),
+    }
+}
+
+fn apply_intention_optionals(
+    mut builder: CreateIntentionParamsBuilder,
+    body: &CreateIntentionPayload,
+) -> CreateIntentionParamsBuilder {
+    if let Some(r) = &body.special_reference {
+        builder = builder.special_reference(r);
+    }
+    if let Some(u) = &body.notification_url {
+        builder = builder.notification_url(u);
+    }
+    if let Some(u) = &body.redirection_url {
+        builder = builder.redirection_url(u);
+    }
+    if let Some(p) = body.pre_selected_plan {
+        builder = builder.pre_selected_plan(p);
+    }
+    builder
+}
+
+/// `POST /intentions` — Creates a v1 payment intention.
+pub async fn create_intention(
+    state: web::Data<AppState>,
+    body: web::Json<CreateIntentionPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let currency = parse_currency(&body.currency)?;
+    let billing = build_billing_data(&body.billing_data)?;
+    let methods: Vec<PaymentMethodInput> = body
+        .payment_methods
+        .iter()
+        .copied()
+        .map(PaymentMethodInput::IntegrationId)
+        .collect();
+    let builder = CreateIntentionParams::builder()
+        .amount(MinorUnitAmount::from_minor(body.amount_cents))
+        .currency(currency)
+        .payment_methods(methods)
+        .billing_data(billing);
+    let params = apply_intention_optionals(builder, &body).build()?;
+    let mut svc = state.client.intentions();
+    if let (Some(mode_str), Some(first_id)) = (&body.integration_mode, body.payment_methods.first())
+    {
+        svc = svc.with_integration_mode(*first_id, parse_env_mode(mode_str)?);
+    }
+    let resp = svc.create(&params).await?;
+    Ok(HttpResponse::Created().json(json!({
+        "id": resp.id,
+        "status": resp.status,
+        "intention_order_id": resp.intention_order_id,
+        "client_secret": "[REDACTED]",
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateIntentionPayload {
+    pub client_secret: String,
+    pub amount_cents: Option<u64>,
+    pub currency: Option<String>,
+    pub notification_url: Option<String>,
+    pub redirection_url: Option<String>,
+}
+
+/// `PUT /intentions` — Updates an existing v1 payment intention.
+pub async fn update_intention(
+    state: web::Data<AppState>,
+    body: web::Json<UpdateIntentionPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let mut builder = UpdateIntentionParams::builder();
+    if let Some(amt) = body.amount_cents {
+        builder = builder.amount(MinorUnitAmount::from_minor(amt));
+    }
+    if let Some(cur) = &body.currency {
+        builder = builder.currency(parse_currency(cur)?);
+    }
+    if let Some(u) = &body.notification_url {
+        builder = builder.notification_url(u);
+    }
+    if let Some(u) = &body.redirection_url {
+        builder = builder.redirection_url(u);
+    }
+    let params = builder.build()?;
+    let resp = state
+        .client
+        .intentions()
+        .update(&SecretString::from(body.client_secret.clone()), &params)
+        .await?;
+    Ok(HttpResponse::Ok().json(json!({
+        "id": resp.id,
+        "status": resp.status,
+        "intention_order_id": resp.intention_order_id,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PixelPayload {
+    pub public_key: String,
+    pub client_secret: String,
+    pub show_save_card: Option<bool>,
+    pub force_save_card: Option<bool>,
+}
+
+/// `POST /checkout/pixel` — Builds an embedded Pixel JS configuration.
+pub async fn checkout_pixel(body: web::Json<PixelPayload>) -> Result<HttpResponse, ApiServerError> {
+    let pk = PublicKey::new(body.public_key.clone())?;
+    let mut builder = PixelConfig::builder(&pk, SecretString::from(body.client_secret.clone()))
+        .add_payment_method(PixelPaymentMethod::Card);
+    if let Some(s) = body.show_save_card {
+        builder = builder.show_save_card(s);
+    }
+    if let Some(f) = body.force_save_card {
+        builder = builder.force_save_card(f);
+    }
+    let cfg = builder.build()?;
+    Ok(HttpResponse::Ok().json(json!({
+        "public_key": cfg.public_key,
+        "show_save_card": cfg.show_save_card,
+        "force_save_card": cfg.force_save_card,
+        "payment_methods_count": cfg.payment_methods.len(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AffordabilityPayload {
+    pub public_key: String,
+    pub amount_cents: u64,
+    pub currency: String,
+    pub pre_selected_plan: Option<u64>,
+    pub tenure_months: Option<u16>,
+}
+
+/// `POST /checkout/affordability` — Builds a bank installment Affordability Widget config.
+pub async fn checkout_affordability(
+    body: web::Json<AffordabilityPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let pk = PublicKey::new(body.public_key.clone())?;
+    let currency = parse_currency(&body.currency)?;
+    let mut builder = AffordabilityWidgetConfig::builder(
+        &pk,
+        MinorUnitAmount::from_minor(body.amount_cents),
+        currency,
+    );
+    if let Some(plan) = body.pre_selected_plan {
+        builder = builder.pre_selected_plan(plan);
+    }
+    if let Some(months) = body.tenure_months {
+        builder = builder.tenure_months(months);
+    }
+    let cfg = builder.build()?;
+    Ok(HttpResponse::Ok().json(json!({
+        "public_key": cfg.public_key,
+        "amount_cents": cfg.amount_cents(),
+        "selected_plan_id": cfg.selected_plan_id(),
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// Service 3: Legacy Accept v2 3-Step Checkout
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct LegacyOrderPayload {
+    pub amount_cents: u64,
+    pub currency: String,
+    pub merchant_order_id: Option<String>,
+}
+
+/// `POST /legacy/orders` — Creates a Legacy v2 order.
+pub async fn legacy_create_order(
+    state: web::Data<AppState>,
+    body: web::Json<LegacyOrderPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let currency = parse_currency(&body.currency)?;
+    let mut params = CreateLegacyOrderParams::new(body.amount_cents, currency);
+    if let Some(ref_id) = &body.merchant_order_id {
+        params = params.merchant_order_id(ref_id);
+    }
+    let legacy = LegacyV2Service::new(state.client.clone())?;
+    let order = legacy.create_order(&params).await?;
+    Ok(HttpResponse::Created().json(json!({
+        "id": order.id,
+        "amount_cents": order.amount_cents,
+        "merchant_order_id": order.merchant_order_id,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LegacyPaymentKeyPayload {
+    pub order_id: u64,
+    pub amount_cents: u64,
+    pub currency: String,
+    pub integration_id: u64,
+    pub first_name: String,
+    pub last_name: String,
+    pub email: String,
+    pub phone_number: String,
+}
+
+/// `POST /legacy/payment-keys` — Generates a Legacy v2 payment key.
+pub async fn legacy_create_payment_key(
+    state: web::Data<AppState>,
+    body: web::Json<LegacyPaymentKeyPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let currency = parse_currency(&body.currency)?;
+    let billing = LegacyBillingData::new(
+        &body.first_name,
+        &body.last_name,
+        &body.email,
+        &body.phone_number,
+    );
+    let params = CreatePaymentKeyParams::new(
+        body.order_id,
+        body.amount_cents,
+        currency,
+        body.integration_id,
+        billing,
+    );
+    let legacy = LegacyV2Service::new(state.client.clone())?;
+    let key = legacy.create_payment_key(&params).await?;
+    Ok(HttpResponse::Created().json(json!({
+        "token_present": !key.expose_token().is_empty(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LegacyCheckoutPayload {
+    pub amount_cents: u64,
+    pub currency: String,
+    pub integration_id: u64,
+    pub iframe_id: u64,
+    pub first_name: String,
+    pub last_name: String,
+    pub email: String,
+    pub phone_number: String,
+}
+
+/// `POST /legacy/checkout` — Orchestrates full Legacy v2 3-step checkout.
+pub async fn legacy_create_checkout(
+    state: web::Data<AppState>,
+    body: web::Json<LegacyCheckoutPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let currency = parse_currency(&body.currency)?;
+    let billing = LegacyBillingData::new(
+        &body.first_name,
+        &body.last_name,
+        &body.email,
+        &body.phone_number,
+    );
+    let params = LegacyCheckoutParams::new(
+        body.amount_cents,
+        currency,
+        body.integration_id,
+        body.iframe_id,
+        billing,
+    );
+    let legacy = LegacyV2Service::new(state.client.clone())?;
+    let session = legacy.create_checkout(&params).await?;
+    Ok(HttpResponse::Created().json(json!({
+        "order_id": session.order.id,
+        "iframe_url": session.iframe_url.as_str(),
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// Service 4: Payment Lifecycle Management (Refund, Void, Capture)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct RefundPayload {
+    pub transaction_id: u64,
+    pub amount_cents: u64,
+}
+
+/// `POST /manage/refund` — Full or partial refund.
+pub async fn manage_refund(
+    state: web::Data<AppState>,
+    body: web::Json<RefundPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let params = RefundParams::try_new(body.transaction_id, body.amount_cents)?;
+    let tx = state.client.manage().refund(params).await?;
+    Ok(HttpResponse::Ok().json(json!({
+        "id": tx.id,
+        "success": tx.success,
+        "is_refund": tx.is_refund,
+        "amount_cents": tx.amount_cents,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VoidPayload {
+    pub transaction_id: u64,
+}
+
+/// `POST /manage/void` — Voids an unsettled transaction.
+pub async fn manage_void(
+    state: web::Data<AppState>,
+    body: web::Json<VoidPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let params = VoidParams::try_new(body.transaction_id)?;
+    let tx = state.client.manage().void(params).await?;
+    Ok(HttpResponse::Ok().json(json!({
+        "id": tx.id,
+        "success": tx.success,
+        "is_void": tx.is_void,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CapturePayload {
+    pub transaction_id: u64,
+    pub amount_cents: u64,
+}
+
+/// `POST /manage/capture` — Captures an authorized transaction.
+pub async fn manage_capture(
+    state: web::Data<AppState>,
+    body: web::Json<CapturePayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let params = CaptureParams::try_new(body.transaction_id, body.amount_cents)?;
+    let tx = state.client.manage().capture(params).await?;
+    Ok(HttpResponse::Ok().json(json!({
+        "id": tx.id,
+        "success": tx.success,
+        "is_capture": tx.is_capture,
+        "amount_cents": tx.amount_cents,
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// Service 5: Transaction, Order & Card Token Inquiries
+// ---------------------------------------------------------------------------
+
+/// `GET /inquiries/transactions/{tx_id}` — Fetches a transaction by ID.
+pub async fn inquiry_transaction(
+    state: web::Data<AppState>,
+    path: web::Path<u64>,
+) -> Result<HttpResponse, ApiServerError> {
+    let tx = state
+        .client
+        .inquiries()
+        .by_transaction_id(path.into_inner())
+        .await?;
+    Ok(HttpResponse::Ok().json(json!({
+        "id": tx.id,
+        "success": tx.success,
+        "amount_cents": tx.amount_cents,
+        "currency": tx.currency,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ByOrderPayload {
+    pub order_id: Option<u64>,
+    pub merchant_order_id: Option<String>,
+}
+
+/// `POST /inquiries/by-order` — Fetches a transaction by order ID or merchant reference.
+pub async fn inquiry_by_order(
+    state: web::Data<AppState>,
+    body: web::Json<ByOrderPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let params = if let Some(oid) = body.order_id {
+        some_paymob::resources::inquiries::TransactionInquiryParams {
+            order_id: Some(oid),
+            merchant_order_id: None,
+        }
+    } else if let Some(ref_id) = &body.merchant_order_id {
+        some_paymob::resources::inquiries::TransactionInquiryParams::by_merchant_order_id(ref_id)
+    } else {
+        return Err(PaymobError::ValidationError {
+            field: "order_id".to_owned(),
+            reason: "order_id or merchant_order_id is required".to_owned(),
+        }
+        .into());
+    };
+    let tx = state
+        .client
+        .inquiries()
+        .by_order_or_reference(&params)
+        .await?;
+    Ok(HttpResponse::Ok().json(json!({
+        "id": tx.id,
+        "success": tx.success,
+        "amount_cents": tx.amount_cents,
+    })))
+}
+
+/// `GET /inquiries/orders/{order_id}` — Fetches full order details.
+pub async fn inquiry_order(
+    state: web::Data<AppState>,
+    path: web::Path<u64>,
+) -> Result<HttpResponse, ApiServerError> {
+    let order = state.client.inquiries().order(path.into_inner()).await?;
+    Ok(HttpResponse::Ok().json(json!({
+        "id": order.id,
+        "amount_cents": order.amount_cents,
+        "paid_amount_cents": order.paid_amount_cents,
+        "payment_status": order.payment_status,
+    })))
+}
+
+/// `POST /inquiries/orders/{order_id}/card-tokens` — Lists saved card tokens for an order.
+pub async fn inquiry_card_tokens(
+    state: web::Data<AppState>,
+    path: web::Path<u64>,
+) -> Result<HttpResponse, ApiServerError> {
+    let tokens = state
+        .client
+        .inquiries()
+        .card_tokens(path.into_inner())
+        .await?;
+    let items: Vec<Value> = tokens
+        .iter()
+        .map(|t| {
+            json!({
+                "token_type": t.token_type,
+                "id": t.obj.id,
+                "masked_pan": t.obj.masked_pan,
+                "card_subtype": t.obj.card_subtype,
+            })
+        })
+        .collect();
+    Ok(HttpResponse::Ok().json(json!({ "tokens": items })))
+}
+
+// ---------------------------------------------------------------------------
+// Service 6: QuickLinks & Marketplace Splits / Convenience Fees
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct QuickLinkPayload {
+    pub amount_cents: u64,
+    pub currency: String,
+    pub integrations: Vec<u64>,
+    pub description: Option<String>,
+}
+
+/// `POST /quicklinks` — Creates a QuickLink payment URL.
+pub async fn create_quicklink(
+    state: web::Data<AppState>,
+    body: web::Json<QuickLinkPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let mut params =
+        CreateQuickLinkParams::new(body.amount_cents, &body.currency, body.integrations.clone());
+    if let Some(desc) = &body.description {
+        params = params.with_description(desc);
+    }
+    let resp = state.client.quicklinks().create(&params).await?;
+    Ok(HttpResponse::Created().json(json!({
+        "id": resp.id,
+        "url": resp.url,
+        "client_url": resp.client_url,
+    })))
+}
+
+/// `POST /quicklinks/{link_id}/cancel` — Cancels an active QuickLink.
+pub async fn cancel_quicklink(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> Result<HttpResponse, ApiServerError> {
+    state
+        .client
+        .quicklinks()
+        .cancel(&path.into_inner())
+        .await?;
+    Ok(HttpResponse::Ok().json(json!({ "cancelled": true })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SplitRecipientInput {
+    pub recipient_id: String,
+    pub amount_cents: Option<u64>,
+    pub percentage_bps: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SplitCardInput {
+    pub amount_cents: u64,
+    pub integration_id: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SplitsQuotePayload {
+    pub total_amount_cents: u64,
+    pub recipients: Vec<SplitRecipientInput>,
+    pub cards: Vec<SplitCardInput>,
+    pub fixed_fee_cents: Option<u64>,
+}
+
+fn build_split_rule(r: &SplitRecipientInput) -> Result<SplitRecipientRule, ApiServerError> {
+    match (r.amount_cents, r.percentage_bps) {
+        (Some(amt), None) => Ok(SplitRecipientRule::fixed(&r.recipient_id, amt)),
+        (None, Some(bps)) => Ok(SplitRecipientRule::percentage_bps(&r.recipient_id, bps)),
+        _ => Err(PaymobError::ValidationError {
+            field: "recipients".to_owned(),
+            reason: "specify exactly one of amount_cents or percentage_bps".to_owned(),
+        }
+        .into()),
+    }
+}
+
+/// `POST /splits/validate-and-quote` — Validates split rules, card portions, and convenience fees.
+pub async fn splits_validate_and_quote(
+    body: web::Json<SplitsQuotePayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    let mut rules = Vec::with_capacity(body.recipients.len());
+    for r in &body.recipients {
+        rules.push(build_split_rule(r)?);
+    }
+    let split_desc = SplitDescription::new(rules)?;
+    let cards: Vec<SplitCardPortion> = body
+        .cards
+        .iter()
+        .map(|c| {
+            let mut p = SplitCardPortion::new(c.amount_cents);
+            if let Some(id) = c.integration_id {
+                p = p.with_integration_id(id);
+            }
+            p
+        })
+        .collect();
+    let card_cfg = SplitPaymentConfig::new(cards)?;
+    card_cfg.validate_total(body.total_amount_cents)?;
+    let fee_cfg = ConvenienceFeeConfig::new(FeeCalculationMode::Fixed {
+        fee_cents: body.fixed_fee_cents.unwrap_or(0),
+    });
+    let total_with_fee = fee_cfg.total_with_fee_cents(body.total_amount_cents)?;
+    Ok(HttpResponse::Ok().json(json!({
+        "recipients_count": split_desc.recipients.len(),
+        "cards_count": card_cfg.cards.len(),
+        "total_with_fee_cents": total_with_fee,
+    })))
+}
+
+/// Configures Unit 1 routes (Services 1–6).
+pub fn configure_unit_1(cfg: &mut web::ServiceConfig) {
+    cfg.route("/health", web::get().to(health_check))
+        .route("/sandbox/check", web::post().to(sandbox_check))
+        .route("/intentions", web::post().to(create_intention))
+        .route("/intentions", web::put().to(update_intention))
+        .route("/checkout/pixel", web::post().to(checkout_pixel))
+        .route(
+            "/checkout/affordability",
+            web::post().to(checkout_affordability),
+        )
+        .route("/legacy/orders", web::post().to(legacy_create_order))
+        .route(
+            "/legacy/payment-keys",
+            web::post().to(legacy_create_payment_key),
+        )
+        .route("/legacy/checkout", web::post().to(legacy_create_checkout))
+        .route("/manage/refund", web::post().to(manage_refund))
+        .route("/manage/void", web::post().to(manage_void))
+        .route("/manage/capture", web::post().to(manage_capture))
+        .route(
+            "/inquiries/transactions/{tx_id}",
+            web::get().to(inquiry_transaction),
+        )
+        .route("/inquiries/by-order", web::post().to(inquiry_by_order))
+        .route("/inquiries/orders/{order_id}", web::get().to(inquiry_order))
+        .route(
+            "/inquiries/orders/{order_id}/card-tokens",
+            web::post().to(inquiry_card_tokens),
+        )
+        .route("/quicklinks", web::post().to(create_quicklink))
+        .route(
+            "/quicklinks/{link_id}/cancel",
+            web::post().to(cancel_quicklink),
+        )
+        .route(
+            "/splits/validate-and-quote",
+            web::post().to(splits_validate_and_quote),
+        );
+}
+
+/// Configures the full Actix-Web service surface.
+pub fn configure_app(cfg: &mut web::ServiceConfig) {
+    configure_unit_1(cfg);
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    Ok(())
+}

@@ -19,7 +19,7 @@ use some_paymob::prelude::{
     MinorUnitAmount, OnboardingSchemaQuery, PartnerLoginCredentials, PaymentMethodInput,
     PaymentProvider, PaymobClient, PaymobError, PaymobExt, PayoutProvider, RefundParams,
     RegisterMerchantParams, SplitRecipientRule, SubmitOnboardingStepParams, SubscriptionProvider,
-    TransactionInquiryParams, UnifiedCaptureRequest, UnifiedPaymentSessionRequest,
+    UnifiedCaptureRequest, UnifiedPaymentSessionRequest,
     UnifiedPayoutRequest, UnifiedRefundRequest, UnifiedSavedMethodChargeRequest,
     UnifiedSubscriptionRefundRequest, UnifiedVoidRequest, UnifiedWebhookInput,
     UpdateIntentionParams, VoidParams, WebhookEvent, WebhookVerifier, normalize_webhook_event,
@@ -93,7 +93,7 @@ fn unified_router() -> Router<Arc<AppState>> {
 }
 
 fn client_ref(state: &AppState) -> &PaymobClient {
-    &state.client
+    &state.paymob
 }
 
 fn parse_currency(raw: &str) -> Result<Currency, ApiServerError> {

@@ -3,37 +3,39 @@
   "base_branch": "main",
   "module_branch": "feat/example-rocket-server",
   "story_branch": "feat/us-rocket-server-and-tests",
-  "status": "in_progress",
+  "story_pr": 141,
+  "patch_pr": 140,
+  "status": "ready_for_main",
   "units": {
     "unit-1": {
       "branch": "feat/us-rocket/unit-1-core-checkout-legacy-manage",
       "scope": "ApiServerError Responder + Services 1-7 routes",
-      "status": "pending",
-      "pr_number": null
+      "status": "merged",
+      "pr_number": 136
     },
     "unit-2": {
       "branch": "feat/us-rocket/unit-2-saved-cards-subscriptions-payouts",
       "scope": "Services 9-12 routes (saved-cards, subscriptions, payouts)",
-      "status": "pending",
-      "pr_number": null
+      "status": "merged",
+      "pr_number": 132
     },
     "unit-3": {
       "branch": "feat/us-rocket/unit-3-onboarding-webhooks-unified-adapter",
       "scope": "Services 13-14 routes (onboarding, webhooks, unified adapter) + build_rocket wiring",
-      "status": "pending",
-      "pr_number": null
+      "status": "merged",
+      "pr_number": 135
     },
     "unit-4": {
       "branch": "feat/us-rocket/unit-4-integration-tests-positive-and-boundaries",
       "scope": "Positive E2E & boundary condition integration tests",
-      "status": "pending",
-      "pr_number": null
+      "status": "merged",
+      "pr_number": 133
     },
     "unit-5": {
       "branch": "feat/us-rocket/unit-5-integration-tests-negative-and-error-workflows",
       "scope": "Negative validation, security/redaction, and error recovery integration tests",
-      "status": "pending",
-      "pr_number": null
+      "status": "merged",
+      "pr_number": 134
     }
   }
 }

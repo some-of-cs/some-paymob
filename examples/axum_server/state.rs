@@ -17,9 +17,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use some_paymob::core::credentials::EnvironmentMode;
 use some_paymob::webhooks::InMemoryWebhookDeduplicator;
-use some_paymob::{
-    PaymobClient, PaymobError, SandboxConstraintError, WebhookError,
-};
+use some_paymob::{PaymobClient, PaymobError, SandboxConstraintError, WebhookError};
 
 /// Shared application state injected into Axum route handlers via `State<Arc<AppState>>`.
 #[derive(Clone)]

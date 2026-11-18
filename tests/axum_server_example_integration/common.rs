@@ -46,35 +46,20 @@ pub async fn setup_test_app() -> (PaymobMockServer, Router, Arc<AppState>) {
     (server, router, state)
 }
 
-/// Sends an HTTP request with a JSON body through `router` using `oneshot`
-/// and returns `(StatusCode, Value)`.
-pub async fn send_json(
+async fn send_request(
     router: &Router,
     method: Method,
     uri: &str,
-    body: Value,
+    body: Option<Value>,
 ) -> (StatusCode, Value) {
-    let req = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(body.to_string()))
-        .expect("valid JSON request");
-    execute_request(router, req).await
-}
-
-/// Sends an HTTP `GET` request through `router` using `oneshot` and returns
-/// `(StatusCode, Value)`.
-pub async fn send_get(router: &Router, uri: &str) -> (StatusCode, Value) {
-    let req = Request::builder()
-        .method(Method::GET)
-        .uri(uri)
-        .body(Body::empty())
-        .expect("valid GET request");
-    execute_request(router, req).await
-}
-
-async fn execute_request(router: &Router, req: Request<Body>) -> (StatusCode, Value) {
+    let builder = Request::builder().method(method).uri(uri);
+    let req = match body {
+        Some(payload) => builder
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(payload.to_string())),
+        None => builder.body(Body::empty()),
+    }
+    .expect("valid test HTTP request");
     let resp = router.clone().oneshot(req).await.expect("router oneshot");
     let status = resp.status();
     let bytes = resp
@@ -86,6 +71,28 @@ async fn execute_request(router: &Router, req: Request<Body>) -> (StatusCode, Va
     let json = serde_json::from_slice(&bytes)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
     (status, json)
+}
+
+/// Sends an HTTP request with a JSON body through `router` using `oneshot`
+/// and returns `(StatusCode, Value)`.
+pub async fn send_json(
+    router: &Router,
+    method: Method,
+    uri: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    send_request(router, method, uri, Some(body)).await
+}
+
+/// Sends an HTTP `GET` request through `router` using `oneshot` and returns
+/// `(StatusCode, Value)`.
+pub async fn send_get(router: &Router, uri: &str) -> (StatusCode, Value) {
+    send_request(router, Method::GET, uri, None).await
+}
+
+/// Sends an HTTP `POST` request with a JSON body and returns only its [`StatusCode`].
+pub async fn post_status(router: &Router, uri: &str, body: Value) -> StatusCode {
+    send_json(router, Method::POST, uri, body).await.0
 }
 
 /// Mounts `POST /api/auth/tokens` on the Accept mock host.
@@ -100,6 +107,25 @@ pub async fn mount_payouts_token(server: &PaymobMockServer, access_token: &str) 
         .await;
 }
 
+async fn mount_json_on_host(
+    server: &PaymobMockServer,
+    host: MockHost,
+    http_method: &str,
+    endpoint_path: &str,
+    status: u16,
+    body: Value,
+) {
+    server
+        .mount_json(JsonEndpointMockConfig {
+            host,
+            http_method,
+            endpoint_path,
+            status,
+            body,
+        })
+        .await;
+}
+
 /// Mounts a JSON response on the Accept mock host.
 pub async fn mount_accept_json(
     server: &PaymobMockServer,
@@ -108,15 +134,25 @@ pub async fn mount_accept_json(
     status: u16,
     body: Value,
 ) {
-    server
-        .mount_json(JsonEndpointMockConfig {
-            host: MockHost::Accept,
-            http_method,
-            endpoint_path,
-            status,
-            body,
-        })
-        .await;
+    mount_json_on_host(
+        server,
+        MockHost::Accept,
+        http_method,
+        endpoint_path,
+        status,
+        body,
+    )
+    .await;
+}
+
+/// Mounts a `GET` `200 OK` JSON response on the Accept mock host.
+pub async fn mount_accept_get(server: &PaymobMockServer, path: &str, body: Value) {
+    mount_accept_json(server, "GET", path, 200, body).await;
+}
+
+/// Mounts a `POST` JSON response on the Accept mock host.
+pub async fn mount_accept_post(server: &PaymobMockServer, path: &str, status: u16, body: Value) {
+    mount_accept_json(server, "POST", path, status, body).await;
 }
 
 /// Mounts a JSON response on the Payouts mock host.
@@ -127,15 +163,15 @@ pub async fn mount_payouts_json(
     status: u16,
     body: Value,
 ) {
-    server
-        .mount_json(JsonEndpointMockConfig {
-            host: MockHost::Payouts,
-            http_method,
-            endpoint_path,
-            status,
-            body,
-        })
-        .await;
+    mount_json_on_host(
+        server,
+        MockHost::Payouts,
+        http_method,
+        endpoint_path,
+        status,
+        body,
+    )
+    .await;
 }
 
 /// Returns a minimal valid Paymob Intention response JSON fixture.

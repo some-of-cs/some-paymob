@@ -167,7 +167,7 @@ async fn sandbox_check_handler(
         channel: input.channel.into(),
     };
     let report = SandboxGuard::check_constraints(&req);
-    if let Some(err) = report.errors.iter().next().cloned() {
+    if let Some(err) = report.errors.first().cloned() {
         return Err(ApiServerError::from(err));
     }
     Ok(Json(report.into()))

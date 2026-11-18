@@ -591,7 +591,7 @@ async fn e2e_webhooks_protocols_a_b_c_d_e_ok() {
     );
     let payout_body = json!({
         "transaction_id": "tx_e_1",
-        "issuer": "vodafone",
+        "issuer": "bank_wallet",
         "status": "successful",
         "amount_cents": 15000,
         "currency": "EGP"

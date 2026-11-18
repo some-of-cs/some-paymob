@@ -28,10 +28,8 @@ use some_paymob::test_utils::{
     JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, OFFICIAL_TX_192036465_HMAC,
     OFFICIAL_TX_192036465_JSON, PaymobMockServer, PayoutsRateLimitMockConfig, SAMPLE_HMAC_SECRET,
 };
-use some_paymob::{
-    ClientConfig, InMemoryWebhookDeduplicator, PaymobClient, PaymobError, PaymobRegion,
-    WebhookError,
-};
+use some_paymob::webhooks::InMemoryWebhookDeduplicator;
+use some_paymob::{ClientConfig, PaymobClient, PaymobError, PaymobRegion, WebhookError};
 
 use super::rocket_server::{AppState, build_rocket};
 
@@ -170,8 +168,12 @@ fn negative_use_cvc_with_moto_cvn_mismatch_rejected() {
     assert!(validate_use_cvc_with_moto(false, Some(&valid_cvn)).is_err());
     assert!(validate_use_cvc_with_moto(true, Some(&short_cvn)).is_err());
 
-    let err = MitChargeParams::with_moto_cvc("pay_tok", "saved_tok", SecretString::from("ab1"))
-        .expect_err("non-digit CVN must fail");
+    let err = MitChargeParams::with_moto_cvc(
+        "pay_tok".into(),
+        "saved_tok".into(),
+        SecretString::from("ab1"),
+    )
+    .expect_err("non-digit CVN must fail");
     assert!(matches!(
         err,
         PaymobError::ValidationError { field: "cvn", .. }
@@ -298,7 +300,7 @@ async fn recovery_regime3_oauth2_refresh_token_and_password_fallback() {
     ));
     let provider = PayoutsOAuthProvider::with_client_and_cache(
         &server.uri(),
-        creds,
+        creds.into(),
         reqwest::Client::new(),
         cache,
     )

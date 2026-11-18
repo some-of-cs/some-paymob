@@ -771,10 +771,10 @@ impl From<SubscriptionCard> for SubscriptionCardDto {
     fn from(card: SubscriptionCard) -> Self {
         Self {
             id: card.id,
-            card_data: card.card_data,
-            created_at: card.created_at,
+            card_data: card.card_data.clone(),
+            created_at: card.created_at.clone(),
             is_primary: card.is_primary,
-            masked_pan: card.masked_pan,
+            masked_pan: card.masked_pan.clone(),
             failed_attempts: card.failed_attempts,
         }
     }
@@ -974,8 +974,8 @@ impl From<PayoutsTokenResponse> for PayoutsTokenResponseDto {
             access_token: tok.access_token.expose_secret().to_owned(),
             refresh_token: tok.refresh_token.expose_secret().to_owned(),
             expires_in: tok.expires_in,
-            scope: tok.scope,
-            token_type: tok.token_type,
+            scope: tok.scope.clone(),
+            token_type: tok.token_type.clone(),
         }
     }
 }

@@ -6,9 +6,13 @@ use std::sync::Arc;
 use rocket::{Build, Rocket};
 use some_paymob::{InMemoryWebhookDeduplicator, PaymobClient, PaymobWebhookEngine};
 
+#[path = "rocket_server/error.rs"]
 pub mod error;
+#[path = "rocket_server/routes_core_checkout_legacy_manage.rs"]
 pub mod routes_core_checkout_legacy_manage;
+#[path = "rocket_server/routes_onboarding_webhooks_unified.rs"]
 pub mod routes_onboarding_webhooks_unified;
+#[path = "rocket_server/routes_saved_cards_subscriptions_payouts.rs"]
 pub mod routes_saved_cards_subscriptions_payouts;
 
 pub use error::ApiServerError;

@@ -37,6 +37,7 @@ pub async fn manage_refund(
 #[derive(Debug, Deserialize)]
 pub struct VoidPayload {
     pub transaction_id: u64,
+    pub use_legacy_v2_bearer: Option<bool>,
 }
 
 /// `POST /manage/void` — Voids an unsettled transaction.
@@ -45,7 +46,11 @@ pub async fn manage_void(
     body: web::Json<VoidPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
     let params = VoidParams::try_new(body.transaction_id)?;
-    let tx = state.client.manage().void(params).await?;
+    let mut svc = state.client.manage();
+    if body.use_legacy_v2_bearer == Some(true) {
+        svc = svc.with_legacy_v2_bearer();
+    }
+    let tx = svc.void(params).await?;
     Ok(manage_tx_json(&tx, "is_void", tx.is_void))
 }
 

@@ -14,6 +14,7 @@ pub struct MitPayPayload {
     pub payment_token: String,
     pub saved_token: String,
     pub cvn: Option<String>,
+    pub use_cvc_with_moto: Option<bool>,
 }
 
 /// `POST /saved-cards/pay/mit` — Executes a saved-card MIT/CIT charge.
@@ -21,6 +22,9 @@ pub async fn pay_mit(
     state: web::Data<AppState>,
     body: web::Json<MitPayPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
+    if let Some(use_cvc) = body.use_cvc_with_moto {
+        validate_use_cvc_with_moto(use_cvc, body.cvn.as_deref())?;
+    }
     let mut params = MitPayParams::new(
         SecretString::from(body.payment_token.clone()),
         SecretString::from(body.saved_token.clone()),

@@ -37,7 +37,7 @@ pub fn build_rocket(state: AppState) -> Rocket<Build> {
 
 #[cfg(not(test))]
 #[rocket::main]
-async fn main() -> Result<(), rocket::Error> {
+async fn main() -> Result<(), Box<rocket::Error>> {
     use some_paymob::{ClientConfig, PaymobRegion};
     let config = ClientConfig::builder()
         .region(PaymobRegion::Egypt)
@@ -57,6 +57,6 @@ async fn main() -> Result<(), rocket::Error> {
         webhook_engine,
         deduplicator,
     };
-    let _rocket = build_rocket(state).launch().await?;
+    let _rocket = build_rocket(state).launch().await.map_err(Box::new)?;
     Ok(())
 }

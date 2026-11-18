@@ -8,25 +8,25 @@ use some_paymob::prelude::*;
 
 use super::{ApiServerError, AppState};
 
-fn inquiry_summary(
+fn inquiry_ok(
     count: usize,
     status_code: impl Serialize,
     status_description: impl Serialize,
-) -> serde_json::Value {
-    json!({
+) -> HttpResponse {
+    HttpResponse::Ok().json(json!({
         "count": count,
         "status_code": status_code,
         "status_description": status_description,
-    })
+    }))
 }
 
-fn topup_json(rec: &TopupRecord) -> serde_json::Value {
-    json!({
+fn topup_ok(rec: &TopupRecord) -> HttpResponse {
+    HttpResponse::Ok().json(json!({
         "id": rec.id,
         "amount": rec.amount,
         "status": rec.status,
         "transfer_type": rec.transfer_type,
-    })
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,16 +42,22 @@ pub async fn inquire_transactions(
     state: web::Data<AppState>,
     body: web::Json<TxInquiryPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let mut params = TransactionInquiryParams::new(body.transactions_ids.clone()).with_bulk(body.is_bulk);
+    let mut params =
+        TransactionInquiryParams::new(body.transactions_ids.clone()).with_bulk(body.is_bulk);
     if let Some(bt) = body.bank_transactions {
         params = params.with_bank_transactions(bt);
     }
-    let resp = state.client.payouts().inquiries().transactions(&params).await?;
-    Ok(HttpResponse::Ok().json(inquiry_summary(
+    let resp = state
+        .client
+        .payouts()
+        .inquiries()
+        .transactions(&params)
+        .await?;
+    Ok(inquiry_ok(
         resp.results.len(),
         resp.status_code,
         resp.status_description,
-    )))
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,12 +75,17 @@ pub async fn inquire_by_reference(
     if let Some(bt) = body.bank_transactions {
         params = params.with_bank_transactions(bt);
     }
-    let resp = state.client.payouts().inquiries().by_reference(&params).await?;
-    Ok(HttpResponse::Ok().json(inquiry_summary(
+    let resp = state
+        .client
+        .payouts()
+        .inquiries()
+        .by_reference(&params)
+        .await?;
+    Ok(inquiry_ok(
         resp.results.len(),
         resp.status_code,
         resp.status_description,
-    )))
+    ))
 }
 
 /// `GET /payouts/inquiries/budget` — Fetches current Paymob Send user budget.
@@ -130,8 +141,14 @@ pub async fn topup_bank_transfer(
         from_bank_name: body.from_bank_name.clone(),
         reference_number: body.reference_number.clone(),
     };
-    let rec = state.client.payouts().topups().from_bank_transfer(params).await?;
-    Ok(HttpResponse::Ok().json(topup_json(&rec)))
+    Ok(topup_ok(
+        &state
+            .client
+            .payouts()
+            .topups()
+            .from_bank_transfer(params)
+            .await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,17 +164,34 @@ pub async fn topup_accept_balance(
     body: web::Json<AcceptBalanceTopupPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
     let params = AcceptBalanceTopupParams::new(body.amount, &body.currency, &body.username);
-    let rec = state.client.payouts().topups().from_accept_balance(params).await?;
-    Ok(HttpResponse::Ok().json(topup_json(&rec)))
+    Ok(topup_ok(
+        &state
+            .client
+            .payouts()
+            .topups()
+            .from_accept_balance(params)
+            .await?,
+    ))
 }
-
 
 /// Registers Service 9b routes.
 pub fn configure(cfg: &mut web::ServiceConfig) {
-    cfg.route("/payouts/inquiries/transactions", web::post().to(inquire_transactions))
-        .route("/payouts/inquiries/by-reference", web::post().to(inquire_by_reference))
-        .route("/payouts/inquiries/budget", web::get().to(inquire_budget))
-        .route("/payouts/inquiries/topups", web::get().to(inquire_topups))
-        .route("/payouts/topups/bank-transfer", web::post().to(topup_bank_transfer))
-        .route("/payouts/topups/accept-balance", web::post().to(topup_accept_balance));
+    cfg.route(
+        "/payouts/inquiries/transactions",
+        web::post().to(inquire_transactions),
+    )
+    .route(
+        "/payouts/inquiries/by-reference",
+        web::post().to(inquire_by_reference),
+    )
+    .route("/payouts/inquiries/budget", web::get().to(inquire_budget))
+    .route("/payouts/inquiries/topups", web::get().to(inquire_topups))
+    .route(
+        "/payouts/topups/bank-transfer",
+        web::post().to(topup_bank_transfer),
+    )
+    .route(
+        "/payouts/topups/accept-balance",
+        web::post().to(topup_accept_balance),
+    );
 }

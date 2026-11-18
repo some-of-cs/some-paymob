@@ -74,7 +74,11 @@ pub async fn get_subscription(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let sub = state.client.subscriptions().retrieve(path.into_inner()).await?;
+    let sub = state
+        .client
+        .subscriptions()
+        .retrieve(path.into_inner())
+        .await?;
     Ok(HttpResponse::Ok().json(sub_json(&sub)))
 }
 
@@ -130,7 +134,11 @@ pub async fn update_subscription(
     if let Some(active) = body.is_active {
         params = params.with_is_active(active);
     }
-    let sub = state.client.subscriptions().update(path.into_inner(), &params).await?;
+    let sub = state
+        .client
+        .subscriptions()
+        .update(path.into_inner(), &params)
+        .await?;
     Ok(HttpResponse::Ok().json(sub_json(&sub)))
 }
 
@@ -139,7 +147,11 @@ pub async fn suspend_subscription(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let sub = state.client.subscriptions().suspend(path.into_inner()).await?;
+    let sub = state
+        .client
+        .subscriptions()
+        .suspend(path.into_inner())
+        .await?;
     Ok(HttpResponse::Ok().json(sub_json(&sub)))
 }
 
@@ -148,7 +160,11 @@ pub async fn resume_subscription(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let sub = state.client.subscriptions().resume(path.into_inner()).await?;
+    let sub = state
+        .client
+        .subscriptions()
+        .resume(path.into_inner())
+        .await?;
     Ok(HttpResponse::Ok().json(sub_json(&sub)))
 }
 
@@ -157,17 +173,26 @@ pub async fn cancel_subscription(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let sub = state.client.subscriptions().cancel(path.into_inner()).await?;
-    Ok(HttpResponse::Ok().json(sub_json(&sub)))
-}
+    let sub = state
+        .client
+        .subscriptions()
+        .cancel(path.into_inner())ˆ˜]ØZ]ÎÂˆÚÊ™\ÜÛœÙN“ÚÊ
+KšœÛÛŠİX—ÚœÛÛŠ	œİXŠJJBŸB‚‹ËËÈ™YÚ\İ\œÈÙ\šXÙHˆ›İ]\Ë‚œXˆ›ˆÛÛ™šYİ\™JÙ™Îˆ	›]]ÙX”Ù\šXÙPÛÛ™šYÊHÂˆÙ™Ëœ›İ]J‹ÜİXœØÜš\[ÛœÈ‹ÙXœÜİ
 
-/// Registers Service 8b routes.
-pub fn configure(cfg: &mut web::ServiceConfig) {
-    cfg.route("/subscriptions", web::post().to(create_subscription))
-        .route("/subscriptions", web::get().to(list_subscriptions))
-        .route("/subscriptions/{sub_id}", web::get().to(get_subscription))
-        .route("/subscriptions/{sub_id}", web::put().to(update_subscription))
-        .route("/subscriptions/{sub_id}/suspend", web::post().to(suspend_subscription))
-        .route("/subscriptions/{sub_id}/resume", web::post().to(resume_subscription))
-        .route("/subscriptions/{sub_id}/cancel", web::post().to(cancel_subscription));
-}
+KÊÜ™X]WÜİXœØÜš\[ÛŠJBˆœ›İ]J‹ÜİXœØÜš\[ÛœÈ‹ÙX™Ù]
+
+KÊ\İÜİXœØÜš\[ÛœÊJBˆœ›İ]J‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYH‹ÙX™Ù]
+
+KÊÙ]ÜİXœØÜš\[ÛŠJBˆœ›İ]Jˆ‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYH‹ˆÙXœ]
+
+KÊ\]WÜİXœØÜš\[ÛŠKˆ
+Bˆœ›İ]Jˆ‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYKÜİ\Ü[™‹ˆÙXœÜİ
+
+KÊİ\Ü[™ÜİXœØÜš\[ÛŠKˆ
+Bˆœ›İ]Jˆ‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYKÜ™\İ[YH‹ˆÙXœÜİ
+
+KÊ™\İ[YWÜİXœØÜš\[ÛŠKˆ
+Bˆœ›İ]Jˆ‹ÜİXœØÜš\[ÛœËŞÜİX—ÚYKØØ[˜Ù[‹ˆÙXœÜİ
+
+KÊØ[˜Ù[ÜİXœØÜš\[ÛŠKˆ
+NÂŸB

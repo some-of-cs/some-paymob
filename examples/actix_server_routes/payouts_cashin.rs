@@ -41,6 +41,14 @@ pub async fn auth_refresh(
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CashinMeta {
+    pub amount: u64,
+    pub full_name: String,
+    pub client_reference_id: Option<String>,
+    pub customer_bears_fees: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct WalletCashinPayload {
     pub msisdn: String,
     pub amount: u64,
@@ -59,15 +67,15 @@ fn build_wallet_params(body: &WalletCashinPayload) -> MobileWalletCashinParams {
     p
 }
 
-fn disburse_json(resp: &DisbursementResponse) -> serde_json::Value {
-    json!({
+fn disburse_ok(resp: &DisbursementResponse) -> HttpResponse {
+    HttpResponse::Ok().json(json!({
         "transaction_id": resp.transaction_id,
         "issuer": resp.issuer,
         "amount": resp.amount,
         "disbursement_status": resp.disbursement_status,
         "status_code": resp.status_code,
         "status_description": resp.status_description,
-    })
+    }))
 }
 
 /// `POST /payouts/cashin/wallet/{issuer}` — Disburses to mobile/bank wallet issuers.
@@ -91,18 +99,16 @@ pub async fn cashin_wallet(
             .into());
         }
     };
-    Ok(HttpResponse::Ok().json(disburse_json(&resp)))
+    Ok(disburse_ok(&resp))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct BankCardCashinPayload {
-    pub amount: u64,
+    #[serde(flatten)]
+    pub meta: CashinMeta,
     pub bank_card_number: String,
     pub bank_code: String,
     pub bank_transaction_type: String,
-    pub full_name: String,
-    pub client_reference_id: Option<String>,
-    pub customer_bears_fees: Option<bool>,
 }
 
 /// `POST /payouts/cashin/bank-card` — Disburses to a bank card.
@@ -117,26 +123,25 @@ pub async fn cashin_bank_card(
         }
     })?;
     let params = BankCardCashinParams {
-        amount: body.amount,
+        amount: body.meta.amount,
         bank_card_number: SecretString::from(body.bank_card_number.clone()),
         bank_code: body.bank_code.clone(),
         bank_transaction_type: tx_type,
-        full_name: body.full_name.clone(),
-        client_reference_id: body.client_reference_id.clone(),
-        customer_bears_fees: body.customer_bears_fees,
+        full_name: body.meta.full_name.clone(),
+        client_reference_id: body.meta.client_reference_id.clone(),
+        customer_bears_fees: body.meta.customer_bears_fees,
     };
-    let resp = state.client.payouts().cashin().bank_card(params).await?;
-    Ok(HttpResponse::Ok().json(disburse_json(&resp)))
+    Ok(disburse_ok(
+        &state.client.payouts().cashin().bank_card(params).await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct InstantBankCashinPayload {
-    pub amount: u64,
+    #[serde(flatten)]
+    pub meta: CashinMeta,
     pub bank_code: String,
     pub bank_account_number: String,
-    pub full_name: String,
-    pub client_reference_id: Option<String>,
-    pub customer_bears_fees: Option<bool>,
 }
 
 /// `POST /payouts/cashin/bank-instant` — Disburses via instant bank transfer.
@@ -145,25 +150,24 @@ pub async fn cashin_bank_instant(
     body: web::Json<InstantBankCashinPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
     let params = InstantBankCashinParams {
-        amount: body.amount,
+        amount: body.meta.amount,
         bank_code: body.bank_code.clone(),
         bank_account_number: SecretString::from(body.bank_account_number.clone()),
-        full_name: body.full_name.clone(),
-        client_reference_id: body.client_reference_id.clone(),
-        customer_bears_fees: body.customer_bears_fees,
+        full_name: body.meta.full_name.clone(),
+        client_reference_id: body.meta.client_reference_id.clone(),
+        customer_bears_fees: body.meta.customer_bears_fees,
     };
-    let resp = state.client.payouts().cashin().bank_instant(params).await?;
-    Ok(HttpResponse::Ok().json(disburse_json(&resp)))
+    Ok(disburse_ok(
+        &state.client.payouts().cashin().bank_instant(params).await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct EgyptianPostCashinPayload {
-    pub amount: u64,
+    #[serde(flatten)]
+    pub meta: CashinMeta,
     pub msisdn: String,
-    pub full_name: String,
     pub national_id: String,
-    pub client_reference_id: Option<String>,
-    pub customer_bears_fees: Option<bool>,
 }
 
 /// `POST /payouts/cashin/egyptian-post` — Disburses via Egyptian Post.
@@ -172,15 +176,21 @@ pub async fn cashin_egyptian_post(
     body: web::Json<EgyptianPostCashinPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
     let params = EgyptianPostCashinParams {
-        amount: body.amount,
+        amount: body.meta.amount,
         msisdn: body.msisdn.clone(),
-        full_name: body.full_name.clone(),
+        full_name: body.meta.full_name.clone(),
         national_id: SecretString::from(body.national_id.clone()),
-        client_reference_id: body.client_reference_id.clone(),
-        customer_bears_fees: body.customer_bears_fees,
+        client_reference_id: body.meta.client_reference_id.clone(),
+        customer_bears_fees: body.meta.customer_bears_fees,
     };
-    let resp = state.client.payouts().cashin().egyptian_post(params).await?;
-    Ok(HttpResponse::Ok().json(disburse_json(&resp)))
+    Ok(disburse_ok(
+        &state
+            .client
+            .payouts()
+            .cashin()
+            .egyptian_post(params)
+            .await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,8 +204,9 @@ pub async fn cancel_aman(
     body: web::Json<CancelAmanPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
     let params = CancelAmanParams::new(&body.transaction_id);
-    let resp = state.client.payouts().cashin().cancel_aman(params).await?;
-    Ok(HttpResponse::Ok().json(disburse_json(&resp)))
+    Ok(disburse_ok(
+        &state.client.payouts().cashin().cancel_aman(params).await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -252,10 +263,22 @@ pub async fn cashin_bulk(
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/payouts/auth/token", web::post().to(auth_token))
         .route("/payouts/auth/refresh", web::post().to(auth_refresh))
-        .route("/payouts/cashin/wallet/{issuer}", web::post().to(cashin_wallet))
-        .route("/payouts/cashin/bank-card", web::post().to(cashin_bank_card))
-        .route("/payouts/cashin/bank-instant", web::post().to(cashin_bank_instant))
-        .route("/payouts/cashin/egyptian-post", web::post().to(cashin_egyptian_post))
+        .route(
+            "/payouts/cashin/wallet/{issuer}",
+            web::post().to(cashin_wallet),
+        )
+        .route(
+            "/payouts/cashin/bank-card",
+            web::post().to(cashin_bank_card),
+        )
+        .route(
+            "/payouts/cashin/bank-instant",
+            web::post().to(cashin_bank_instant),
+        )
+        .route(
+            "/payouts/cashin/egyptian-post",
+            web::post().to(cashin_egyptian_post),
+        )
         .route("/payouts/cashin/aman/cancel", web::post().to(cancel_aman))
         .route("/payouts/cashin/bulk", web::post().to(cashin_bulk));
 }

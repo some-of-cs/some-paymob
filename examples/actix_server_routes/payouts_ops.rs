@@ -158,6 +158,6 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/payouts/inquiries/by-reference", web::post().to(inquire_by_reference))
         .route("/payouts/inquiries/budget", web::get().to(inquire_budget))
         .route("/payouts/inquiries/topups", web::get().to(inquire_topups))
-        .route("/payouts/topups/bank_transfer", web::post().to(topup_bank_transfer))
+        .route("/payouts/topups/bank-transfer", web::post().to(topup_bank_transfer))
         .route("/payouts/topups/accept-balance", web::post().to(topup_accept_balance));
 }

@@ -22,15 +22,16 @@ pub async fn pay_mit(
     state: web::Data<AppState>,
     body: web::Json<MitPayPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
+    let cvn_secret = body.cvn.as_deref().map(SecretString::from);
     if let Some(use_cvc) = body.use_cvc_with_moto {
-        validate_use_cvc_with_moto(use_cvc, body.cvn.as_deref())?;
+        validate_use_cvc_with_moto(use_cvc, cvn_secret.as_ref())?;
     }
     let mut params = MitPayParams::new(
         SecretString::from(body.payment_token.clone()),
         SecretString::from(body.saved_token.clone()),
     )?;
-    if let Some(cvn) = &body.cvn {
-        params = params.with_cvn(SecretString::from(cvn.clone()))?;
+    if let Some(cvn) = cvn_secret {
+        params = params.with_cvn(cvn)?;
     }
     let resp = state
         .client

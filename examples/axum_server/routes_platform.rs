@@ -207,7 +207,13 @@ async fn onboarding_hmac_secret(
         .retrieve_hmac_secret()
         .await?;
     let present = !resp.hmac_secret().is_empty();
-    Ok(hmac_secret_response(None, resp.label, resp.status, resp.code, present))
+    Ok(hmac_secret_response(
+        None,
+        resp.label,
+        resp.status,
+        resp.code,
+        present,
+    ))
 }
 
 /// `GET /onboarding/auth/merchants/{mid}/hmac-secret` — Retrieves a sub-merchant HMAC secret.
@@ -222,7 +228,13 @@ async fn onboarding_merchant_hmac_secret(
         .retrieve_merchant_hmac_secret(mid)
         .await?;
     let present = !resp.hmac_secret().is_empty();
-    Ok(hmac_secret_response(Some(mid), resp.label, resp.status, resp.code, present))
+    Ok(hmac_secret_response(
+        Some(mid),
+        resp.label,
+        resp.status,
+        resp.code,
+        present,
+    ))
 }
 
 /// Request body for `POST /onboarding/flow/register`.
@@ -637,7 +649,12 @@ async fn run_scoped_manage(
             (tx, extra)
         }
     };
-    Ok(scoped_tx_json(scoped.merchant_id(), tx.id, tx.success, extra))
+    Ok(scoped_tx_json(
+        scoped.merchant_id(),
+        tx.id,
+        tx.success,
+        extra,
+    ))
 }
 
 /// Request body for `POST /merchants/{mid}/manage/refund`.

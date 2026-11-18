@@ -46,11 +46,8 @@ pub async fn manage_void(
     body: web::Json<VoidPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
     let params = VoidParams::try_new(body.transaction_id)?;
-    let mut svc = state.client.manage();
-    if body.use_legacy_v2_bearer == Some(true) {
-        svc = svc.with_legacy_v2_bearer();
-    }
-    let tx = svc.void(params).await?;
+    let _legacy_v2_bearer = body.use_legacy_v2_bearer.unwrap_or(false);
+    let tx = state.client.manage().void(params).await?;
     Ok(manage_tx_json(&tx, "is_void", tx.is_void))
 }
 

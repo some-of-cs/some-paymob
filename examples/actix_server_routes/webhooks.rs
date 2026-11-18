@@ -4,7 +4,6 @@
 use std::collections::BTreeMap;
 
 use actix_web::{HttpResponse, web};
-use secrecy::ExposeSecret;
 use serde::Deserialize;
 use serde_json::json;
 use some_paymob::prelude::*;

@@ -209,8 +209,8 @@ async fn onboarding_hmac_secret(
     let present = !resp.hmac_secret().is_empty();
     Ok(hmac_secret_response(
         None,
-        resp.label,
-        resp.status,
+        resp.label.clone(),
+        resp.status.clone(),
         resp.code,
         present,
     ))
@@ -230,8 +230,8 @@ async fn onboarding_merchant_hmac_secret(
     let present = !resp.hmac_secret().is_empty();
     Ok(hmac_secret_response(
         Some(mid),
-        resp.label,
-        resp.status,
+        resp.label.clone(),
+        resp.status.clone(),
         resp.code,
         present,
     ))

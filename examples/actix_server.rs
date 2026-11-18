@@ -5,7 +5,7 @@
 #[path = "actix_server_routes/mod.rs"]
 pub mod routes;
 
-ppub use routes::{ApiServerError, AppState};
+pub use routes::{ApiServerError, AppState};
 
 use actix_web::web;
 
@@ -15,6 +15,6 @@ pub fn configure_app(cfg: &mut web::ServiceConfig) {
 }
 
 #[actix_web::main]
-async fn main() -> std::io:Result<()> {
+async fn main() -> std::io::Result<()> {
     Ok(())
 }

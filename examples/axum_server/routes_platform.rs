@@ -127,7 +127,7 @@ async fn onboarding_login(
     Json(body): Json<OnboardingLoginPayload>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let creds = PartnerLoginCredentials::try_new(body.username, body.password)?;
-    let resp = state.client.onboarding().auth().login(creds).await?;
+    let resp = state.paymob.onboarding().auth().login(creds).await?;
     Ok((
         StatusCode::OK,
         Json(json!({
@@ -154,7 +154,7 @@ async fn onboarding_create_api_key(
         params = params.with_label(label);
     }
     let resp = state
-        .client
+        .paymob
         .onboarding()
         .auth()
         .create_api_key(params)
@@ -173,7 +173,7 @@ async fn onboarding_hmac_secret(
     State(state): State<Arc<AppState>>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let resp = state
-        .client
+        .paymob
         .onboarding()
         .auth()
         .retrieve_hmac_secret()
@@ -195,7 +195,7 @@ async fn onboarding_merchant_hmac_secret(
     Path(mid): Path<u64>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let resp = state
-        .client
+        .paymob
         .onboarding()
         .auth()
         .retrieve_merchant_hmac_secret(mid)
@@ -250,7 +250,7 @@ async fn onboarding_register(
         params = params.with_country(country);
     }
     let resp = state
-        .client
+        .paymob
         .onboarding()
         .flow()
         .register_merchant(&params)
@@ -289,7 +289,7 @@ async fn onboarding_schema(
     if let Some(mid) = query.paymob_mid {
         params = params.with_paymob_mid(mid);
     }
-    let schema = state.client.onboarding().flow().get_schema(&params).await?;
+    let schema = state.paymob.onboarding().flow().get_schema(&params).await?;
     Ok((StatusCode::OK, Json(json!(schema))))
 }
 
@@ -316,7 +316,7 @@ async fn onboarding_submit_step(
         params = params.with_partner(partner);
     }
     let resp = state
-        .client
+        .paymob
         .onboarding()
         .flow()
         .submit_step(&params)
@@ -330,7 +330,7 @@ async fn onboarding_inquiry(
     Path(mid): Path<u64>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let resp = state
-        .client
+        .paymob
         .onboarding()
         .flow()
         .merchant_inquiry(mid)
@@ -423,7 +423,7 @@ async fn merchant_create_intention(
     Json(body): Json<ScopedCreateIntentionPayload>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let params = build_scoped_create_params(&body)?;
-    let scoped = state.client.with_merchant(mid)?;
+    let scoped = state.paymob.with_merchant(mid)?;
     let resp = scoped.intentions().create(&params).await?;
     Ok((
         StatusCode::CREATED,
@@ -478,7 +478,7 @@ async fn merchant_update_intention(
     Json(body): Json<ScopedUpdateIntentionPayload>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let params = build_scoped_update_params(&body)?;
-    let scoped = state.client.with_merchant(mid)?;
+    let scoped = state.paymob.with_merchant(mid)?;
     let resp = match body.client_secret.as_deref() {
         Some(secret) if !secret.trim().is_empty() => {
             scoped
@@ -504,7 +504,7 @@ async fn merchant_get_transaction(
     State(state): State<Arc<AppState>>,
     Path((mid, tx_id)): Path<(u64, u64)>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
-    let scoped = state.client.with_merchant(mid)?;
+    let scoped = state.paymob.with_merchant(mid)?;
     let tx = scoped.inquiries().transaction(tx_id).await?;
     Ok((
         StatusCode::OK,
@@ -531,15 +531,16 @@ pub struct ScopedOrderInquiryPayload {
 
 fn build_order_inquiry_params(
     body: &ScopedOrderInquiryPayload,
-) -> Result<TransactionInquiryParams, ApiServerError> {
+) -> Result<some_paymob::resources::inquiries::by_order::TransactionInquiryParams, ApiServerError> {
+    use some_paymob::resources::inquiries::by_order::TransactionInquiryParams as OrderTxInquiry;
     if let Some(oid) = body.order_id {
-        return Ok(TransactionInquiryParams::by_order_id(oid));
+        return Ok(OrderTxInquiry::by_order_id(oid));
     }
     if let Some(ref_id) = &body.merchant_order_id {
-        return Ok(TransactionInquiryParams::by_merchant_order_id(ref_id));
+        return Ok(OrderTxInquiry::by_merchant_order_id(ref_id));
     }
     if let Some(sref) = &body.special_reference {
-        return Ok(TransactionInquiryParams::by_special_reference(sref));
+        return Ok(OrderTxInquiry::by_special_reference(sref));
     }
     Err(PaymobError::ValidationError {
         field: "order_id",
@@ -555,7 +556,7 @@ async fn merchant_order_inquiry(
     Json(body): Json<ScopedOrderInquiryPayload>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let params = build_order_inquiry_params(&body)?;
-    let scoped = state.client.with_merchant(mid)?;
+    let scoped = state.paymob.with_merchant(mid)?;
     let tx = scoped.inquiries().by_order(&params).await?;
     Ok((
         StatusCode::OK,
@@ -585,7 +586,7 @@ async fn merchant_refund(
     Json(body): Json<ScopedRefundPayload>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let params = RefundParams::try_new(body.transaction_id, body.amount_cents)?;
-    let scoped = state.client.with_merchant(mid)?;
+    let scoped = state.paymob.with_merchant(mid)?;
     let tx = scoped.manage().refund(&params).await?;
     Ok((
         StatusCode::OK,
@@ -613,7 +614,7 @@ async fn merchant_void(
     Json(body): Json<ScopedVoidPayload>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let params = VoidParams::try_new(body.transaction_id)?;
-    let scoped = state.client.with_merchant(mid)?;
+    let scoped = state.paymob.with_merchant(mid)?;
     let tx = scoped.manage().void(&params).await?;
     Ok((
         StatusCode::OK,
@@ -642,7 +643,7 @@ async fn merchant_capture(
     Json(body): Json<ScopedCapturePayload>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let params = CaptureParams::try_new(body.transaction_id, body.amount_cents)?;
-    let scoped = state.client.with_merchant(mid)?;
+    let scoped = state.paymob.with_merchant(mid)?;
     let tx = scoped.manage().capture(&params).await?;
     Ok((
         StatusCode::OK,
@@ -674,7 +675,7 @@ async fn webhook_post(
     Query(query): Query<HmacQuery>,
     raw_body: String,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
-    let engine = state.client.webhooks()?;
+    let engine = state.paymob.webhooks()?;
     let event = engine.construct_event(&raw_body, query.hmac.as_deref())?;
     state.deduplicator.claim_or_reject(&event)?;
     let outcome = normalize_webhook_event(&event);
@@ -687,7 +688,7 @@ async fn webhook_redirect(
     State(state): State<Arc<AppState>>,
     Query(params): Query<BTreeMap<String, String>>,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
-    let engine = state.client.webhooks()?;
+    let engine = state.paymob.webhooks()?;
     let verified = engine.verify_transaction_get(&params)?;
     let approved = verified.is_approved();
     let event = WebhookEvent::TransactionResponseRedirect(verified);

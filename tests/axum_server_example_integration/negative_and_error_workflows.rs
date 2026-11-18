@@ -143,7 +143,7 @@ async fn rejects_control_chars_in_fields_and_paths() {
     let server = PaymobMockServer::start().await;
     let client = mock_client(&server, "egy_sk_test_mock_key_123");
     let nul_phone = BillingData::builder()
-        .phone_number("+2010234\05678")
+        .phone_number("+2010234\x005678")
         .build();
     assert!(matches!(
         nul_phone,

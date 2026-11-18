@@ -7,7 +7,9 @@ use rocket::http::{ContentType, Status};
 use rocket::local::asynchronous::Client;
 use serde_json::{Value, json};
 use some_paymob::core::auth::CachedToken;
-use some_paymob::core::credentials::{ApiKey, HmacSecret, PublicKey, SecretKey};
+use some_paymob::core::credentials::{
+    ApiKey, HmacSecret, PartnerCredentials, PublicKey, SecretKey,
+};
 use some_paymob::test_utils::{
     JsonEndpointMockConfig, MockHost, PaymobMockServer, SAMPLE_HMAC_SECRET, SandboxCheckRequest,
     SandboxConstraintError, SandboxGuard, SandboxPaymentChannel, SandboxWarning,
@@ -33,6 +35,9 @@ fn build_test_client(server: &PaymobMockServer) -> PaymobClient {
             ApiKey::new("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5").expect("valid api key"),
         )
         .hmac_secret(HmacSecret::new(SAMPLE_HMAC_SECRET).expect("valid hmac secret"))
+        .partner_credentials(
+            PartnerCredentials::new("partner_api_key_123").expect("valid partner creds"),
+        )
         .max_retries(0)
         .build()
         .expect("valid client config");
@@ -438,10 +443,8 @@ async fn e2e_quicklinks_and_splits_return_200_201() {
         &rocket,
         "/splits/validate-and-quote",
         &json!({
-            "total_amount_cents": 100_000,
-            "recipients": [{ "recipient_id": "sub_1", "percentage_bps": 10_000 }],
-            "cards": [{ "amount_cents": 100_000 }],
-            "fixed_fee_cents": 500
+            "amount_cents": 100_000,
+            "recipients": [{ "recipient_id": "sub_1", "percentage_bps": 10_000 }]
         }),
     )
     .await;
@@ -465,7 +468,7 @@ async fn e2e_saved_cards_and_subscriptions_return_200_201() {
         "POST",
         "/api/acceptance/subscription-plans",
         201,
-        json!({ "id": 701, "name": "Pro Plan", "amount_cents": 20_000 }),
+        json!({ "id": 701, "name": "Pro Plan", "frequency": 30, "integration": 4097558, "amount_cents": 20_000 }),
     )
     .await;
 
@@ -512,7 +515,7 @@ async fn e2e_payouts_bulk_budget_and_topup_return_200() {
     mount_payouts(
         &server,
         "GET",
-        "/api/secure/budget/",
+        "/api/secure/budget/inquire/",
         200,
         json!({ "current_budget": "1000.00" }),
     )
@@ -546,7 +549,7 @@ async fn e2e_onboarding_and_merchant_scoped_return_200_201() {
     mount_accept(
         &server,
         "POST",
-        "/api/auth/partners/register",
+        "/api/onboarding/register",
         201,
         json!({ "paymob_mid": 12345, "status": "registered" }),
     )
@@ -578,7 +581,7 @@ async fn e2e_onboarding_and_merchant_scoped_return_200_201() {
     );
     assert_eq!(
         rocket
-            .get("/merchants/mid_u4/inquiries/transactions/192036465")
+            .get("/merchants/12345/inquiries/transactions/192036465")
             .dispatch()
             .await
             .status(),
@@ -690,7 +693,7 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
     let proto_e = post_json(
         &rocket,
         "/webhooks/paymob",
-        &json!({ "transaction_id": "tx_e1", "disbursement_status": "successful", "amount": 200 }),
+        &json!({ "transaction_id": "tx_e1", "issuer": "vodafone", "disbursement_status": "successful", "amount": 200 }),
     )
     .await;
     assert_eq!(proto_e, Status::Ok);

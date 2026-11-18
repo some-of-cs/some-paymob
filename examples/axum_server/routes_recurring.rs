@@ -39,6 +39,8 @@ use some_paymob::{Currency, MinorUnitAmount, PaymobError};
 
 use super::state::{ApiServerError, AppState};
 
+const REDACTED_MARKER: &str = "[REDACTED]";
+
 /// Builds the Axum [`Router`] for Services 9–12 (Saved Cards, Subscriptions, and Payouts).
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -225,13 +227,32 @@ impl From<HeadlessPayResponse> for HeadlessPayResponseDto {
     }
 }
 
-fn build_mit_pay_params(
-    payment_token: String,
-    saved_token: String,
-    cvn: Option<SecretString>,
-) -> Result<MitPayParams, PaymobError> {
-    let params = MitPayParams::new(payment_token, saved_token)?;
-    match cvn {
+enum HeadlessPayOp {
+    Mit(MitPayParams),
+    Wallet(WalletPayParams),
+    Kiosk(KioskPayParams),
+    Raw(RawPayParams),
+}
+
+async fn execute_headless_pay(
+    state: &AppState,
+    op: HeadlessPayOp,
+) -> Result<Json<HeadlessPayResponseDto>, ApiServerError> {
+    let svc = state.paymob.saved_cards();
+    let resp = match op {
+        HeadlessPayOp::Mit(p) => svc.pay_with_token_mit(&p).await?,
+        HeadlessPayOp::Wallet(p) => svc.pay_with_wallet(&p).await?,
+        HeadlessPayOp::Kiosk(p) => svc.pay_with_kiosk(&p).await?,
+        HeadlessPayOp::Raw(p) => svc.pay_raw(&p).await?,
+    };
+    Ok(Json(resp.into()))
+}
+
+fn build_mit_pay_params(req: MitPayRequest) -> Result<MitPayParams, PaymobError> {
+    let cvn_secret = req.cvn.map(SecretString::from);
+    validate_use_cvc_with_moto(req.use_cvc_with_moto, cvn_secret.as_ref())?;
+    let params = MitPayParams::new(req.payment_token, req.saved_token)?;
+    match cvn_secret {
         Some(code) => params.with_cvn(code),
         None => Ok(params),
     }
@@ -242,15 +263,7 @@ async fn pay_with_token_mit(
     State(state): State<Arc<AppState>>,
     Json(req): Json<MitPayRequest>,
 ) -> Result<Json<HeadlessPayResponseDto>, ApiServerError> {
-    let cvn_secret = req.cvn.map(SecretString::from);
-    validate_use_cvc_with_moto(req.use_cvc_with_moto, cvn_secret.as_ref())?;
-    let params = build_mit_pay_params(req.payment_token, req.saved_token, cvn_secret)?;
-    let resp = state
-        .paymob
-        .saved_cards()
-        .pay_with_token_mit(&params)
-        .await?;
-    Ok(Json(resp.into()))
+    execute_headless_pay(&state, HeadlessPayOp::Mit(build_mit_pay_params(req)?)).await
 }
 
 /// Executes a headless mobile wallet payment.
@@ -259,8 +272,7 @@ async fn pay_with_wallet(
     Json(req): Json<WalletPayRequest>,
 ) -> Result<Json<HeadlessPayResponseDto>, ApiServerError> {
     let params = WalletPayParams::new(req.payment_token, req.wallet_phone)?;
-    let resp = state.paymob.saved_cards().pay_with_wallet(&params).await?;
-    Ok(Json(resp.into()))
+    execute_headless_pay(&state, HeadlessPayOp::Wallet(params)).await
 }
 
 /// Executes a headless kiosk aggregator payment.
@@ -269,8 +281,7 @@ async fn pay_with_kiosk(
     Json(req): Json<KioskPayRequest>,
 ) -> Result<Json<HeadlessPayResponseDto>, ApiServerError> {
     let params = KioskPayParams::new(req.payment_token)?;
-    let resp = state.paymob.saved_cards().pay_with_kiosk(&params).await?;
-    Ok(Json(resp.into()))
+    execute_headless_pay(&state, HeadlessPayOp::Kiosk(params)).await
 }
 
 /// Executes a headless payment with a raw JSON `source` object.
@@ -279,23 +290,16 @@ async fn pay_raw(
     Json(req): Json<RawPayRequest>,
 ) -> Result<Json<HeadlessPayResponseDto>, ApiServerError> {
     let params = RawPayParams::new(req.payment_token, req.source)?;
-    let resp = state.paymob.saved_cards().pay_raw(&params).await?;
-    Ok(Json(resp.into()))
+    execute_headless_pay(&state, HeadlessPayOp::Raw(params)).await
 }
 
 // ---------------------------------------------------------------------------
 // Service 10a: Subscription Plans DTOs & Handlers
 // ---------------------------------------------------------------------------
 
-/// Request payload for `POST /subscriptions/plans`.
-#[derive(Debug, Deserialize)]
-pub struct CreatePlanRequest {
-    /// Billing interval in days (`7 | 15 | 30 | 60 | 90 | 180 | 360`).
-    pub frequency: u16,
-    /// Human-readable subscription plan name.
-    pub name: String,
-    /// Paymob MIGS MOTO integration ID (`> 0`).
-    pub integration: u64,
+/// Shared optional configuration fields for creating or updating a subscription plan.
+#[derive(Debug, Default, Deserialize)]
+pub struct PlanOptionalFields {
     /// Optional webhook callback URL.
     #[serde(default)]
     pub webhook_url: Option<String>,
@@ -317,12 +321,26 @@ pub struct CreatePlanRequest {
     /// Whether to reuse initial transaction amount.
     #[serde(default)]
     pub use_transaction_amount: Option<bool>,
-    /// Whether the plan is active upon creation.
+    /// Whether the plan is active.
     #[serde(default)]
     pub is_active: Option<bool>,
     /// Optional plan fee in minor currency units.
     #[serde(default)]
     pub fee: Option<u64>,
+}
+
+/// Request payload for `POST /subscriptions/plans`.
+#[derive(Debug, Deserialize)]
+pub struct CreatePlanRequest {
+    /// Billing interval in days (`7 | 15 | 30 | 60 | 90 | 180 | 360`).
+    pub frequency: u16,
+    /// Human-readable subscription plan name.
+    pub name: String,
+    /// Paymob MIGS MOTO integration ID (`> 0`).
+    pub integration: u64,
+    /// Optional plan settings.
+    #[serde(flatten)]
+    pub options: PlanOptionalFields,
 }
 
 /// Request payload for `PUT /subscriptions/plans/{plan_id}`.
@@ -337,33 +355,9 @@ pub struct UpdatePlanRequest {
     /// Updated Paymob MIGS MOTO integration ID.
     #[serde(default)]
     pub integration: Option<u64>,
-    /// Updated webhook callback URL.
-    #[serde(default)]
-    pub webhook_url: Option<String>,
-    /// Updated reminder lead time in days.
-    #[serde(default)]
-    pub reminder_days: Option<u16>,
-    /// Updated retrial interval in days.
-    #[serde(default)]
-    pub retrial_days: Option<u16>,
-    /// Updated plan type.
-    #[serde(default)]
-    pub plan_type: Option<String>,
-    /// Updated maximum number of deductions.
-    #[serde(default)]
-    pub number_of_deductions: Option<u32>,
-    /// Updated recurring amount in minor currency units.
-    #[serde(default)]
-    pub amount_cents: Option<u64>,
-    /// Updated flag controlling reuse of initial transaction amount.
-    #[serde(default)]
-    pub use_transaction_amount: Option<bool>,
-    /// Updated active status flag.
-    #[serde(default)]
-    pub is_active: Option<bool>,
-    /// Updated plan fee in minor currency units.
-    #[serde(default)]
-    pub fee: Option<u64>,
+    /// Optional updated plan settings.
+    #[serde(flatten)]
+    pub options: PlanOptionalFields,
 }
 
 /// Query parameters for `GET /subscriptions/plans`.
@@ -378,19 +372,31 @@ impl TryFrom<CreatePlanRequest> for CreateSubscriptionPlanParams {
     type Error = ApiServerError;
 
     fn try_from(req: CreatePlanRequest) -> Result<Self, Self::Error> {
+        let frequency = PlanFrequency::from_days(req.frequency)?;
+        let PlanOptionalFields {
+            webhook_url,
+            reminder_days,
+            retrial_days,
+            plan_type,
+            number_of_deductions,
+            amount_cents,
+            use_transaction_amount,
+            is_active,
+            fee,
+        } = req.options;
         let params = Self {
-            frequency: PlanFrequency::from_days(req.frequency)?,
+            frequency,
             name: req.name,
             integration: req.integration,
-            webhook_url: req.webhook_url,
-            reminder_days: req.reminder_days,
-            retrial_days: req.retrial_days,
-            plan_type: req.plan_type,
-            number_of_deductions: req.number_of_deductions,
-            amount_cents: req.amount_cents,
-            use_transaction_amount: req.use_transaction_amount,
-            is_active: req.is_active,
-            fee: req.fee,
+            webhook_url,
+            reminder_days,
+            retrial_days,
+            plan_type,
+            number_of_deductions,
+            amount_cents,
+            use_transaction_amount,
+            is_active,
+            fee,
         };
         params.validate()?;
         Ok(params)
@@ -401,39 +407,43 @@ impl TryFrom<UpdatePlanRequest> for UpdateSubscriptionPlanParams {
     type Error = ApiServerError;
 
     fn try_from(req: UpdatePlanRequest) -> Result<Self, Self::Error> {
+        let opt = req.options;
         let params = Self {
             frequency: req.frequency.map(PlanFrequency::from_days).transpose()?,
             name: req.name,
             integration: req.integration,
-            webhook_url: req.webhook_url,
-            reminder_days: req.reminder_days,
-            retrial_days: req.retrial_days,
-            plan_type: req.plan_type,
-            number_of_deductions: req.number_of_deductions,
-            amount_cents: req.amount_cents,
-            use_transaction_amount: req.use_transaction_amount,
-            is_active: req.is_active,
-            fee: req.fee,
+            webhook_url: opt.webhook_url,
+            reminder_days: opt.reminder_days,
+            retrial_days: opt.retrial_days,
+            plan_type: opt.plan_type,
+            number_of_deductions: opt.number_of_deductions,
+            amount_cents: opt.amount_cents,
+            use_transaction_amount: opt.use_transaction_amount,
+            is_active: opt.is_active,
+            fee: opt.fee,
         };
         params.validate()?;
         Ok(params)
     }
 }
 
-enum PlanTransition {
-    Suspend,
-    Resume,
+enum PlanOp {
+    Create(CreateSubscriptionPlanParams),
+    Update(u64, UpdateSubscriptionPlanParams),
+    Suspend(u64),
+    Resume(u64),
 }
 
-async fn transition_plan(
+async fn execute_plan_op(
     state: &AppState,
-    plan_id: u64,
-    action: PlanTransition,
+    op: PlanOp,
 ) -> Result<Json<SubscriptionPlan>, ApiServerError> {
     let plans = state.paymob.subscriptions().plans();
-    let plan = match action {
-        PlanTransition::Suspend => plans.suspend(plan_id).await?,
-        PlanTransition::Resume => plans.resume(plan_id).await?,
+    let plan = match op {
+        PlanOp::Create(p) => plans.create(&p).await?,
+        PlanOp::Update(id, p) => plans.update(id, &p).await?,
+        PlanOp::Suspend(id) => plans.suspend(id).await?,
+        PlanOp::Resume(id) => plans.resume(id).await?,
     };
     Ok(Json(plan))
 }
@@ -443,10 +453,7 @@ async fn create_subscription_plan(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreatePlanRequest>,
 ) -> Result<Json<SubscriptionPlan>, ApiServerError> {
-    let params = CreateSubscriptionPlanParams::try_from(req)?;
-    Ok(Json(
-        state.paymob.subscriptions().plans().create(&params).await?,
-    ))
+    execute_plan_op(&state, PlanOp::Create(req.try_into()?)).await
 }
 
 /// Updates an existing subscription plan by ID.
@@ -455,15 +462,7 @@ async fn update_subscription_plan(
     Path(plan_id): Path<u64>,
     Json(req): Json<UpdatePlanRequest>,
 ) -> Result<Json<SubscriptionPlan>, ApiServerError> {
-    let params = UpdateSubscriptionPlanParams::try_from(req)?;
-    Ok(Json(
-        state
-            .paymob
-            .subscriptions()
-            .plans()
-            .update(plan_id, &params)
-            .await?,
-    ))
+    execute_plan_op(&state, PlanOp::Update(plan_id, req.try_into()?)).await
 }
 
 /// Lists subscription plans with optional pagination.
@@ -486,7 +485,7 @@ async fn suspend_subscription_plan(
     State(state): State<Arc<AppState>>,
     Path(plan_id): Path<u64>,
 ) -> Result<Json<SubscriptionPlan>, ApiServerError> {
-    transition_plan(&state, plan_id, PlanTransition::Suspend).await
+    execute_plan_op(&state, PlanOp::Suspend(plan_id)).await
 }
 
 /// Resumes a suspended subscription plan.
@@ -494,7 +493,7 @@ async fn resume_subscription_plan(
     State(state): State<Arc<AppState>>,
     Path(plan_id): Path<u64>,
 ) -> Result<Json<SubscriptionPlan>, ApiServerError> {
-    transition_plan(&state, plan_id, PlanTransition::Resume).await
+    execute_plan_op(&state, PlanOp::Resume(plan_id)).await
 }
 
 // ---------------------------------------------------------------------------
@@ -534,8 +533,8 @@ pub struct CreateSubscriptionRequest {
 pub struct SubscriptionEnrollmentResponseDto {
     /// Paymob Payment Intention identifier.
     pub id: String,
-    /// Intention client secret for Unified Checkout.
-    pub client_secret: String,
+    /// Redacted Intention client secret marker (`"[REDACTED]"`).
+    pub client_secret: &'static str,
     /// Associated Paymob order identifier, if created.
     pub intention_order_id: Option<u64>,
     /// Current intention status.
@@ -550,7 +549,7 @@ impl From<SubscriptionEnrollmentResponse> for SubscriptionEnrollmentResponseDto 
     fn from(resp: SubscriptionEnrollmentResponse) -> Self {
         Self {
             id: resp.id,
-            client_secret: resp.client_secret.expose_secret().to_owned(),
+            client_secret: REDACTED_MARKER,
             intention_order_id: resp.intention_order_id,
             status: resp.status,
             subscription_plan_id: resp.subscription_plan_id,
@@ -636,24 +635,29 @@ impl From<UpdateSubscriptionRequest> for UpdateSubscriptionParams {
     }
 }
 
-enum SubscriptionTransition {
+enum SubscriptionOp {
     Retrieve,
+    Update(UpdateSubscriptionParams),
     Suspend,
     Resume,
     Cancel,
 }
 
-async fn transition_subscription(
+async fn execute_subscription_op(
     state: &AppState,
     sub_id: u64,
-    action: SubscriptionTransition,
+    op: SubscriptionOp,
 ) -> Result<Json<Subscription>, ApiServerError> {
     let subs = state.paymob.subscriptions();
-    let sub = match action {
-        SubscriptionTransition::Retrieve => subs.retrieve(sub_id).await?,
-        SubscriptionTransition::Suspend => subs.suspend(sub_id).await?,
-        SubscriptionTransition::Resume => subs.resume(sub_id).await?,
-        SubscriptionTransition::Cancel => subs.cancel(sub_id).await?,
+    let sub = match op {
+        SubscriptionOp::Retrieve => subs.retrieve(sub_id).await?,
+        SubscriptionOp::Update(p) => {
+            p.validate()?;
+            subs.update(sub_id, &p).await?
+        }
+        SubscriptionOp::Suspend => subs.suspend(sub_id).await?,
+        SubscriptionOp::Resume => subs.resume(sub_id).await?,
+        SubscriptionOp::Cancel => subs.cancel(sub_id).await?,
     };
     Ok(Json(sub))
 }
@@ -674,7 +678,7 @@ async fn retrieve_subscription(
     State(state): State<Arc<AppState>>,
     Path(sub_id): Path<u64>,
 ) -> Result<Json<Subscription>, ApiServerError> {
-    transition_subscription(&state, sub_id, SubscriptionTransition::Retrieve).await
+    execute_subscription_op(&state, sub_id, SubscriptionOp::Retrieve).await
 }
 
 /// Lists subscriptions matching optional query filters.
@@ -697,11 +701,7 @@ async fn update_subscription(
     Path(sub_id): Path<u64>,
     Json(req): Json<UpdateSubscriptionRequest>,
 ) -> Result<Json<Subscription>, ApiServerError> {
-    let params = UpdateSubscriptionParams::from(req);
-    params.validate()?;
-    Ok(Json(
-        state.paymob.subscriptions().update(sub_id, &params).await?,
-    ))
+    execute_subscription_op(&state, sub_id, SubscriptionOp::Update(req.into())).await
 }
 
 /// Suspends an active subscription.
@@ -709,7 +709,7 @@ async fn suspend_subscription(
     State(state): State<Arc<AppState>>,
     Path(sub_id): Path<u64>,
 ) -> Result<Json<Subscription>, ApiServerError> {
-    transition_subscription(&state, sub_id, SubscriptionTransition::Suspend).await
+    execute_subscription_op(&state, sub_id, SubscriptionOp::Suspend).await
 }
 
 /// Resumes a suspended subscription.
@@ -717,7 +717,7 @@ async fn resume_subscription(
     State(state): State<Arc<AppState>>,
     Path(sub_id): Path<u64>,
 ) -> Result<Json<Subscription>, ApiServerError> {
-    transition_subscription(&state, sub_id, SubscriptionTransition::Resume).await
+    execute_subscription_op(&state, sub_id, SubscriptionOp::Resume).await
 }
 
 /// Permanently cancels a subscription.
@@ -725,7 +725,7 @@ async fn cancel_subscription(
     State(state): State<Arc<AppState>>,
     Path(sub_id): Path<u64>,
 ) -> Result<Json<Subscription>, ApiServerError> {
-    transition_subscription(&state, sub_id, SubscriptionTransition::Cancel).await
+    execute_subscription_op(&state, sub_id, SubscriptionOp::Cancel).await
 }
 
 // ---------------------------------------------------------------------------
@@ -798,6 +798,24 @@ impl From<DeleteSecondaryCardResponse> for DeleteSecondaryCardResponseDto {
     }
 }
 
+enum CardVaultMutation {
+    AddSecondary(AddSecondaryCardParams),
+    ChangePrimary(u64),
+}
+
+async fn execute_card_mutation(
+    state: &AppState,
+    sub_id: u64,
+    op: CardVaultMutation,
+) -> Result<Json<SubscriptionCardDto>, ApiServerError> {
+    let cards = state.paymob.subscriptions().cards();
+    let card = match op {
+        CardVaultMutation::AddSecondary(p) => cards.add_secondary(sub_id, p).await?,
+        CardVaultMutation::ChangePrimary(id) => cards.change_primary(sub_id, id).await?,
+    };
+    Ok(Json(card.into()))
+}
+
 fn build_secondary_card_params(
     req: AddSecondaryCardRequest,
 ) -> Result<AddSecondaryCardParams, PaymobError> {
@@ -824,13 +842,7 @@ async fn add_secondary_card(
     Json(req): Json<AddSecondaryCardRequest>,
 ) -> Result<Json<SubscriptionCardDto>, ApiServerError> {
     let params = build_secondary_card_params(req)?;
-    let card = state
-        .paymob
-        .subscriptions()
-        .cards()
-        .add_secondary(sub_id, params)
-        .await?;
-    Ok(Json(card.into()))
+    execute_card_mutation(&state, sub_id, CardVaultMutation::AddSecondary(params)).await
 }
 
 /// Promotes an existing card in the vault to primary.
@@ -839,13 +851,7 @@ async fn change_primary_card(
     Path(sub_id): Path<u64>,
     Json(req): Json<ChangePrimaryCardRequest>,
 ) -> Result<Json<SubscriptionCardDto>, ApiServerError> {
-    let card = state
-        .paymob
-        .subscriptions()
-        .cards()
-        .change_primary(sub_id, req.card)
-        .await?;
-    Ok(Json(card.into()))
+    execute_card_mutation(&state, sub_id, CardVaultMutation::ChangePrimary(req.card)).await
 }
 
 /// Removes a secondary card from a subscription's card vault.
@@ -953,13 +959,17 @@ pub struct RefreshPayoutsTokenRequest {
     pub refresh_token: String,
 }
 
-/// Serializable response DTO for Payouts OAuth 2.0 tokens.
+/// Serializable response DTO for Payouts OAuth 2.0 tokens with redacted secret markers.
 #[derive(Debug, Serialize)]
 pub struct PayoutsTokenResponseDto {
-    /// Short-lived OAuth 2.0 bearer access token.
-    pub access_token: String,
-    /// OAuth 2.0 refresh token.
-    pub refresh_token: String,
+    /// Redacted OAuth 2.0 bearer access token marker (`"[REDACTED]"`).
+    pub access_token: &'static str,
+    /// Redacted OAuth 2.0 refresh token marker (`"[REDACTED]"`).
+    pub refresh_token: &'static str,
+    /// Whether a non-empty access token was issued by the gateway.
+    pub access_token_present: bool,
+    /// Whether a non-empty refresh token was issued by the gateway.
+    pub refresh_token_present: bool,
     /// Token lifetime in seconds.
     pub expires_in: u64,
     /// Granted OAuth 2.0 scope string.
@@ -971,8 +981,10 @@ pub struct PayoutsTokenResponseDto {
 impl From<PayoutsTokenResponse> for PayoutsTokenResponseDto {
     fn from(tok: PayoutsTokenResponse) -> Self {
         Self {
-            access_token: tok.access_token.expose_secret().to_owned(),
-            refresh_token: tok.refresh_token.expose_secret().to_owned(),
+            access_token: REDACTED_MARKER,
+            refresh_token: REDACTED_MARKER,
+            access_token_present: !tok.access_token.expose_secret().is_empty(),
+            refresh_token_present: !tok.refresh_token.expose_secret().is_empty(),
             expires_in: tok.expires_in,
             scope: tok.scope.clone(),
             token_type: tok.token_type.clone(),
@@ -1179,10 +1191,10 @@ pub struct TopupRecordDto {
     pub transfer_type: Option<String>,
     /// Currency string.
     pub currency: Option<String>,
-    /// Source bank account number.
-    pub from_account_number: Option<String>,
-    /// Destination bank account number.
-    pub to_account_number: Option<String>,
+    /// Redacted source bank account number marker.
+    pub from_account_number: Option<&'static str>,
+    /// Redacted destination bank account number marker.
+    pub to_account_number: Option<&'static str>,
     /// Optional status description.
     pub status_description: Option<String>,
 }
@@ -1195,8 +1207,8 @@ impl From<TopupRecord> for TopupRecordDto {
             status: rec.status,
             transfer_type: rec.transfer_type,
             currency: rec.currency,
-            from_account_number: rec.from_account_number,
-            to_account_number: rec.to_account_number,
+            from_account_number: rec.from_account_number.as_ref().map(|_| REDACTED_MARKER),
+            to_account_number: rec.to_account_number.as_ref().map(|_| REDACTED_MARKER),
             status_description: rec.status_description,
         }
     }
@@ -1301,13 +1313,23 @@ impl From<EgyptianPostCashinRequest> for EgyptianPostCashinParams {
     }
 }
 
+async fn execute_payouts_auth(
+    state: &AppState,
+    refresh_token: Option<SecretString>,
+) -> Result<Json<PayoutsTokenResponseDto>, ApiServerError> {
+    let auth = state.paymob.payouts().auth();
+    let tok = match refresh_token {
+        Some(ref secret) => auth.refresh_token(secret).await?,
+        None => auth.generate_token().await?,
+    };
+    Ok(Json(tok.into()))
+}
+
 /// Generates a new Payouts OAuth 2.0 access and refresh token pair.
 async fn generate_payouts_token(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<PayoutsTokenResponseDto>, ApiServerError> {
-    Ok(Json(
-        state.paymob.payouts().auth().generate_token().await?.into(),
-    ))
+    execute_payouts_auth(&state, None).await
 }
 
 /// Refreshes an expired Payouts OAuth 2.0 access token.
@@ -1315,23 +1337,36 @@ async fn refresh_payouts_token(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RefreshPayoutsTokenRequest>,
 ) -> Result<Json<PayoutsTokenResponseDto>, ApiServerError> {
-    let refresh = SecretString::from(req.refresh_token);
-    Ok(Json(
-        state
-            .paymob
-            .payouts()
-            .auth()
-            .refresh_token(&refresh)
-            .await?
-            .into(),
-    ))
+    execute_payouts_auth(&state, Some(SecretString::from(req.refresh_token))).await
 }
 
 enum CashinChannel {
+    Wallet(String, MobileWalletCashinParams),
     BankCard(BankCardCashinParams),
     BankInstant(InstantBankCashinParams),
     EgyptianPost(EgyptianPostCashinParams),
     CancelAman(CancelAmanParams),
+}
+
+async fn dispatch_wallet_issuer(
+    state: &AppState,
+    issuer: &str,
+    params: MobileWalletCashinParams,
+) -> Result<DisbursementResponse, PaymobError> {
+    let cashin = state.paymob.payouts().cashin();
+    match issuer {
+        "vodafone" => cashin.vodafone(params).await,
+        "etisalat" => cashin.etisalat(params).await,
+        "orange" => cashin.orange(params).await,
+        "bank_wallet" => cashin.bank_wallet(params).await,
+        _ => Err(PaymobError::ValidationError {
+            field: "issuer",
+            reason: format!(
+                "unsupported wallet issuer '{issuer}'; expected vodafone, etisalat, \
+                 orange, or bank_wallet"
+            ),
+        }),
+    }
 }
 
 async fn execute_cashin(
@@ -1340,6 +1375,7 @@ async fn execute_cashin(
 ) -> Result<Json<DisbursementResponse>, ApiServerError> {
     let cashin = state.paymob.payouts().cashin();
     let resp = match channel {
+        CashinChannel::Wallet(issuer, p) => dispatch_wallet_issuer(state, &issuer, p).await?,
         CashinChannel::BankCard(p) => cashin.bank_card(p).await?,
         CashinChannel::BankInstant(p) => cashin.bank_instant(p).await?,
         CashinChannel::EgyptianPost(p) => cashin.egyptian_post(p).await?,
@@ -1354,25 +1390,7 @@ async fn cashin_wallet(
     Path(issuer): Path<String>,
     Json(req): Json<WalletCashinRequest>,
 ) -> Result<Json<DisbursementResponse>, ApiServerError> {
-    let params = MobileWalletCashinParams::from(req);
-    let cashin = state.paymob.payouts().cashin();
-    let resp = match issuer.as_str() {
-        "vodafone" => cashin.vodafone(params).await?,
-        "etisalat" => cashin.etisalat(params).await?,
-        "orange" => cashin.orange(params).await?,
-        "bank_wallet" => cashin.bank_wallet(params).await?,
-        _ => {
-            return Err(PaymobError::ValidationError {
-                field: "issuer",
-                reason: format!(
-                    "unsupported wallet issuer '{issuer}'; expected vodafone, etisalat, \
-                     orange, or bank_wallet"
-                ),
-            }
-            .into());
-        }
-    };
-    Ok(Json(resp))
+    execute_cashin(&state, CashinChannel::Wallet(issuer, req.into())).await
 }
 
 /// Disburses funds to a recipient bank card.
@@ -1499,32 +1517,49 @@ async fn inquire_topups(
     ))
 }
 
-/// Submits a Bank Transfer topup request with a base64-encoded proof attachment.
-async fn topup_bank_transfer(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<BankTransferTopupRequest>,
+enum TopupOp {
+    BankTransfer(BankTransferTopupParams),
+    AcceptBalance(AcceptBalanceTopupParams),
+}
+
+async fn execute_topup(
+    state: &AppState,
+    op: TopupOp,
 ) -> Result<Json<TopupRecordDto>, ApiServerError> {
+    let topups = state.paymob.payouts().topups();
+    let rec = match op {
+        TopupOp::BankTransfer(p) => topups.from_bank_transfer(p).await?,
+        TopupOp::AcceptBalance(p) => topups.from_accept_balance(p).await?,
+    };
+    Ok(Json(rec.into()))
+}
+
+fn build_bank_transfer_params(
+    req: BankTransferTopupRequest,
+) -> Result<BankTransferTopupParams, PaymobError> {
     let proof_bytes = BASE64_STANDARD
         .decode(req.to_attach_proof_base64.trim())
         .map_err(|err| PaymobError::ValidationError {
             field: "to_attach_proof_base64",
             reason: format!("invalid base64 proof payload: {err}"),
         })?;
-    let params = BankTransferTopupParams {
+    Ok(BankTransferTopupParams {
         amount: req.amount,
         currency: req.currency,
         to_attach_proof: proof_bytes,
         proof_filename: req.proof_filename,
         from_bank_name: req.from_bank_name,
         reference_number: req.reference_number,
-    };
-    let rec = state
-        .paymob
-        .payouts()
-        .topups()
-        .from_bank_transfer(params)
-        .await?;
-    Ok(Json(rec.into()))
+    })
+}
+
+/// Submits a Bank Transfer topup request with a base64-encoded proof attachment.
+async fn topup_bank_transfer(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BankTransferTopupRequest>,
+) -> Result<Json<TopupRecordDto>, ApiServerError> {
+    let params = build_bank_transfer_params(req)?;
+    execute_topup(&state, TopupOp::BankTransfer(params)).await
 }
 
 /// Submits an Accept Balance topup request.
@@ -1533,11 +1568,5 @@ async fn topup_accept_balance(
     Json(req): Json<AcceptBalanceTopupRequest>,
 ) -> Result<Json<TopupRecordDto>, ApiServerError> {
     let params = AcceptBalanceTopupParams::new(req.amount, req.currency, req.username);
-    let rec = state
-        .paymob
-        .payouts()
-        .topups()
-        .from_accept_balance(params)
-        .await?;
-    Ok(Json(rec.into()))
+    execute_topup(&state, TopupOp::AcceptBalance(params)).await
 }

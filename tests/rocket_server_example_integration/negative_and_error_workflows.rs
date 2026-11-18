@@ -17,7 +17,6 @@ use some_paymob::core::auth::payouts_oauth::{PAYOUTS_OAUTH_TOKEN_PATH, PayoutsOA
 use some_paymob::core::credentials::{
     ApiKey, HmacSecret, PayoutsCredentials, PublicKey, SecretKey,
 };
-use some_paymob::prelude::*;
 use some_paymob::resources::manage::RefundParams;
 use some_paymob::resources::payouts::{
     BankCardCashinParams, BankTransactionType, DisburseIssuer, DisbursementResponse,

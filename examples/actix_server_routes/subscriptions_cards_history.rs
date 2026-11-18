@@ -9,13 +9,54 @@ use some_paymob::resources::subscriptions::models::SubscriptionTransaction;
 
 use super::{ApiServerError, AppState};
 
-fn sub_tx_ok(tx: &SubscriptionTransaction) -> HttpResponse {
-    HttpResponse::Ok().json(json!({
+fn sub_tx_ok(tx: SubscriptionTransaction) -> Result<HttpResponse, ApiServerError> {
+    Ok(HttpResponse::Ok().json(json!({
         "id": tx.id,
         "amount_cents": tx.amount_cents,
         "success": tx.success,
         "is_refunded": tx.is_refunded,
-    }))
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CardMutationPayload {
+    pub card_token: Option<String>,
+    pub card_id: Option<u64>,
+    pub integration_id: Option<u64>,
+    pub redirect_url: Option<String>,
+}
+
+async fn mutate_card(
+    state: &web::Data<AppState>,
+    sub_id: u64,
+    body: &CardMutationPayload,
+    promote_primary: bool,
+) -> Result<HttpResponse, ApiServerError> {
+    let cards = state.client.subscriptions().cards();
+    let card = if promote_primary {
+        let cid = body.card_id.ok_or_else(|| PaymobError::ValidationError {
+            field: "card_id",
+            reason: "card_id is required".to_owned(),
+        })?;
+        cards.change_primary(sub_id, cid).await?
+    } else {
+        let tok = body
+            .card_token
+            .as_deref()
+            .ok_or_else(|| PaymobError::ValidationError {
+                field: "card_token",
+                reason: "card_token is required".to_owned(),
+            })?;
+        let mut p = AddSecondaryCardParams::new(tok)?;
+        if let Some(id) = body.integration_id {
+            p = p.with_integration_id(id);
+        }
+        if let Some(url) = &body.redirect_url {
+            p = p.with_redirect_url(url);
+        }
+        cards.add_secondary(sub_id, p).await?
+    };
+    Ok(HttpResponse::Ok().json(card))
 }
 
 /// `GET /subscriptions/{sub_id}/cards` — Lists cards attached to a subscription.
@@ -32,53 +73,22 @@ pub async fn list_cards(
     Ok(HttpResponse::Ok().json(json!({ "count": cards.len(), "cards": cards })))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AddSecondaryCardPayload {
-    pub card_token: String,
-    pub integration_id: Option<u64>,
-    pub redirect_url: Option<String>,
-}
-
 /// `POST /subscriptions/{sub_id}/cards/secondary` — Adds a secondary card to a subscription.
 pub async fn add_secondary_card(
     state: web::Data<AppState>,
     path: web::Path<u64>,
-    body: web::Json<AddSecondaryCardPayload>,
+    body: web::Json<CardMutationPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let mut params = AddSecondaryCardParams::new(&body.card_token)?;
-    if let Some(id) = body.integration_id {
-        params = params.with_integration_id(id);
-    }
-    if let Some(url) = &body.redirect_url {
-        params = params.with_redirect_url(url);
-    }
-    let card = state
-        .client
-        .subscriptions()
-        .cards()
-        .add_secondary(path.into_inner(), params)
-        .await?;
-    Ok(HttpResponse::Ok().json(card))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ChangePrimaryCardPayload {
-    pub card_id: u64,
+    mutate_card(&state, path.into_inner(), &body, false).await
 }
 
 /// `POST /subscriptions/{sub_id}/cards/primary` — Switches the primary subscription card.
 pub async fn change_primary_card(
     state: web::Data<AppState>,
     path: web::Path<u64>,
-    body: web::Json<ChangePrimaryCardPayload>,
+    body: web::Json<CardMutationPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let card = state
-        .client
-        .subscriptions()
-        .cards()
-        .change_primary(path.into_inner(), body.card_id)
-        .await?;
-    Ok(HttpResponse::Ok().json(card))
+    mutate_card(&state, path.into_inner(), &body, true).await
 }
 
 /// `DELETE /subscriptions/{sub_id}/cards/{card_id}` — Deletes a secondary card.
@@ -127,12 +137,13 @@ pub async fn last_transaction(
     state: web::Data<AppState>,
     path: web::Path<u64>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let tx = state
-        .client
-        .subscriptions()
-        .last_transaction(path.into_inner())
-        .await?;
-    Ok(sub_tx_ok(&tx))
+    sub_tx_ok(
+        state
+            .client
+            .subscriptions()
+            .last_transaction(path.into_inner())
+            .await?,
+    )
 }
 
 /// `GET /subscriptions/{sub_id}/transactions` — Lists subscription transactions.
@@ -159,12 +170,13 @@ pub async fn refund_last_transaction(
     path: web::Path<u64>,
     body: web::Json<RefundLastTxPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let tx = state
-        .client
-        .subscriptions()
-        .refund_last_transaction(path.into_inner(), body.amount_cents)
-        .await?;
-    Ok(sub_tx_ok(&tx))
+    sub_tx_ok(
+        state
+            .client
+            .subscriptions()
+            .refund_last_transaction(path.into_inner(), body.amount_cents)
+            .await?,
+    )
 }
 
 /// Registers Service 8c routes.

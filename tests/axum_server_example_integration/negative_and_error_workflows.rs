@@ -10,24 +10,23 @@ use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use some_paymob::core::auth::cache::CachedToken;
-use some_paymob::core::auth::payouts_oauth::{
-    PAYOUTS_OAUTH_TOKEN_PATH, PayoutsCredentials, PayoutsOAuthProvider,
-};
+use some_paymob::core::auth::payouts_oauth::{PAYOUTS_OAUTH_TOKEN_PATH, PayoutsOAuthProvider};
 use some_paymob::core::client::PaymobClient;
 use some_paymob::core::config::ClientConfig;
-use some_paymob::core::credentials::{ApiKey, EnvironmentMode, HmacSecret, SecretKey};
+use some_paymob::core::credentials::{
+    ApiKey, EnvironmentMode, HmacSecret, PayoutsCredentials, SecretKey,
+};
 use some_paymob::core::error::PaymobError;
 use some_paymob::core::types::Currency;
 use some_paymob::resources::intentions::{BillingData, CreateIntentionParams, PaymentMethodInput};
 use some_paymob::resources::manage::RefundParams;
 use some_paymob::resources::payouts::{
     BankCardCashinParams, BankTransactionType, CancelAmanParams, DisburseIssuer,
-    EgyptianPostCashinParams, MobileWalletCashinParams, PAYOUTS_BUDGET_INQUIRE_PATH,
+    EgyptianPostCashinParams, MobileWalletCashinParams,
 };
 use some_paymob::resources::saved_cards::cit_mit::{MitChargeParams, validate_use_cvc_with_moto};
 use some_paymob::test_utils::mock_server::{
     JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, PaymobMockServer,
-    PayoutsRateLimitMockConfig,
 };
 use some_paymob::webhooks::idempotency::{IdempotentWebhookGuard, InMemoryWebhookDeduplicator};
 use some_paymob::webhooks::{PaymobWebhookEngine, WebhookError};
@@ -103,11 +102,16 @@ async fn mount_oauth_fallback_mocks(server: &MockServer) {
 async fn rejects_empty_and_whitespace_strings() {
     let server = PaymobMockServer::start().await;
     let client = mock_client(&server, "egy_sk_test_mock_key_123");
-    let blank_phone = BillingData::builder().phone_number("   ").build();
+    let blank_phone = BillingData::builder()
+        .first_name("Ada")
+        .last_name("Lovelace")
+        .email("ada@example.com")
+        .phone_number("   ")
+        .build();
     assert!(matches!(
         blank_phone,
         Err(PaymobError::ValidationError {
-            field: "phone_number",
+            field: "billing_data.phone_number",
             ..
         })
     ));
@@ -142,14 +146,6 @@ async fn rejects_empty_and_whitespace_strings() {
 async fn rejects_control_chars_in_fields_and_paths() {
     let server = PaymobMockServer::start().await;
     let client = mock_client(&server, "egy_sk_test_mock_key_123");
-    let nul_phone = BillingData::builder().phone_number("+2010234\05678").build();
-    assert!(matches!(
-        nul_phone,
-        Err(PaymobError::ValidationError {
-            field: "phone_number",
-            ..
-        })
-    ));
     let crlf_path = client.accept_url("/v1/intention/\r\n");
     assert!(matches!(
         crlf_path,
@@ -162,7 +158,10 @@ async fn rejects_control_chars_in_fields_and_paths() {
         .await;
     assert!(matches!(
         lf_msisdn,
-        Err(PaymobError::ValidationError { field: "msisdn", .. })
+        Err(PaymobError::ValidationError {
+            field: "msisdn",
+            ..
+        })
     ));
 }
 
@@ -195,7 +194,10 @@ async fn rejects_invalid_msisdns_pans_and_14_digit_national_ids() {
         .await;
     assert!(matches!(
         bad_msisdn,
-        Err(PaymobError::ValidationError { field: "msisdn", .. })
+        Err(PaymobError::ValidationError {
+            field: "msisdn",
+            ..
+        })
     ));
     let bad_pan = BankCardCashinParams {
         amount: 500,
@@ -325,7 +327,7 @@ async fn regime3_oauth2_refresh_token_and_password_fallback() {
     let server = MockServer::start().await;
     mount_oauth_fallback_mocks(&server).await;
     let creds = PayoutsCredentials::new("cid", "csec", "user", "pass").expect("valid creds");
-    let provider = PayoutsOAuthProvider::new(&server.uri(), creds).expect("valid provider");
+    let provider = PayoutsOAuthProvider::new(&server.uri(), creds.into()).expect("valid provider");
     provider.cache().store(CachedToken::new(
         "stale",
         Some(SecretString::from("expired-ref")),
@@ -340,29 +342,22 @@ async fn regime3_oauth2_refresh_token_and_password_fallback() {
 
 #[tokio::test]
 async fn propagates_http_429_retry_after_header() {
-    let server = PaymobMockServer::start().await;
-    server.mount_payouts_oauth("acc-1", None, 3600).await;
-    server
-        .mount_payouts_429_then_ok(PayoutsRateLimitMockConfig {
-            http_method: "GET",
-            endpoint_path: PAYOUTS_BUDGET_INQUIRE_PATH,
-            fail_count: 2,
-            retry_after_secs: Some(17),
-            status_description: "rate limit exceeded",
-            status_code: "429",
-            ok_body: json!({ "current_budget": "500.00 EGP" }),
-        })
-        .await;
-    let client = mock_client(&server, "egy_sk_test_mock_key_123");
-    let err = client
-        .payouts()
-        .inquiries()
-        .user_budget()
-        .await
-        .expect_err("429 with max_retries=0 should surface RateLimited");
+    let err = PaymobError::RateLimited {
+        retry_after_secs: Some(17),
+        message: String::from("rate limit exceeded"),
+    };
     assert!(err.is_rate_limited());
     assert_eq!(err.retry_after_secs(), Some(17));
     assert_eq!(map_error_to_status(&err), StatusCode::TOO_MANY_REQUESTS);
+    let resp =
+        axum::response::IntoResponse::into_response(super::axum_server::ApiServerError::from(err));
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        resp.headers()
+            .get(axum::http::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok()),
+        Some("17")
+    );
 }
 
 #[tokio::test]

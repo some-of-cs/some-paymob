@@ -19,12 +19,12 @@ pub mod state;
 pub use state::{ApiServerError, AppState};
 
 /// Builds the complete Axum [`axum::Router`] merging core, recurring, and platform routes.
-#[must_use]
 pub fn build_router(state: Arc<AppState>) -> axum::Router {
     axum::Router::new()
         .merge(routes_core::router())
         .merge(routes_recurring::router())
         .merge(routes_platform::router())
+        .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024))
         .with_state(state)
 }
 

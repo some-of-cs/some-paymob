@@ -22,6 +22,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use some_paymob::core::config::ClientConfig;
 use some_paymob::core::credentials::EnvironmentMode;
+use some_paymob::resources::inquiries::by_order::TransactionInquiryParams;
 use some_paymob::resources::manage::Transaction as ManageTransaction;
 use some_paymob::resources::splits::CardFeeContext;
 use some_paymob::{
@@ -30,11 +31,10 @@ use some_paymob::{
     Currency, IntentionResponse, LegacyBillingData, LegacyCheckoutParams, LegacyOrder,
     LegacyOrderItem, MinorUnitAmount, PaymobClient, PaymobError, PaymobRegion, PixelPaymentMethod,
     QuickLinkResponse, RefundParams, SandboxCheckRequest, SandboxGuard, SandboxPaymentChannel,
-    SandboxReport, SplitDescription, SplitPaymentConfig, TransactionInquiryParams,
-    UpdateIntentionParams, VoidParams,
+    SandboxReport, SplitDescription, SplitPaymentConfig, UpdateIntentionParams, VoidParams,
 };
 
-use crate::state::{ApiServerError, AppState};
+use super::state::{ApiServerError, AppState};
 
 const REDACTED_MARKER: &str = "[REDACTED]";
 
@@ -70,7 +70,10 @@ pub fn router() -> Router<Arc<AppState>> {
             post(inquiry_card_tokens_handler),
         )
         .route("/quicklinks", post(create_quicklink_handler))
-        .route("/quicklinks/{link_id}/cancel", post(cancel_quicklink_handler))
+        .route(
+            "/quicklinks/{link_id}/cancel",
+            post(cancel_quicklink_handler),
+        )
         .route(
             "/splits/validate-and-quote",
             post(splits_validate_and_quote_handler),
@@ -157,14 +160,17 @@ impl From<SandboxReport> for SandboxReportResponse {
 
 async fn sandbox_check_handler(
     Json(input): Json<SandboxCheckInput>,
-) -> Json<SandboxReportResponse> {
+) -> Result<Json<SandboxReportResponse>, ApiServerError> {
     let req = SandboxCheckRequest {
         is_sandbox: input.is_sandbox,
         credential_age_days: input.credential_age_days,
         channel: input.channel.into(),
     };
     let report = SandboxGuard::check_constraints(&req);
-    Json(report.into())
+    if let Some(err) = report.errors.first().cloned() {
+        return Err(ApiServerError::from(err));
+    }
+    Ok(Json(report.into()))
 }
 
 #[derive(Serialize)]
@@ -489,11 +495,12 @@ async fn inquiry_by_tx_id_handler(
 async fn inquiry_by_order_handler(
     State(state): State<Arc<AppState>>,
     Json(params): Json<TransactionInquiryParams>,
-) -> Result<Json<some_paymob::resources::inquiries::by_order::InquiredTransaction>, ApiServerError> {
+) -> Result<Json<some_paymob::resources::inquiries::by_order::InquiredTransaction>, ApiServerError>
+{
     let tx = state
         .paymob
         .inquiries()
-        .by_order_or_reference(&params)
+        .by_order_or_reference(params)
         .await?;
     Ok(Json(tx))
 }
@@ -655,9 +662,7 @@ async fn splits_validate_and_quote_handler(
     }))
 }
 
-fn validate_split_payment(
-    input: &SplitValidateAndQuoteInput,
-) -> Result<Option<u64>, PaymobError> {
+fn validate_split_payment(input: &SplitValidateAndQuoteInput) -> Result<Option<u64>, PaymobError> {
     let Some(ref split) = input.split_payment else {
         return Ok(None);
     };
@@ -679,12 +684,14 @@ fn compute_convenience_quote(
     if let Some(ref bin) = input.bin_prefix {
         ctx = ctx.with_bin_prefix(bin);
     }
-    let fee = fee_cfg.compute_fee_for_card_cents(input.amount_cents, ctx)?;
-    let total = input.amount_cents.checked_add(fee).ok_or_else(|| {
-        PaymobError::ValidationError {
-            field: "amount_cents",
-            reason: String::from("total with convenience fee overflows u64"),
-        }
-    })?;
+    let fee = fee_cfg.compute_fee_for_card_cents(input.amount_cents, &ctx)?;
+    let total =
+        input
+            .amount_cents
+            .checked_add(fee)
+            .ok_or_else(|| PaymobError::ValidationError {
+                field: "amount_cents",
+                reason: String::from("total with convenience fee overflows u64"),
+            })?;
     Ok((Some(fee), Some(total)))
 }

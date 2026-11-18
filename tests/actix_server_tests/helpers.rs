@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 //! Shared test harness and mock helpers for `actix_server` integration tests.
 
-use actix_web::{App, web};
+use actix_web::web;
 use serde_json::{Value, json};
 use some_paymob::prelude::*;
 
-use crate::actix_server::{AppState, configure_app};
+use crate::actix_server::AppState;
 
 /// Builds a configured `AppState` pointing all base URLs at the given `PaymobMockServer`.
 pub fn build_test_state(mock: &PaymobMockServer) -> web::Data<AppState> {

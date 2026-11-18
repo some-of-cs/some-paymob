@@ -144,11 +144,7 @@ pub async fn update_intention(
         b = b.redirection_url(u);
     }
     let params = b.build()?;
-    let resp = state
-        .client
-        .intentions()
-        .update(params)
-        .await?;
+    let resp = state.client.intentions().update(params).await?;
     Ok(HttpResponse::Ok().json(json!({
         "id": resp.id,
         "status": resp.status,
@@ -199,11 +195,8 @@ pub async fn checkout_affordability(
 ) -> Result<HttpResponse, ApiServerError> {
     let pk = PublicKey::new(body.public_key.clone())?;
     let currency = parse_currency(&body.currency)?;
-    let mut b = AffordabilityWidgetConfig::builder(
-        &pk,
-        MinorUnitAmount::new(body.amount_cents),
-        currency,
-    );
+    let mut b =
+        AffordabilityWidgetConfig::builder(&pk, MinorUnitAmount::new(body.amount_cents), currency);
     if let Some(plan) = body.pre_selected_plan {
         b = b.pre_selected_plan(plan);
     }

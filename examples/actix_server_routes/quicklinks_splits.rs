@@ -98,7 +98,9 @@ pub async fn splits_validate_and_quote(
         .collect();
     let card_cfg = SplitPaymentConfig::new(cards)?;
     card_cfg.validate_total(body.total_amount_cents)?;
-    let fee_cfg = ConvenienceFeeConfig::new(FeeCalculationMode::FixedCents(body.fixed_fee_cents.unwrap_or(0)));
+    let fee_cfg = ConvenienceFeeConfig::new(FeeCalculationMode::FixedCents(
+        body.fixed_fee_cents.unwrap_or(0),
+    ));
     let total_with_fee = fee_cfg.total_with_fee_cents(body.total_amount_cents)?;
     Ok(HttpResponse::Ok().json(json!({
         "recipients_count": split_desc.recipients.len(),

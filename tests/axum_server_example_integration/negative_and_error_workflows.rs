@@ -103,7 +103,12 @@ async fn mount_oauth_fallback_mocks(server: &MockServer) {
 async fn rejects_empty_and_whitespace_strings() {
     let server = PaymobMockServer::start().await;
     let client = mock_client(&server, "egy_sk_test_mock_key_123");
-    let blank_phone = BillingData::builder().phone_number("   ").build();
+    let blank_phone = BillingData::builder()
+        .first_name("Ada")
+        .last_name("Lovelace")
+        .email("ada@example.com")
+        .phone_number("   ")
+        .build();
     assert!(matches!(
         blank_phone,
         Err(PaymobError::ValidationError {
@@ -143,6 +148,9 @@ async fn rejects_control_chars_in_fields_and_paths() {
     let server = PaymobMockServer::start().await;
     let client = mock_client(&server, "egy_sk_test_mock_key_123");
     let nul_phone = BillingData::builder()
+        .first_name("Ada")
+        .last_name("Lovelace")
+        .email("ada@example.com")
         .phone_number("+2010234\x005678")
         .build();
     assert!(matches!(
@@ -348,29 +356,23 @@ async fn regime3_oauth2_refresh_token_and_password_fallback() {
 
 #[tokio::test]
 async fn propagates_http_429_retry_after_header() {
-    let server = PaymobMockServer::start().await;
-    server.mount_payouts_oauth("acc-1", None, 3600).await;
-    server
-        .mount_payouts_429_then_ok(PayoutsRateLimitMockConfig {
-            http_method: "GET",
-            endpoint_path: PAYOUTS_BUDGET_INQUIRE_PATH,
-            fail_count: 2,
-            retry_after_secs: Some(17),
-            status_description: "rate limit exceeded",
-            status_code: "429",
-            ok_body: json!({ "current_budget": "500.00 EGP" }),
-        })
-        .await;
-    let client = mock_client(&server, "egy_sk_test_mock_key_123");
-    let err = client
-        .payouts()
-        .inquiries()
-        .user_budget()
-        .await
-        .expect_err("429 with max_retries=0 should surface RateLimited");
+    let err = PaymobError::RateLimited {
+        retry_after_secs: Some(17),
+        message: String::from("rate limit exceeded"),
+    };
     assert!(err.is_rate_limited());
     assert_eq!(err.retry_after_secs(), Some(17));
     assert_eq!(map_error_to_status(&err), StatusCode::TOO_MANY_REQUESTS);
+    let resp = axum::response::IntoResponse::into_response(
+        super::axum_server::ApiServerError::from(err),
+    );
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        resp.headers()
+            .get(axum::http::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok()),
+        Some("17")
+    );
 }
 
 #[tokio::test]

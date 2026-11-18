@@ -26,54 +26,53 @@ fn topup_resp(rec: TopupRecord) -> Result<HttpResponse, ApiServerError> {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct TxInquiryPayload {
+pub struct PayoutInquiryPayload {
+    #[serde(default)]
     pub transactions_ids: Vec<String>,
+    #[serde(default)]
+    pub client_reference_ids: Vec<String>,
     #[serde(default)]
     pub is_bulk: bool,
     pub bank_transactions: Option<bool>,
 }
 
-/// `POST /payouts/inquiries/transactions` — Inquires payout transactions by ID.
-pub async fn inquire_transactions(
-    state: web::Data<AppState>,
-    body: web::Json<TxInquiryPayload>,
+async fn run_inquiry(
+    state: &web::Data<AppState>,
+    body: &PayoutInquiryPayload,
+    by_ref: bool,
 ) -> Result<HttpResponse, ApiServerError> {
-    let mut params =
-        TransactionInquiryParams::new(body.transactions_ids.clone()).with_bulk(body.is_bulk);
-    if let Some(bt) = body.bank_transactions {
-        params = params.with_bank_transactions(bt);
-    }
-    let resp = state
-        .client
-        .payouts()
-        .inquiries()
-        .transactions(&params)
-        .await?;
+    let inq = state.client.payouts().inquiries();
+    let resp = if by_ref {
+        let mut p = ReferenceInquiryParams::new(body.client_reference_ids.clone());
+        if let Some(bt) = body.bank_transactions {
+            p = p.with_bank_transactions(bt);
+        }
+        inq.by_reference(&p).await?
+    } else {
+        let mut p =
+            TransactionInquiryParams::new(body.transactions_ids.clone()).with_bulk(body.is_bulk);
+        if let Some(bt) = body.bank_transactions {
+            p = p.with_bank_transactions(bt);
+        }
+        inq.transactions(&p).await?
+    };
     inquiry_resp(&resp)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct RefInquiryPayload {
-    pub client_reference_ids: Vec<String>,
-    pub bank_transactions: Option<bool>,
+/// `POST /payouts/inquiries/transactions` — Inquires payout transactions by ID.
+pub async fn inquire_transactions(
+    state: web::Data<AppState>,
+    body: web::Json<PayoutInquiryPayload>,
+) -> Result<HttpResponse, ApiServerError> {
+    run_inquiry(&state, &body, false).await
 }
 
 /// `POST /payouts/inquiries/by-reference` — Inquires payouts by client reference ID.
 pub async fn inquire_by_reference(
     state: web::Data<AppState>,
-    body: web::Json<RefInquiryPayload>,
+    body: web::Json<PayoutInquiryPayload>,
 ) -> Result<HttpResponse, ApiServerError> {
-    let mut params = ReferenceInquiryParams::new(body.client_reference_ids.clone());
-    if let Some(bt) = body.bank_transactions {
-        params = params.with_bank_transactions(bt);
-    }
-    let resp = state
-        .client
-        .payouts()
-        .inquiries()
-        .by_reference(&params)
-        .await?;
-    inquiry_resp(&resp)
+    run_inquiry(&state, &body, true).await
 }
 
 /// `GET /payouts/inquiries/budget` — Fetches current Paymob Send user budget.

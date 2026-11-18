@@ -153,7 +153,9 @@ async fn boundary_bank_transfer_proof_size_0_2936012_2936013() {
 async fn boundary_split_payments_cards_0_1_3_4_and_bps_not_10000() {
     let (_server, router, _state) = setup_test_app().await;
     let build_split = |cards: usize, bps: u16| -> Value {
-        let card_list: Vec<Value> = (0..cards).map(|_| json!({ "amount_cents": 1000 })).collect();
+        let card_list: Vec<Value> = (0..cards)
+            .map(|_| json!({ "amount_cents": 1000 }))
+            .collect();
         json!({
             "amount_cents": 10000,
             "split_description": { "recipients": [{ "recipient_id": "1", "percentage_bps": bps }] },
@@ -173,7 +175,12 @@ async fn boundary_split_payments_cards_0_1_3_4_and_bps_not_10000() {
     )
     .await;
     assert_eq!(
-        post_status(&router, "/splits/validate-and-quote", build_split(1, 10_001)).await,
+        post_status(
+            &router,
+            "/splits/validate-and-quote",
+            build_split(1, 10_001)
+        )
+        .await,
         StatusCode::BAD_REQUEST
     );
 }

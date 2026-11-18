@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Axum route handlers for Services 9–12: Saved Cards, Subscriptions, and Payouts.
 //!
 //! Exposes [`router`] mounting all headless saved-card/token payments,
@@ -224,6 +225,18 @@ impl From<HeadlessPayResponse> for HeadlessPayResponseDto {
     }
 }
 
+fn build_mit_pay_params(
+    payment_token: String,
+    saved_token: String,
+    cvn: Option<SecretString>,
+) -> Result<MitPayParams, PaymobError> {
+    let params = MitPayParams::new(payment_token, saved_token)?;
+    match cvn {
+        Some(code) => params.with_cvn(code),
+        None => Ok(params),
+    }
+}
+
 /// Executes a Merchant-Initiated Transaction (MIT) using a saved card token.
 async fn pay_with_token_mit(
     State(state): State<Arc<AppState>>,
@@ -238,18 +251,6 @@ async fn pay_with_token_mit(
         .pay_with_token_mit(&params)
         .await?;
     Ok(Json(resp.into()))
-}
-
-fn build_mit_pay_params(
-    payment_token: String,
-    saved_token: String,
-    cvn: Option<SecretString>,
-) -> Result<MitPayParams, PaymobError> {
-    let params = MitPayParams::new(payment_token, saved_token)?;
-    match cvn {
-        Some(code) => params.with_cvn(code),
-        None => Ok(params),
-    }
 }
 
 /// Executes a headless mobile wallet payment.
@@ -373,29 +374,77 @@ pub struct ListPlansQuery {
     pub page: Option<u32>,
 }
 
+impl TryFrom<CreatePlanRequest> for CreateSubscriptionPlanParams {
+    type Error = ApiServerError;
+
+    fn try_from(req: CreatePlanRequest) -> Result<Self, Self::Error> {
+        let params = Self {
+            frequency: PlanFrequency::from_days(req.frequency)?,
+            name: req.name,
+            integration: req.integration,
+            webhook_url: req.webhook_url,
+            reminder_days: req.reminder_days,
+            retrial_days: req.retrial_days,
+            plan_type: req.plan_type,
+            number_of_deductions: req.number_of_deductions,
+            amount_cents: req.amount_cents,
+            use_transaction_amount: req.use_transaction_amount,
+            is_active: req.is_active,
+            fee: req.fee,
+        };
+        params.validate()?;
+        Ok(params)
+    }
+}
+
+impl TryFrom<UpdatePlanRequest> for UpdateSubscriptionPlanParams {
+    type Error = ApiServerError;
+
+    fn try_from(req: UpdatePlanRequest) -> Result<Self, Self::Error> {
+        let params = Self {
+            frequency: req.frequency.map(PlanFrequency::from_days).transpose()?,
+            name: req.name,
+            integration: req.integration,
+            webhook_url: req.webhook_url,
+            reminder_days: req.reminder_days,
+            retrial_days: req.retrial_days,
+            plan_type: req.plan_type,
+            number_of_deductions: req.number_of_deductions,
+            amount_cents: req.amount_cents,
+            use_transaction_amount: req.use_transaction_amount,
+            is_active: req.is_active,
+            fee: req.fee,
+        };
+        params.validate()?;
+        Ok(params)
+    }
+}
+
+enum PlanTransition {
+    Suspend,
+    Resume,
+}
+
+async fn transition_plan(
+    state: &AppState,
+    plan_id: u64,
+    action: PlanTransition,
+) -> Result<Json<SubscriptionPlan>, ApiServerError> {
+    let plans = state.paymob.subscriptions().plans();
+    let plan = match action {
+        PlanTransition::Suspend => plans.suspend(plan_id).await?,
+        PlanTransition::Resume => plans.resume(plan_id).await?,
+    };
+    Ok(Json(plan))
+}
+
 /// Creates a new subscription plan.
 async fn create_subscription_plan(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreatePlanRequest>,
 ) -> Result<Json<SubscriptionPlan>, ApiServerError> {
-    let frequency = PlanFrequency::from_days(req.frequency)?;
-    let params = CreateSubscriptionPlanParams {
-        frequency,
-        name: req.name,
-        integration: req.integration,
-        webhook_url: req.webhook_url,
-        reminder_days: req.reminder_days,
-        retrial_days: req.retrial_days,
-        plan_type: req.plan_type,
-        number_of_deductions: req.number_of_deductions,
-        amount_cents: req.amount_cents,
-        use_transaction_amount: req.use_transaction_amount,
-        is_active: req.is_active,
-        fee: req.fee,
-    };
-    params.validate()?;
-    let plan = state.paymob.subscriptions().plans().create(&params).await?;
-    Ok(Json(plan))
+    let params = CreateSubscriptionPlanParams::try_from(req)?;
+    Ok(Json(state.paymob.subscriptions().plans().create(&params).await?))
 }
 
 /// Updates an existing subscription plan by ID.
@@ -404,29 +453,15 @@ async fn update_subscription_plan(
     Path(plan_id): Path<u64>,
     Json(req): Json<UpdatePlanRequest>,
 ) -> Result<Json<SubscriptionPlan>, ApiServerError> {
-    let frequency = req.frequency.map(PlanFrequency::from_days).transpose()?;
-    let params = UpdateSubscriptionPlanParams {
-        frequency,
-        name: req.name,
-        integration: req.integration,
-        webhook_url: req.webhook_url,
-        reminder_days: req.reminder_days,
-        retrial_days: req.retrial_days,
-        plan_type: req.plan_type,
-        number_of_deductions: req.number_of_deductions,
-        amount_cents: req.amount_cents,
-        use_transaction_amount: req.use_transaction_amount,
-        is_active: req.is_active,
-        fee: req.fee,
-    };
-    params.validate()?;
-    let plan = state
-        .paymob
-        .subscriptions()
-        .plans()
-        .update(plan_id, &params)
-        .await?;
-    Ok(Json(plan))
+    let params = UpdateSubscriptionPlanParams::try_from(req)?;
+    Ok(Json(
+        state
+            .paymob
+            .subscriptions()
+            .plans()
+            .update(plan_id, &params)
+            .await?,
+    ))
 }
 
 /// Lists subscription plans with optional pagination.
@@ -434,13 +469,9 @@ async fn list_subscription_plans(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListPlansQuery>,
 ) -> Result<Json<PaginatedResponse<SubscriptionPlan>>, ApiServerError> {
-    let plans = state
-        .paymob
-        .subscriptions()
-        .plans()
-        .list(query.page)
-        .await?;
-    Ok(Json(plans))
+    Ok(Json(
+        state.paymob.subscriptions().plans().list(query.page).await?,
+    ))
 }
 
 /// Suspends a subscription plan.
@@ -448,13 +479,7 @@ async fn suspend_subscription_plan(
     State(state): State<Arc<AppState>>,
     Path(plan_id): Path<u64>,
 ) -> Result<Json<SubscriptionPlan>, ApiServerError> {
-    let plan = state
-        .paymob
-        .subscriptions()
-        .plans()
-        .suspend(plan_id)
-        .await?;
-    Ok(Json(plan))
+    transition_plan(&state, plan_id, PlanTransition::Suspend).await
 }
 
 /// Resumes a suspended subscription plan.
@@ -462,8 +487,7 @@ async fn resume_subscription_plan(
     State(state): State<Arc<AppState>>,
     Path(plan_id): Path<u64>,
 ) -> Result<Json<SubscriptionPlan>, ApiServerError> {
-    let plan = state.paymob.subscriptions().plans().resume(plan_id).await?;
-    Ok(Json(plan))
+    transition_plan(&state, plan_id, PlanTransition::Resume).await
 }
 
 // ---------------------------------------------------------------------------
@@ -574,22 +598,65 @@ pub struct UpdateSubscriptionRequest {
     pub is_active: Option<bool>,
 }
 
+impl From<CreateSubscriptionRequest> for CreateSubscriptionParams {
+    fn from(req: CreateSubscriptionRequest) -> Self {
+        Self {
+            subscription_plan_id: req.subscription_plan_id,
+            amount: req.amount,
+            currency: req.currency,
+            payment_methods: req.payment_methods,
+            billing_data: req.billing_data,
+            special_reference: req.special_reference,
+            notification_url: req.notification_url,
+            redirection_url: req.redirection_url,
+            extras: req.extras,
+        }
+    }
+}
+
+impl From<UpdateSubscriptionRequest> for UpdateSubscriptionParams {
+    fn from(req: UpdateSubscriptionRequest) -> Self {
+        Self {
+            amount_cents: req.amount_cents,
+            plan_id: req.plan_id,
+            starts_at: req.starts_at,
+            ends_at: req.ends_at,
+            reminder_days: req.reminder_days,
+            retrial_days: req.retrial_days,
+            webhook_url: req.webhook_url,
+            is_active: req.is_active,
+        }
+    }
+}
+
+enum SubscriptionTransition {
+    Retrieve,
+    Suspend,
+    Resume,
+    Cancel,
+}
+
+async fn transition_subscription(
+    state: &AppState,
+    sub_id: u64,
+    action: SubscriptionTransition,
+) -> Result<Json<Subscription>, ApiServerError> {
+    let subs = state.paymob.subscriptions();
+    let sub = match action {
+        SubscriptionTransition::Retrieve => subs.retrieve(sub_id).await?,
+        SubscriptionTransition::Suspend => subs.suspend(sub_id).await?,
+        SubscriptionTransition::Resume => subs.resume(sub_id).await?,
+        SubscriptionTransition::Cancel => subs.cancel(sub_id).await?,
+    };
+    Ok(Json(sub))
+}
+
 /// Enrolls a customer into a subscription plan via the Intention API.
 async fn create_subscription(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateSubscriptionRequest>,
 ) -> Result<Json<SubscriptionEnrollmentResponseDto>, ApiServerError> {
-    let params = CreateSubscriptionParams {
-        subscription_plan_id: req.subscription_plan_id,
-        amount: req.amount,
-        currency: req.currency,
-        payment_methods: req.payment_methods,
-        billing_data: req.billing_data,
-        special_reference: req.special_reference,
-        notification_url: req.notification_url,
-        redirection_url: req.redirection_url,
-        extras: req.extras,
-    };
+    let params = CreateSubscriptionParams::from(req);
     params.validate()?;
     let enrollment = state.paymob.subscriptions().create(&params).await?;
     Ok(Json(enrollment.into()))
@@ -600,8 +667,7 @@ async fn retrieve_subscription(
     State(state): State<Arc<AppState>>,
     Path(sub_id): Path<u64>,
 ) -> Result<Json<Subscription>, ApiServerError> {
-    let sub = state.paymob.subscriptions().retrieve(sub_id).await?;
-    Ok(Json(sub))
+    transition_subscription(&state, sub_id, SubscriptionTransition::Retrieve).await
 }
 
 /// Lists subscriptions matching optional query filters.
@@ -615,8 +681,7 @@ async fn list_subscriptions(
         state: query.state.as_deref().map(SubscriptionState::from_state),
         page: query.page,
     };
-    let list = state.paymob.subscriptions().list(&filters).await?;
-    Ok(Json(list))
+    Ok(Json(state.paymob.subscriptions().list(&filters).await?))
 }
 
 /// Updates an existing subscription by ID.
@@ -625,19 +690,11 @@ async fn update_subscription(
     Path(sub_id): Path<u64>,
     Json(req): Json<UpdateSubscriptionRequest>,
 ) -> Result<Json<Subscription>, ApiServerError> {
-    let params = UpdateSubscriptionParams {
-        amount_cents: req.amount_cents,
-        plan_id: req.plan_id,
-        starts_at: req.starts_at,
-        ends_at: req.ends_at,
-        reminder_days: req.reminder_days,
-        retrial_days: req.retrial_days,
-        webhook_url: req.webhook_url,
-        is_active: req.is_active,
-    };
+    let params = UpdateSubscriptionParams::from(req);
     params.validate()?;
-    let sub = state.paymob.subscriptions().update(sub_id, &params).await?;
-    Ok(Json(sub))
+    Ok(Json(
+        state.paymob.subscriptions().update(sub_id, &params).await?,
+    ))
 }
 
 /// Suspends an active subscription.
@@ -645,8 +702,7 @@ async fn suspend_subscription(
     State(state): State<Arc<AppState>>,
     Path(sub_id): Path<u64>,
 ) -> Result<Json<Subscription>, ApiServerError> {
-    let sub = state.paymob.subscriptions().suspend(sub_id).await?;
-    Ok(Json(sub))
+    transition_subscription(&state, sub_id, SubscriptionTransition::Suspend).await
 }
 
 /// Resumes a suspended subscription.
@@ -654,8 +710,7 @@ async fn resume_subscription(
     State(state): State<Arc<AppState>>,
     Path(sub_id): Path<u64>,
 ) -> Result<Json<Subscription>, ApiServerError> {
-    let sub = state.paymob.subscriptions().resume(sub_id).await?;
-    Ok(Json(sub))
+    transition_subscription(&state, sub_id, SubscriptionTransition::Resume).await
 }
 
 /// Permanently cancels a subscription.
@@ -663,8 +718,7 @@ async fn cancel_subscription(
     State(state): State<Arc<AppState>>,
     Path(sub_id): Path<u64>,
 ) -> Result<Json<Subscription>, ApiServerError> {
-    let sub = state.paymob.subscriptions().cancel(sub_id).await?;
-    Ok(Json(sub))
+    transition_subscription(&state, sub_id, SubscriptionTransition::Cancel).await
 }
 
 // ---------------------------------------------------------------------------
@@ -710,10 +764,10 @@ impl From<SubscriptionCard> for SubscriptionCardDto {
     fn from(card: SubscriptionCard) -> Self {
         Self {
             id: card.id,
-            card_data: card.card_data.clone(),
-            created_at: card.created_at.clone(),
+            card_data: card.card_data,
+            created_at: card.created_at,
             is_primary: card.is_primary,
-            masked_pan: card.masked_pan.clone(),
+            masked_pan: card.masked_pan,
             failed_attempts: card.failed_attempts,
         }
     }
@@ -734,6 +788,16 @@ impl From<DeleteSecondaryCardResponse> for DeleteSecondaryCardResponseDto {
             detail: resp.detail,
             message: resp.message,
         }
+    }
+}
+
+fn build_secondary_card_params(
+    req: AddSecondaryCardRequest,
+) -> Result<AddSecondaryCardParams, PaymobError> {
+    let params = AddSecondaryCardParams::new(req.token)?;
+    match req.redirect_url {
+        Some(url) => params.with_redirect_url(url),
+        None => Ok(params),
     }
 }
 
@@ -760,16 +824,6 @@ async fn add_secondary_card(
         .add_secondary(sub_id, params)
         .await?;
     Ok(Json(card.into()))
-}
-
-fn build_secondary_card_params(
-    req: AddSecondaryCardRequest,
-) -> Result<AddSecondaryCardParams, PaymobError> {
-    let params = AddSecondaryCardParams::new(req.token)?;
-    match req.redirect_url {
-        Some(url) => params.with_redirect_url(url),
-        None => Ok(params),
-    }
 }
 
 /// Promotes an existing card in the vault to primary.
@@ -826,13 +880,14 @@ async fn register_subscription_webhook(
     Path(sub_id): Path<u64>,
     Json(req): Json<RegisterWebhookRequest>,
 ) -> Result<Json<SubscriptionWebhookRegistration>, ApiServerError> {
-    let reg = state
-        .paymob
-        .subscriptions()
-        .history()
-        .register_webhook(sub_id, &req.webhook_url)
-        .await?;
-    Ok(Json(reg))
+    Ok(Json(
+        state
+            .paymob
+            .subscriptions()
+            .history()
+            .register_webhook(sub_id, &req.webhook_url)
+            .await?,
+    ))
 }
 
 /// Retrieves the most recent transaction for a subscription.
@@ -840,13 +895,14 @@ async fn subscription_last_transaction(
     State(state): State<Arc<AppState>>,
     Path(sub_id): Path<u64>,
 ) -> Result<Json<SubscriptionTransaction>, ApiServerError> {
-    let tx = state
-        .paymob
-        .subscriptions()
-        .history()
-        .last_transaction(sub_id)
-        .await?;
-    Ok(Json(tx))
+    Ok(Json(
+        state
+            .paymob
+            .subscriptions()
+            .history()
+            .last_transaction(sub_id)
+            .await?,
+    ))
 }
 
 /// Lists all recorded transactions for a subscription.
@@ -854,13 +910,14 @@ async fn list_subscription_transactions(
     State(state): State<Arc<AppState>>,
     Path(sub_id): Path<u64>,
 ) -> Result<Json<Vec<SubscriptionTransaction>>, ApiServerError> {
-    let txs = state
-        .paymob
-        .subscriptions()
-        .history()
-        .list_transactions(sub_id)
-        .await?;
-    Ok(Json(txs))
+    Ok(Json(
+        state
+            .paymob
+            .subscriptions()
+            .history()
+            .list_transactions(sub_id)
+            .await?,
+    ))
 }
 
 /// Refunds the latest successful transaction on a subscription.
@@ -869,12 +926,13 @@ async fn refund_last_subscription_transaction(
     Path(sub_id): Path<u64>,
     Json(req): Json<RefundLastTransactionRequest>,
 ) -> Result<Json<SubscriptionRefundResponse>, ApiServerError> {
-    let resp = state
-        .paymob
-        .subscriptions()
-        .refund_last_transaction(sub_id, req.amount_cents)
-        .await?;
-    Ok(Json(resp))
+    Ok(Json(
+        state
+            .paymob
+            .subscriptions()
+            .refund_last_transaction(sub_id, req.amount_cents)
+            .await?,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -909,8 +967,8 @@ impl From<PayoutsTokenResponse> for PayoutsTokenResponseDto {
             access_token: tok.access_token.expose_secret().to_owned(),
             refresh_token: tok.refresh_token.expose_secret().to_owned(),
             expires_in: tok.expires_in,
-            scope: tok.scope.clone(),
-            token_type: tok.token_type.clone(),
+            scope: tok.scope,
+            token_type: tok.token_type,
         }
     }
 }
@@ -1185,12 +1243,62 @@ pub struct AcceptBalanceTopupRequest {
     pub username: String,
 }
 
+impl From<WalletCashinRequest> for MobileWalletCashinParams {
+    fn from(req: WalletCashinRequest) -> Self {
+        Self {
+            msisdn: req.msisdn,
+            amount: req.amount,
+            client_reference_id: req.client_reference_id,
+            customer_bears_fees: req.customer_bears_fees,
+        }
+    }
+}
+
+impl From<BankCardCashinRequest> for BankCardCashinParams {
+    fn from(req: BankCardCashinRequest) -> Self {
+        Self {
+            amount: req.amount,
+            bank_card_number: SecretString::from(req.bank_card_number),
+            bank_code: req.bank_code,
+            bank_transaction_type: req.bank_transaction_type,
+            full_name: req.full_name,
+            client_reference_id: req.client_reference_id,
+            customer_bears_fees: req.customer_bears_fees,
+        }
+    }
+}
+
+impl From<InstantBankCashinRequest> for InstantBankCashinParams {
+    fn from(req: InstantBankCashinRequest) -> Self {
+        Self {
+            amount: req.amount,
+            bank_code: req.bank_code,
+            bank_account_number: SecretString::from(req.bank_account_number),
+            full_name: req.full_name,
+            client_reference_id: req.client_reference_id,
+            customer_bears_fees: req.customer_bears_fees,
+        }
+    }
+}
+
+impl From<EgyptianPostCashinRequest> for EgyptianPostCashinParams {
+    fn from(req: EgyptianPostCashinRequest) -> Self {
+        Self {
+            amount: req.amount,
+            msisdn: req.msisdn,
+            full_name: req.full_name,
+            national_id: SecretString::from(req.national_id),
+            client_reference_id: req.client_reference_id,
+            customer_bears_fees: req.customer_bears_fees,
+        }
+    }
+}
+
 /// Generates a new Payouts OAuth 2.0 access and refresh token pair.
 async fn generate_payouts_token(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<PayoutsTokenResponseDto>, ApiServerError> {
-    let token = state.paymob.payouts().auth().generate_token().await?;
-    Ok(Json(token.into()))
+    Ok(Json(state.paymob.payouts().auth().generate_token().await?.into()))
 }
 
 /// Refreshes an expired Payouts OAuth 2.0 access token.
@@ -1199,13 +1307,36 @@ async fn refresh_payouts_token(
     Json(req): Json<RefreshPayoutsTokenRequest>,
 ) -> Result<Json<PayoutsTokenResponseDto>, ApiServerError> {
     let refresh = SecretString::from(req.refresh_token);
-    let token = state
-        .paymob
-        .payouts()
-        .auth()
-        .refresh_token(&refresh)
-        .await?;
-    Ok(Json(token.into()))
+    Ok(Json(
+        state
+            .paymob
+            .payouts()
+            .auth()
+            .refresh_token(&refresh)
+            .await?
+            .into(),
+    ))
+}
+
+enum CashinChannel {
+    BankCard(BankCardCashinParams),
+    BankInstant(InstantBankCashinParams),
+    EgyptianPost(EgyptianPostCashinParams),
+    CancelAman(CancelAmanParams),
+}
+
+async fn execute_cashin(
+    state: &AppState,
+    channel: CashinChannel,
+) -> Result<Json<DisbursementResponse>, ApiServerError> {
+    let cashin = state.paymob.payouts().cashin();
+    let resp = match channel {
+        CashinChannel::BankCard(p) => cashin.bank_card(p).await?,
+        CashinChannel::BankInstant(p) => cashin.bank_instant(p).await?,
+        CashinChannel::EgyptianPost(p) => cashin.egyptian_post(p).await?,
+        CashinChannel::CancelAman(p) => cashin.cancel_aman(p).await?,
+    };
+    Ok(Json(resp))
 }
 
 /// Disburses funds to a mobile wallet (`vodafone`, `etisalat`, `orange`, or `bank_wallet`).
@@ -1214,12 +1345,7 @@ async fn cashin_wallet(
     Path(issuer): Path<String>,
     Json(req): Json<WalletCashinRequest>,
 ) -> Result<Json<DisbursementResponse>, ApiServerError> {
-    let params = MobileWalletCashinParams {
-        msisdn: req.msisdn,
-        amount: req.amount,
-        client_reference_id: req.client_reference_id,
-        customer_bears_fees: req.customer_bears_fees,
-    };
+    let params = MobileWalletCashinParams::from(req);
     let cashin = state.paymob.payouts().cashin();
     let resp = match issuer.as_str() {
         "vodafone" => cashin.vodafone(params).await?,
@@ -1245,17 +1371,7 @@ async fn cashin_bank_card(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BankCardCashinRequest>,
 ) -> Result<Json<DisbursementResponse>, ApiServerError> {
-    let params = BankCardCashinParams {
-        amount: req.amount,
-        bank_card_number: SecretString::from(req.bank_card_number),
-        bank_code: req.bank_code,
-        bank_transaction_type: req.bank_transaction_type,
-        full_name: req.full_name,
-        client_reference_id: req.client_reference_id,
-        customer_bears_fees: req.customer_bears_fees,
-    };
-    let resp = state.paymob.payouts().cashin().bank_card(params).await?;
-    Ok(Json(resp))
+    execute_cashin(&state, CashinChannel::BankCard(req.into())).await
 }
 
 /// Disburses funds via Instant Bank transfer.
@@ -1263,16 +1379,7 @@ async fn cashin_bank_instant(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InstantBankCashinRequest>,
 ) -> Result<Json<DisbursementResponse>, ApiServerError> {
-    let params = InstantBankCashinParams {
-        amount: req.amount,
-        bank_code: req.bank_code,
-        bank_account_number: SecretString::from(req.bank_account_number),
-        full_name: req.full_name,
-        client_reference_id: req.client_reference_id,
-        customer_bears_fees: req.customer_bears_fees,
-    };
-    let resp = state.paymob.payouts().cashin().bank_instant(params).await?;
-    Ok(Json(resp))
+    execute_cashin(&state, CashinChannel::BankInstant(req.into())).await
 }
 
 /// Disburses funds via Egyptian Post.
@@ -1280,21 +1387,7 @@ async fn cashin_egyptian_post(
     State(state): State<Arc<AppState>>,
     Json(req): Json<EgyptianPostCashinRequest>,
 ) -> Result<Json<DisbursementResponse>, ApiServerError> {
-    let params = EgyptianPostCashinParams {
-        amount: req.amount,
-        msisdn: req.msisdn,
-        full_name: req.full_name,
-        national_id: SecretString::from(req.national_id),
-        client_reference_id: req.client_reference_id,
-        customer_bears_fees: req.customer_bears_fees,
-    };
-    let resp = state
-        .paymob
-        .payouts()
-        .cashin()
-        .egyptian_post(params)
-        .await?;
-    Ok(Json(resp))
+    execute_cashin(&state, CashinChannel::EgyptianPost(req.into())).await
 }
 
 /// Cancels an active Aman cashout transaction.
@@ -1303,8 +1396,7 @@ async fn cancel_aman_cashin(
     Json(req): Json<CancelAmanRequest>,
 ) -> Result<Json<DisbursementResponse>, ApiServerError> {
     let params = CancelAmanParams::new(req.transaction_id);
-    let resp = state.paymob.payouts().cashin().cancel_aman(params).await?;
-    Ok(Json(resp))
+    execute_cashin(&state, CashinChannel::CancelAman(params)).await
 }
 
 /// Executes a bulk disbursement batch.
@@ -1316,7 +1408,23 @@ async fn cashin_bulk(
         bank_transaction: req.bank_transaction,
         transactions: req.transactions,
     };
-    let resp = state.paymob.payouts().cashin().bulk(params).await?;
+    Ok(Json(state.paymob.payouts().cashin().bulk(params).await?.into()))
+}
+
+enum PayoutInquiryKind {
+    ByTransaction(TransactionInquiryParams),
+    ByReference(ReferenceInquiryParams),
+}
+
+async fn execute_payout_inquiry(
+    state: &AppState,
+    kind: PayoutInquiryKind,
+) -> Result<Json<TransactionInquiryResponseDto>, ApiServerError> {
+    let inquiries = state.paymob.payouts().inquiries();
+    let resp = match kind {
+        PayoutInquiryKind::ByTransaction(p) => inquiries.transactions(p).await?,
+        PayoutInquiryKind::ByReference(p) => inquiries.by_reference(p).await?,
+    };
     Ok(Json(resp.into()))
 }
 
@@ -1330,13 +1438,7 @@ async fn inquire_transactions(
         is_bulk: req.is_bulk,
         bank_transactions: req.bank_transactions,
     };
-    let resp = state
-        .paymob
-        .payouts()
-        .inquiries()
-        .transactions(params)
-        .await?;
-    Ok(Json(resp.into()))
+    execute_payout_inquiry(&state, PayoutInquiryKind::ByTransaction(params)).await
 }
 
 /// Queries Payouts transactions by client reference IDs.
@@ -1348,21 +1450,16 @@ async fn inquire_by_reference(
         client_reference_ids: req.client_reference_ids,
         bank_transactions: req.bank_transactions,
     };
-    let resp = state
-        .paymob
-        .payouts()
-        .inquiries()
-        .by_reference(params)
-        .await?;
-    Ok(Json(resp.into()))
+    execute_payout_inquiry(&state, PayoutInquiryKind::ByReference(params)).await
 }
 
 /// Retrieves the current Payouts user budget.
 async fn inquire_budget(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<UserBudgetResponseDto>, ApiServerError> {
-    let resp = state.paymob.payouts().inquiries().user_budget().await?;
-    Ok(Json(resp.into()))
+    Ok(Json(
+        state.paymob.payouts().inquiries().user_budget().await?.into(),
+    ))
 }
 
 /// Lists Payouts topup records with optional pagination or ID filter.
@@ -1374,8 +1471,9 @@ async fn inquire_topups(
         page: query.page,
         id: query.id,
     };
-    let resp = state.paymob.payouts().inquiries().topup(params).await?;
-    Ok(Json(resp.into()))
+    Ok(Json(
+        state.paymob.payouts().inquiries().topup(params).await?.into(),
+    ))
 }
 
 /// Submits a Bank Transfer topup request with a base64-encoded proof attachment.

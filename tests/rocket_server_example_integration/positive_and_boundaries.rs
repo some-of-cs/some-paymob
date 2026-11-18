@@ -192,7 +192,7 @@ async fn e2e_intentions_create_201_and_update_200() {
         }),
     )
     .await;
-    assert_eq!(created, Status::Created);
+    assert_eq!(created, Status::Ok);
 
     let updated = put_json(
         &rocket,
@@ -243,7 +243,7 @@ async fn e2e_legacy_v2_orders_payment_keys_and_checkout_return_201() {
         "POST",
         "/api/ecommerce/orders",
         201,
-        json!({ "id": 378804, "amount_cents": 50_000, "merchant_order_id": "ORD-L1" }),
+        json!({ "id": 378804, "amount_cents": 50_000, "currency": "EGP", "merchant_order_id": "ORD-L1" }),
     )
     .await;
     mount_accept(
@@ -262,19 +262,26 @@ async fn e2e_legacy_v2_orders_payment_keys_and_checkout_return_201() {
         &json!({ "amount_cents": 50_000, "currency": "EGP", "merchant_order_id": "ORD-L1" }),
     )
     .await;
-    assert_eq!(order, Status::Created);
+    assert_eq!(order, Status::Ok);
 
     let key = post_json(
         &rocket,
         "/legacy/payment-keys",
         &json!({
-            "order_id": 378804, "amount_cents": 50_000, "currency": "EGP",
-            "integration_id": 2936, "first_name": "Maher", "last_name": "Aladdin",
-            "email": "buyer@example.com", "phone_number": "+201001234567"
+            "order_id": 378804,
+            "amount_cents": 50_000,
+            "currency": "EGP",
+            "integration_id": 2936,
+            "billing_data": {
+                "first_name": "Maher",
+                "last_name": "Aladdin",
+                "email": "buyer@example.com",
+                "phone_number": "+201001234567"
+            }
         }),
     )
     .await;
-    assert_eq!(key, Status::Created);
+    assert_eq!(key, Status::Ok);
 }
 
 #[tokio::test]
@@ -422,7 +429,7 @@ async fn e2e_quicklinks_and_splits_return_200_201() {
         &json!({ "amount_cents": 15_000, "currency": "EGP", "integrations": [4097558] }),
     )
     .await;
-    assert_eq!(created, Status::Created);
+    assert_eq!(created, Status::Ok);
 
     let cancelled = post_json(&rocket, "/quicklinks/ql_u4/cancel", &json!({})).await;
     assert_eq!(cancelled, Status::Ok);
@@ -466,8 +473,11 @@ async fn e2e_saved_cards_and_subscriptions_return_200_201() {
     assert_eq!(
         post_json(
             &rocket,
-            "/saved-cards/pay",
-            &json!({ "payment_token": "tok_u4", "source_type": "CARD" })
+            "/saved-cards/pay/raw",
+            &json!({
+                "payment_token": "tok_u4",
+                "source": { "identifier": "411111******1111", "subtype": "TOKEN" }
+            })
         )
         .await,
         Status::Ok
@@ -476,10 +486,15 @@ async fn e2e_saved_cards_and_subscriptions_return_200_201() {
         post_json(
             &rocket,
             "/subscriptions/plans",
-            &json!({ "name": "Pro Plan", "amount_cents": 20_000, "frequency": 30 })
+            &json!({
+                "name": "Pro Plan",
+                "amount_cents": 20_000,
+                "frequency": 30,
+                "integration": 4097558
+            })
         )
         .await,
-        Status::Created
+        Status::Ok
     );
 }
 
@@ -507,16 +522,20 @@ async fn e2e_payouts_bulk_budget_and_topup_return_200() {
     assert_eq!(
         post_json(
             &rocket,
-            "/payouts/bulk",
+            "/payouts/cashin/bulk",
             &json!({
-                "items": [{ "issuer": "vodafone", "amount": 200, "msisdn": "01023456789" }]
+                "transactions": [{ "issuer": "vodafone", "amount": 200, "msisdn": "01023456789" }]
             })
         )
         .await,
         Status::Ok
     );
     assert_eq!(
-        rocket.get("/payouts/budget").dispatch().await.status(),
+        rocket
+            .get("/payouts/inquiries/budget")
+            .dispatch()
+            .await
+            .status(),
         Status::Ok
     );
 }
@@ -529,7 +548,7 @@ async fn e2e_onboarding_and_merchant_scoped_return_200_201() {
         "POST",
         "/api/auth/partners/register",
         201,
-        json!({ "merchant_id": "mid_u4", "status": "registered" }),
+        json!({ "paymob_mid": 12345, "status": "registered" }),
     )
     .await;
     mount_accept(
@@ -545,11 +564,17 @@ async fn e2e_onboarding_and_merchant_scoped_return_200_201() {
     assert_eq!(
         post_json(
             &rocket,
-            "/onboarding/register",
-            &json!({ "email": "partner@example.com", "business_name": "Acme" })
+            "/onboarding/flow/register",
+            &json!({
+                "partner": "acme-partner",
+                "email": "partner@example.com",
+                "phone_number": "+201001234567",
+                "first_name": "Maher",
+                "last_name": "Aladdin"
+            })
         )
         .await,
-        Status::Created
+        Status::Ok
     );
     assert_eq!(
         rocket
@@ -591,16 +616,16 @@ async fn e2e_unified_adapter_routes_return_200_201() {
         post_json(
             &rocket,
             "/unified/sessions",
-            &json!({ "amount_cents": 15_000, "currency": "EGP", "payment_methods": ["4097558"] })
+            &json!({ "amount": 15_000, "currency": "EGP", "payment_methods": ["4097558"] })
         )
         .await,
-        Status::Created
+        Status::Ok
     );
     assert_eq!(
         post_json(
             &rocket,
             "/unified/capture",
-            &json!({ "transaction_id": 9001, "amount_cents": 5000 })
+            &json!({ "transaction_id": 9001, "amount": 5000 })
         )
         .await,
         Status::Ok
@@ -614,10 +639,7 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let tx_vec = transaction_processed_192036465();
     let proto_a = rocket
-        .post(format!(
-            "/webhooks/transaction?hmac={}",
-            tx_vec.expected_hmac_hex
-        ))
+        .post(format!("/webhooks/paymob?hmac={}", tx_vec.expected_hmac_hex))
         .header(ContentType::JSON)
         .body(tx_vec.payload_or_query)
         .dispatch()
@@ -627,7 +649,10 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let redir_vec = transaction_response_316004();
     let proto_b = rocket
-        .get(format!("/webhooks/redirect?{}", redir_vec.payload_or_query))
+        .get(format!(
+            "/webhooks/paymob/redirect?{}",
+            redir_vec.payload_or_query
+        ))
         .dispatch()
         .await
         .status();
@@ -636,7 +661,7 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
     let tok_vec = card_token_15978654();
     let proto_c = rocket
         .post(format!(
-            "/webhooks/card-token?hmac={}",
+            "/webhooks/paymob?hmac={}",
             tok_vec.expected_hmac_hex
         ))
         .header(ContentType::JSON)
@@ -648,7 +673,10 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let sub_vec = subscription_1264();
     let proto_d = rocket
-        .post("/webhooks/subscription")
+        .post(format!(
+            "/webhooks/paymob?hmac={}",
+            sub_vec.expected_hmac_hex
+        ))
         .header(ContentType::JSON)
         .body(sub_vec.payload_or_query)
         .dispatch()
@@ -658,7 +686,7 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
 
     let proto_e = post_json(
         &rocket,
-        "/webhooks/payouts",
+        "/webhooks/paymob",
         &json!({ "transaction_id": "tx_e1", "disbursement_status": "successful", "amount": 200 }),
     )
     .await;

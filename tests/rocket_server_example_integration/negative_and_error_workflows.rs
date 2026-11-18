@@ -24,7 +24,7 @@ use some_paymob::resources::payouts::{
 };
 use some_paymob::resources::saved_cards::{MitChargeParams, validate_use_cvc_with_moto};
 use some_paymob::test_utils::{
-    JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, OFFICIAL_TX_192036465_HMAC,
+    JsonEndpointMockConfig, JwtExpiryMockConfig, MockHost, SAMPLE_TX_192036465_HMAC,
     OFFICIAL_TX_192036465_JSON, PaymobMockServer, PayoutsRateLimitMockConfig, SAMPLE_HMAC_SECRET,
 };
 use some_paymob::webhooks::InMemoryWebhookDeduplicator;
@@ -194,7 +194,7 @@ async fn security_tampered_hmac_malformed_hex_and_duplicate_replay() {
     let server = PaymobMockServer::start().await;
     let (_rocket_client, state) = build_rocket_harness(&server).await;
 
-    let mut tampered = OFFICIAL_TX_192036465_HMAC.to_owned();
+    let mut tampered = SAMPLE_TX_192036465_HMAC.to_owned();
     tampered.replace_range(0..4, "0000");
     let sig_err = state
         .webhook_engine
@@ -210,13 +210,13 @@ async fn security_tampered_hmac_malformed_hex_and_duplicate_replay() {
 
     let bad_payload = state
         .webhook_engine
-        .verify_transaction_post("{malformed", OFFICIAL_TX_192036465_HMAC)
+        .verify_transaction_post("{malformed", SAMPLE_TX_192036465_HMAC)
         .expect_err("malformed JSON rejected");
     assert_eq!(bad_payload.suggested_http_status_code(), 400);
 
     let verified = state
         .webhook_engine
-        .verify_transaction_post(OFFICIAL_TX_192036465_JSON, OFFICIAL_TX_192036465_HMAC)
+        .verify_transaction_post(OFFICIAL_TX_192036465_JSON, SAMPLE_TX_192036465_HMAC)
         .expect("valid webhook");
     assert!(state.deduplicator.claim_or_reject(&verified).is_ok());
     let dup_err = state

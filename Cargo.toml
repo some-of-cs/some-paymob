@@ -55,6 +55,9 @@ wiremock = { version = "0.6", optional = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
+axum = { version = "0.8", features = ["macros"] }
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
 rocket = { version = "0.5", features = ["json"] }
 tokio = { version = "1.40", features = ["full"] }
 wiremock = "0.6"
@@ -67,3 +70,7 @@ required-features = ["full"]
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[[example]]
+name = "axum_server"
+required-features = ["full"]

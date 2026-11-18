@@ -22,6 +22,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use some_paymob::core::config::ClientConfig;
 use some_paymob::core::credentials::EnvironmentMode;
+use some_paymob::resources::inquiries::by_order::TransactionInquiryParams;
 use some_paymob::resources::manage::Transaction as ManageTransaction;
 use some_paymob::resources::splits::CardFeeContext;
 use some_paymob::{
@@ -30,8 +31,7 @@ use some_paymob::{
     Currency, IntentionResponse, LegacyBillingData, LegacyCheckoutParams, LegacyOrder,
     LegacyOrderItem, MinorUnitAmount, PaymobClient, PaymobError, PaymobRegion, PixelPaymentMethod,
     QuickLinkResponse, RefundParams, SandboxCheckRequest, SandboxGuard, SandboxPaymentChannel,
-    SandboxReport, SplitDescription, SplitPaymentConfig, TransactionInquiryParams,
-    UpdateIntentionParams, VoidParams,
+    SandboxReport, SplitDescription, SplitPaymentConfig, UpdateIntentionParams, VoidParams,
 };
 
 use super::state::{ApiServerError, AppState};

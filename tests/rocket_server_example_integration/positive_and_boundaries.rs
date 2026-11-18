@@ -913,14 +913,7 @@ async fn setup_quicklinks_mocks(server: &PaymobMockServer) {
         "url": "https://accept.paymob.com/standalone/?ref=ql_u4",
         "client_url": "https://accept.paymob.com/api/acceptance/post_pay?ref=ql_u4"
     });
-    mount_accept(
-        server,
-        "POST",
-        "/api/ecommerce/payment-links",
-        201,
-        ql_body,
-    )
-    .await;
+    mount_accept(server, "POST", "/api/ecommerce/payment-links", 201, ql_body).await;
     mount_accept(
         server,
         "POST",

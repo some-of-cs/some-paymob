@@ -34,8 +34,7 @@ pub async fn setup_test_app() -> (PaymobMockServer, Router, Arc<AppState>) {
                 .expect("valid payouts credentials"),
         )
         .partner_credentials(
-            PartnerCredentials::new("partner_user")
-                .expect("valid partner credentials"),
+            PartnerCredentials::new("partner_user").expect("valid partner credentials"),
         )
         .timeout(Duration::from_secs(5))
         .max_retries(1)

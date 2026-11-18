@@ -1,1 +1,53 @@
-{\n  "moduleId": "example-actix-server",\n  "title": "Actix-Web Reference Server & Integration Test Suite",\n  "baseBranch": "main",\n  "moduleBranch": "feat/example-actix-server",\n  "storyBranch": "feat/us-actix-server-and-tests",\n  "updatedAt": "2026-11-18T07:05:00Z",\n  "items": {\n    "feat/example-actix-server": {\n      "status": "In Progress",\n      "branch": "feat/example-actix-server",\n      "prNumber": null,\n      "mergedSha": null\n    },\n    "us-actix-server-and-tests": {\n      "status": "Todo",\n      "branch": "feat/us-actix-server-and-tests",\n      "prNumber": null,\n      "mergedSha": null,\n      "unitCount": 5\n    },\n    "us-actix/unit-1": {\n      "status": "Todo",\n      "branch": "feat/us-actix/unit-1-core-checkout-legacy-manage",\n      "prNumber": null,\n      "mergedSha": null\n    },\n    "us-actix/unit-2": {\n      "status": "Todo",\n      "branch": "feat/us-actix/unit-2-saved-cards-subscriptions-payouts",\n      "prNumber": null,\n      "mergedSha": null\n    },\n    "us-actix/unit-3": {\n      "status": "Todo",\n      "branch": "feat/us-actix/unit-3-onboarding-webhooks-unified-adapter",\n      "prNumber": null,\n      "mergedSha": null\n    },\n    "us-actix/unit-4": {\n      "status": "Todo",\n      "branch": "feat/us-actix/unit-4-integration-tests-positive-and-boundaries",\n      "prNumber": null,\n      "mergedSha": null\n    },\n    "us-actix/unit-5": {\n      "status": "Todo",\n      "branch": "feat/us-actix/unit-5-integration-tests-negative-and-error-workflows",\n      "prNumber": null,\n      "mergedSha": null\n    }\n  }\n}\n
+{
+  "moduleId": "example-actix-server",
+  "title": "Actix-Web Reference Server & Integration Test Suite",
+  "baseBranch": "main",
+  "moduleBranch": "feat/example-actix-server",
+  "storyBranch": "feat/us-actix-server-and-tests",
+  "updatedAt": "2026-11-18T07:12:00Z",
+  "items": {
+    "feat/example-actix-server": {
+      "status": "In Progress",
+      "branch": "feat/example-actix-server",
+      "prNumber": null,
+      "mergedSha": null
+    },
+    "us-actix-server-and-tests": {
+      "status": "In Progress",
+      "branch": "feat/us-actix-server-and-tests",
+      "prNumber": null,
+      "mergedSha": null,
+      "unitCount": 5
+    },
+    "us-actix/unit-1": {
+      "status": "In Review",
+      "branch": "feat/us-actix/unit-1-core-checkout-legacy-manage",
+      "prNumber": 127,
+      "mergedSha": null
+    },
+    "us-actix/unit-2": {
+      "status": "Todo",
+      "branch": "feat/us-actix/unit-2-saved-cards-subscriptions-payouts",
+      "prNumber": null,
+      "mergedSha": null
+    },
+    "us-actix/unit-3": {
+      "status": "Todo",
+      "branch": "feat/us-actix/unit-3-onboarding-webhooks-unified-adapter",
+      "prNumber": null,
+      "mergedSha": null
+    },
+    "us-actix/unit-4": {
+      "status": "Todo",
+      "branch": "feat/us-actix/unit-4-integration-tests-positive-and-boundaries",
+      "prNumber": null,
+      "mergedSha": null
+    },
+    "us-actix/unit-5": {
+      "status": "Todo",
+      "branch": "feat/us-actix/unit-5-integration-tests-negative-and-error-workflows",
+      "prNumber": null,
+      "mergedSha": null
+    }
+  }
+}

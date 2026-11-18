@@ -8,9 +8,9 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde_json::{Value, json};
 use some_paymob::test_utils::mock_server::PaymobMockServer;
 use some_paymob::test_utils::vectors::{
-    OFFICIAL_CARD_TOKEN_15978654_JSON, OFFICIAL_REDIRECT_316004_QUERY,
-    OFFICIAL_TX_192036465_JSON, SAMPLE_CARD_TOKEN_15978654_HMAC, SAMPLE_SUBSCRIPTION_1264_HMAC,
-    SAMPLE_SUBSCRIPTION_1264_JSON, SAMPLE_TX_192036465_HMAC,
+    OFFICIAL_CARD_TOKEN_15978654_JSON, OFFICIAL_REDIRECT_316004_QUERY, OFFICIAL_TX_192036465_JSON,
+    SAMPLE_CARD_TOKEN_15978654_HMAC, SAMPLE_SUBSCRIPTION_1264_HMAC, SAMPLE_SUBSCRIPTION_1264_JSON,
+    SAMPLE_TX_192036465_HMAC,
 };
 
 use super::common::{
@@ -581,7 +581,12 @@ async fn e2e_webhooks_protocols_a_b_c_d_e_ok() {
     let pc_uri = format!("/webhooks/paymob?hmac={SAMPLE_CARD_TOKEN_15978654_HMAC}");
     assert_eq!(post_status(&router, &pc_uri, tok_val).await, StatusCode::OK);
     assert_eq!(
-        post_status(&router, &format!("/webhooks/paymob?hmac={SAMPLE_SUBSCRIPTION_1264_HMAC}"), sub_val).await,
+        post_status(
+            &router,
+            &format!("/webhooks/paymob?hmac={SAMPLE_SUBSCRIPTION_1264_HMAC}"),
+            sub_val
+        )
+        .await,
         StatusCode::OK
     );
     let payout_body = json!({

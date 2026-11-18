@@ -598,7 +598,7 @@ async fn setup_payouts_inquiries_and_topups_mocks(server: &PaymobMockServer) {
     mount_payouts(
         server,
         "POST",
-        "/disburse/api/v1/bulk_transaction/inquire_by_reference/",
+        "/disburse/api/v1/bulk_transaction/inquire_by_reference",
         200,
         inq,
     )
@@ -942,6 +942,7 @@ async fn e2e_quicklinks_and_splits_return_200_201() {
 #[tokio::test]
 async fn e2e_saved_cards_mit_wallet_kiosk_and_raw_return_200() {
     let server = PaymobMockServer::start().await;
+    server.mount_accept_auth_sequence(&["jwt-sc-1"]).await;
     let pay_resp = json!({
         "id": 501,
         "success": true,

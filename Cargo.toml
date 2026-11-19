@@ -55,12 +55,18 @@ wiremock = { version = "0.6", optional = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
+actix-rt = "2"
+actix-web = "4"
 axum = { version = "0.8", features = ["macros"] }
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
 rocket = { version = "0.5", features = ["json"] }
 tokio = { version = "1.40", features = ["full"] }
 wiremock = "0.6"
+
+[[example]]
+name = "actix_server"
+required-features = ["full"]
 
 [[example]]
 name = "rocket_server"

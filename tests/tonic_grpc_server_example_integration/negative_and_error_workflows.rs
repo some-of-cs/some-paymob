@@ -53,15 +53,14 @@ fn build_grpc_service(server: &PaymobMockServer) -> PaymobGrpcService {
     PaymobGrpcService::new(client, webhook_engine, deduplicator)
 }
 
+#[allow(clippy::result_large_err)]
 async fn grpc_unary_raw(
     service: PaymobGrpcService,
     method_name: &str,
     payload_json: String,
 ) -> Result<Response<JsonRpcResponse>, Status> {
     let mut grpc = Grpc::new(build_grpc_server(service));
-    grpc.ready()
-        .await
-        .map_err(|err| Status::internal(err.to_string()))?;
+    let _ = grpc.ready().await;
     let path_str = format!("/{PAYMOB_GRPC_SERVICE_NAME}/{method_name}");
     let rpc_path = PathAndQuery::try_from(path_str)
         .map_err(|err| Status::invalid_argument(err.to_string()))?;
@@ -74,6 +73,7 @@ async fn grpc_unary_raw(
     .await
 }
 
+#[allow(clippy::result_large_err)]
 async fn grpc_call(
     service: PaymobGrpcService,
     method_name: &str,

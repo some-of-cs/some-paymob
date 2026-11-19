@@ -53,12 +53,11 @@ async fn test_duplicate_webhook_replay_returns_409_conflict() {
     let mock = PaymobMockServer::start().await;
     let state = build_test_state(&mock);
     let app = init_actix_app!(state);
-    let vec_a = transaction_processed_192036465();
-    let uri = format!("/webhooks/paymob?hmac={}", vec_a.sample_hmac_hex);
+    let uri = format!("/webhooks/paymob?hmac={SAMPLE_TX_192036465_HMAC}");
 
     let req1 = test::TestRequest::post()
         .uri(&uri)
-        .set_payload(vec_a.raw_json_or_query)
+        .set_payload(OFFICIAL_TX_192036465_JSON)
         .to_request();
     assert_eq!(
         test::call_service(&app, req1).await.status(),
@@ -67,7 +66,7 @@ async fn test_duplicate_webhook_replay_returns_409_conflict() {
 
     let req2 = test::TestRequest::post()
         .uri(&uri)
-        .set_payload(vec_a.raw_json_or_query)
+        .set_payload(OFFICIAL_TX_192036465_JSON)
         .to_request();
     assert_eq!(
         test::call_service(&app, req2).await.status(),

@@ -313,12 +313,7 @@ async fn e2e_onboarding_auth_rpcs_return_ok() {
     let service = build_grpc_service(&server);
     let login = json!({ "username": "partner@example.com", "password": "secret-password" });
     assert_rpc_ok(&service, "PartnerLogin", &login).await;
-    assert_rpc_ok(
-        &service,
-        "CreatePartnerApiKey",
-        &json!({ "label": "main" }),
-    )
-    .await;
+    assert_rpc_ok(&service, "CreatePartnerApiKey", &json!({ "label": "main" })).await;
     assert_rpc_ok(&service, "GetOnboardingHmacSecret", &json!({})).await;
     assert_rpc_ok(
         &service,

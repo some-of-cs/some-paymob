@@ -47,10 +47,10 @@ impl PaymobGrpcService {
 #[cfg(not(test))]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use some_paymob::{ClientConfig, PaymobRegions};
+    use some_paymob::{ClientConfig, PaymobRegion};
 
     let config = ClientConfig::builder()
-        .region(PaymobRegions::Egypt)
+        .region(PaymobRegion::Egypt)
         .try_secret_key("egy_sk_test_placeholder")?
         .try_public_key("egy_pk_test_placeholder")?
         .try_hmac_secret("0123456789abcdef0123456789abcdef")?

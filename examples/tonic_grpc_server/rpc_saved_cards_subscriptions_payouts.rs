@@ -31,9 +31,9 @@ use some_paymob::resources::subscriptions::{
 use some_paymob::{Currency, MinorUnitAmount};
 use tonic::{Request, Response, Status};
 
-use crate::PaymobGrpcService;
-use crate::error::map_error_to_grpc_status;
-use crate::proto::{JsonRpcRequest, JsonRpcResponse, decode_request, encode_response};
+use super::PaymobGrpcService;
+use super::error::map_error_to_grpc_status;
+use super::proto::{JsonRpcRequest, JsonRpcResponse, decode_request, encode_response};
 
 type RpcFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Response<JsonRpcResponse>, Status>> + Send + 'a>>;
@@ -191,8 +191,8 @@ async fn pay_with_wallet(
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
     let body: WalletPayRequest = decode_request(req)?;
-    let params =
-        WalletPayParams::new(body.payment_token, body.wallet_phone).map_err(map_error_to_grpc_status)?;
+    let params = WalletPayParams::new(body.payment_token, body.wallet_phone)
+        .map_err(map_error_to_grpc_status)?;
     let resp = service
         .client
         .saved_cards()
@@ -725,7 +725,8 @@ async fn add_secondary_subscription_card(
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
     let body: AddSecondaryCardRequest = decode_request(req)?;
-    let mut params = AddSecondaryCardParams::new(body.card_token).map_err(map_error_to_grpc_status)?;
+    let mut params =
+        AddSecondaryCardParams::new(body.card_token).map_err(map_error_to_grpc_status)?;
     if let Some(id) = body.integration_id {
         params = params.with_integration_id(id);
     }
@@ -1082,13 +1083,12 @@ async fn dispatch_wallet_cashin(
     res.map_err(map_error_to_grpc_status)
 }
 
-#[allow(clippy::manual_div_ceil)]
 fn decode_proof_bytes(
     req: BankTransferTopupRequest,
 ) -> Result<(Vec<u8>, BankTransferTopupMeta), Status> {
     let bytes = match (req.proof_base64, req.to_attach_proof) {
         (Some(b64), _) => {
-            if b64.trim().len() > ((some_paymob::MAX_TOPUP_PROOF_BYTES + 2) / 3) * 4 {
+            if b64.trim().len() > some_paymob::MAX_TOPUP_PROOF_BYTES.div_ceil(3) * 4 {
                 return Err(Status::invalid_argument(
                     "proof_base64 exceeds maximum allowed length",
                 ));

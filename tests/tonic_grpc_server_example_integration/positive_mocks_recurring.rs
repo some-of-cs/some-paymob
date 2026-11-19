@@ -37,11 +37,31 @@ pub(super) async fn setup_subscription_plans_mocks(server: &PaymobMockServer) {
     mount_accept_all(
         server,
         vec![
-            ("POST", "/api/acceptance/subscription-plans", 201, plan.clone()),
-            ("PUT", "/api/acceptance/subscription-plans/701", 200, plan.clone()),
+            (
+                "POST",
+                "/api/acceptance/subscription-plans",
+                201,
+                plan.clone(),
+            ),
+            (
+                "PUT",
+                "/api/acceptance/subscription-plans/701",
+                200,
+                plan.clone(),
+            ),
             ("GET", "/api/acceptance/subscription-plans", 200, page),
-            ("POST", "/api/acceptance/subscription-plans/701/suspend", 200, plan.clone()),
-            ("POST", "/api/acceptance/subscription-plans/701/resume", 200, plan),
+            (
+                "POST",
+                "/api/acceptance/subscription-plans/701/suspend",
+                200,
+                plan.clone(),
+            ),
+            (
+                "POST",
+                "/api/acceptance/subscription-plans/701/resume",
+                200,
+                plan,
+            ),
         ],
     )
     .await;
@@ -63,12 +83,37 @@ pub(super) async fn setup_subscriptions_lifecycle_mocks(server: &PaymobMockServe
         server,
         vec![
             ("POST", "/v1/intention/", 201, enroll),
-            ("GET", "/api/acceptance/subscriptions/1264", 200, sub.clone()),
+            (
+                "GET",
+                "/api/acceptance/subscriptions/1264",
+                200,
+                sub.clone(),
+            ),
             ("GET", "/api/acceptance/subscriptions", 200, list),
-            ("PUT", "/api/acceptance/subscriptions/1264", 200, sub.clone()),
-            ("POST", "/api/acceptance/subscriptions/1264/suspend", 200, sub.clone()),
-            ("POST", "/api/acceptance/subscriptions/1264/resume", 200, sub.clone()),
-            ("POST", "/api/acceptance/subscriptions/1264/cancel", 200, sub),
+            (
+                "PUT",
+                "/api/acceptance/subscriptions/1264",
+                200,
+                sub.clone(),
+            ),
+            (
+                "POST",
+                "/api/acceptance/subscriptions/1264/suspend",
+                200,
+                sub.clone(),
+            ),
+            (
+                "POST",
+                "/api/acceptance/subscriptions/1264/resume",
+                200,
+                sub.clone(),
+            ),
+            (
+                "POST",
+                "/api/acceptance/subscriptions/1264/cancel",
+                200,
+                sub,
+            ),
         ],
     )
     .await;
@@ -79,10 +124,30 @@ async fn setup_sub_cards_mocks(server: &PaymobMockServer) {
     mount_accept_all(
         server,
         vec![
-            ("GET", "/api/acceptance/subscriptions/1264/cards", 200, json!([card.clone()])),
-            ("POST", "/api/acceptance/subscriptions/1264/add-secondary-card", 200, card.clone()),
-            ("POST", "/api/acceptance/subscriptions/1264/change-primary-card", 200, card),
-            ("POST", "/api/acceptance/subscriptions/1264/delete-card", 200, json!({ "detail": "deleted" })),
+            (
+                "GET",
+                "/api/acceptance/subscriptions/1264/cards",
+                200,
+                json!([card.clone()]),
+            ),
+            (
+                "POST",
+                "/api/acceptance/subscriptions/1264/add-secondary-card",
+                200,
+                card.clone(),
+            ),
+            (
+                "POST",
+                "/api/acceptance/subscriptions/1264/change-primary-card",
+                200,
+                card,
+            ),
+            (
+                "POST",
+                "/api/acceptance/subscriptions/1264/delete-card",
+                200,
+                json!({ "detail": "deleted" }),
+            ),
         ],
     )
     .await;
@@ -102,9 +167,24 @@ async fn setup_sub_history_mocks(server: &PaymobMockServer) {
     mount_accept_all(
         server,
         vec![
-            ("POST", "/api/acceptance/subscriptions/1264/webhook", 200, wh),
-            ("GET", "/api/acceptance/subscriptions/1264/last-transaction", 200, tx.clone()),
-            ("GET", "/api/acceptance/subscriptions/1264/transactions", 200, json!([tx])),
+            (
+                "POST",
+                "/api/acceptance/subscriptions/1264/webhook",
+                200,
+                wh,
+            ),
+            (
+                "GET",
+                "/api/acceptance/subscriptions/1264/last-transaction",
+                200,
+                tx.clone(),
+            ),
+            (
+                "GET",
+                "/api/acceptance/subscriptions/1264/transactions",
+                200,
+                json!([tx]),
+            ),
             ("POST", "/api/acceptance/void_refund/refund", 200, refund),
         ],
     )
@@ -143,7 +223,12 @@ pub(super) async fn setup_payouts_cashin_mocks(server: &PaymobMockServer) {
             ("POST", "/api/secure/o/token/", 200, tok),
             ("POST", "/api/secure/disburse/", 200, disb.clone()),
             ("POST", "/api/secure/transaction/aman/cancel/", 200, disb),
-            ("POST", "/disburse/api/v1/disburse/bulk_transaction", 200, bulk),
+            (
+                "POST",
+                "/disburse/api/v1/disburse/bulk_transaction",
+                200,
+                bulk,
+            ),
         ],
     )
     .await;
@@ -167,7 +252,12 @@ pub(super) async fn setup_payouts_inquiries_and_topups_mocks(server: &PaymobMock
         server,
         vec![
             ("POST", "/api/secure/transaction/inquire/", 200, inq.clone()),
-            ("POST", "/disburse/api/v1/bulk_transaction/inquire_by_reference", 200, inq),
+            (
+                "POST",
+                "/disburse/api/v1/bulk_transaction/inquire_by_reference",
+                200,
+                inq,
+            ),
             ("GET", "/api/secure/budget/inquire/", 200, budget),
             ("GET", "/api/secure/topup/inquire/", 200, topups),
             ("POST", "/api/secure/topup/request/", 200, topup),

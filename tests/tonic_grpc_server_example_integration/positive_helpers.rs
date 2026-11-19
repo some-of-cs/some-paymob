@@ -61,8 +61,8 @@ pub(super) async fn call_rpc(
     method: &str,
     payload: &Value,
 ) -> Result<Value, Status> {
-    let mut grpc = Grpc::new(build_grpc_server(service.clone()))
-        .max_encoding_message_size(8 * 1024 * 1024);
+    let mut grpc =
+        Grpc::new(build_grpc_server(service.clone())).max_encoding_message_size(8 * 1024 * 1024);
     grpc.ready()
         .await
         .map_err(|err| Status::internal(format!("grpc_not_ready: {err}")))?;

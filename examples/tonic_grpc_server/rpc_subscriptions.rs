@@ -346,10 +346,10 @@ impl From<SubscriptionCard> for SubscriptionCardDto {
     fn from(card: SubscriptionCard) -> Self {
         Self {
             id: card.id,
-            card_data: card.card_data,
-            created_at: card.created_at,
+            card_data: card.card_data.clone(),
+            created_at: card.created_at.clone(),
             is_primary: card.is_primary,
-            masked_pan: card.masked_pan,
+            masked_pan: card.masked_pan.clone(),
             failed_attempts: card.failed_attempts,
         }
     }

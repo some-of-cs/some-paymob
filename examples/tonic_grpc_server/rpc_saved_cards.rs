@@ -138,4 +138,3 @@ async fn pay_raw(
         .map_err(map_error_to_grpc_status)?;
     encode_response(&HeadlessPayResponseDto::from(resp))
 }
-

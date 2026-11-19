@@ -374,7 +374,12 @@ async fn refresh_payouts_token(
 ) -> Result<Response<JsonRpcResponse>, Status> {
     let body: RefreshTokenRequest = decode_request(req)?;
     let refresh = SecretString::from(body.refresh_token);
-    let res = service.client.payouts().auth().refresh_token(&refresh).await;
+    let res = service
+        .client
+        .payouts()
+        .auth()
+        .refresh_token(&refresh)
+        .await;
     encode_sdk_result::<_, PayoutsTokenResponseDto>(res)
 }
 
@@ -525,7 +530,12 @@ async fn request_bank_transfer_topup(
         from_bank_name: meta.from_bank_name,
         reference_number: meta.reference_number,
     };
-    let res = service.client.payouts().topups().from_bank_transfer(params).await;
+    let res = service
+        .client
+        .payouts()
+        .topups()
+        .from_bank_transfer(params)
+        .await;
     encode_sdk_result::<_, TopupRecordDto>(res)
 }
 
@@ -535,6 +545,11 @@ async fn request_accept_balance_topup(
 ) -> Result<Response<JsonRpcResponse>, Status> {
     let body: AcceptBalanceTopupRequest = decode_request(req)?;
     let params = AcceptBalanceTopupParams::new(body.amount, body.currency, body.username);
-    let res = service.client.payouts().topups().from_accept_balance(params).await;
+    let res = service
+        .client
+        .payouts()
+        .topups()
+        .from_accept_balance(params)
+        .await;
     encode_sdk_result::<_, TopupRecordDto>(res)
 }

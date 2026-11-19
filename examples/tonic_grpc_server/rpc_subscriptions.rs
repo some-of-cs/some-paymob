@@ -17,7 +17,7 @@ use tonic::{Request, Response, Status};
 
 use super::super::PaymobGrpcService;
 use super::super::error::map_error_to_grpc_status;
-use super::super::proto::{JsonRpcRequest, JsonRpcResponse, decode_request};
+use super::super::proto::{JsonRpcRequest, JsonRpcResponse, decode_request, encode_response};
 use super::{RpcFuture, RpcHandler, encode_sdk_result};
 
 define_routes![
@@ -50,7 +50,12 @@ macro_rules! plan_id_rpc {
             req: Request<JsonRpcRequest>,
         ) -> Result<Response<JsonRpcResponse>, Status> {
             let body: PlanIdRequest = decode_request(req)?;
-            let res = service.client.subscriptions().plans().$method(body.plan_id).await;
+            let res = service
+                .client
+                .subscriptions()
+                .plans()
+                .$method(body.plan_id)
+                .await;
             encode_sdk_result::<SubscriptionPlan, SubscriptionPlan>(res)
         }
     };
@@ -65,6 +70,37 @@ macro_rules! sub_id_rpc {
             let body: SubscriptionIdRequest = decode_request(req)?;
             let res = service.client.subscriptions().$method(body.sub_id).await;
             encode_sdk_result::<$resp_ty, $resp_ty>(res)
+        }
+    };
+}
+
+macro_rules! sub_card_rpc {
+    ($fn_name:ident, $req_ty:ty, $method:ident, $dto:ty) => {
+        async fn $fn_name(
+            service: &PaymobGrpcService,
+            req: Request<JsonRpcRequest>,
+        ) -> Result<Response<JsonRpcResponse>, Status> {
+            let body: $req_ty = decode_request(req)?;
+            let res = service
+                .client
+                .subscriptions()
+                .cards()
+                .$method(body.sub_id, body.card_id)
+                .await;
+            encode_sdk_result::<_, $dto>(res)
+        }
+    };
+}
+
+macro_rules! sub_rpc {
+    ($fn:ident, $req:ty, $resp:ty, $dto:ty, |$svc:ident, $body:ident| $expr:expr) => {
+        async fn $fn(
+            $svc: &PaymobGrpcService,
+            req: Request<JsonRpcRequest>,
+        ) -> Result<Response<JsonRpcResponse>, Status> {
+            let $body: $req = decode_request(req)?;
+            let res = $expr;
+            encode_sdk_result::<$resp, $dto>(res)
         }
     };
 }
@@ -140,74 +176,74 @@ struct UpdatePlanRequest {
     fee: Option<u64>,
 }
 
-async fn create_subscription_plan(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: CreatePlanRequest = decode_request(req)?;
-    let params = CreateSubscriptionPlanParams {
-        frequency: PlanFrequency::from_days(body.frequency).map_err(map_error_to_grpc_status)?,
-        name: body.name,
-        integration: body.integration,
-        webhook_url: body.webhook_url,
-        reminder_days: body.reminder_days,
-        retrial_days: body.retrial_days,
-        plan_type: body.plan_type,
-        number_of_deductions: body.number_of_deductions,
-        amount_cents: body.amount_cents,
-        use_transaction_amount: body.use_transaction_amount,
-        is_active: body.is_active,
-        fee: body.fee,
-    };
-    params.validate().map_err(map_error_to_grpc_status)?;
-    let res = service.client.subscriptions().plans().create(&params).await;
-    encode_sdk_result::<SubscriptionPlan, SubscriptionPlan>(res)
-}
+sub_rpc!(
+    create_subscription_plan,
+    CreatePlanRequest,
+    SubscriptionPlan,
+    SubscriptionPlan,
+    |service, body| {
+        let params = CreateSubscriptionPlanParams {
+            frequency: PlanFrequency::from_days(body.frequency)
+                .map_err(map_error_to_grpc_status)?,
+            name: body.name,
+            integration: body.integration,
+            webhook_url: body.webhook_url,
+            reminder_days: body.reminder_days,
+            retrial_days: body.retrial_days,
+            plan_type: body.plan_type,
+            number_of_deductions: body.number_of_deductions,
+            amount_cents: body.amount_cents,
+            use_transaction_amount: body.use_transaction_amount,
+            is_active: body.is_active,
+            fee: body.fee,
+        };
+        params.validate().map_err(map_error_to_grpc_status)?;
+        service.client.subscriptions().plans().create(&params).await
+    }
+);
 
-async fn update_subscription_plan(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: UpdatePlanRequest = decode_request(req)?;
-    let frequency = body
-        .frequency
-        .map(PlanFrequency::from_days)
-        .transpose()
-        .map_err(map_error_to_grpc_status)?;
-    let params = UpdateSubscriptionPlanParams {
-        frequency,
-        name: body.name,
-        integration: body.integration,
-        webhook_url: body.webhook_url,
-        reminder_days: body.reminder_days,
-        retrial_days: body.retrial_days,
-        plan_type: body.plan_type,
-        number_of_deductions: body.number_of_deductions,
-        amount_cents: body.amount_cents,
-        use_transaction_amount: body.use_transaction_amount,
-        is_active: body.is_active,
-        fee: body.fee,
-    };
-    params.validate().map_err(map_error_to_grpc_status)?;
-    let res = service
-        .client
-        .subscriptions()
-        .plans()
-        .update(body.plan_id, &params)
-        .await;
-    encode_sdk_result::<SubscriptionPlan, SubscriptionPlan>(res)
-}
+sub_rpc!(
+    update_subscription_plan,
+    UpdatePlanRequest,
+    SubscriptionPlan,
+    SubscriptionPlan,
+    |service, body| {
+        let frequency = body
+            .frequency
+            .map(PlanFrequency::from_days)
+            .transpose()
+            .map_err(map_error_to_grpc_status)?;
+        let params = UpdateSubscriptionPlanParams {
+            frequency,
+            name: body.name,
+            integration: body.integration,
+            webhook_url: body.webhook_url,
+            reminder_days: body.reminder_days,
+            retrial_days: body.retrial_days,
+            plan_type: body.plan_type,
+            number_of_deductions: body.number_of_deductions,
+            amount_cents: body.amount_cents,
+            use_transaction_amount: body.use_transaction_amount,
+            is_active: body.is_active,
+            fee: body.fee,
+        };
+        params.validate().map_err(map_error_to_grpc_status)?;
+        service
+            .client
+            .subscriptions()
+            .plans()
+            .update(body.plan_id, &params)
+            .await
+    }
+);
 
-async fn list_subscription_plans(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: ListPlansRequest = decode_request(req)?;
-    let res = service.client.subscriptions().plans().list(body.page).await;
-    encode_sdk_result::<PaginatedResponse<SubscriptionPlan>, PaginatedResponse<SubscriptionPlan>>(
-        res,
-    )
-}
+sub_rpc!(
+    list_subscription_plans,
+    ListPlansRequest,
+    PaginatedResponse<SubscriptionPlan>,
+    PaginatedResponse<SubscriptionPlan>,
+    |service, body| service.client.subscriptions().plans().list(body.page).await
+);
 
 plan_id_rpc!(suspend_subscription_plan, suspend);
 plan_id_rpc!(resume_subscription_plan, resume);
@@ -377,70 +413,81 @@ struct RefundLastTransactionRequest {
     amount_cents: Option<u64>,
 }
 
-async fn create_subscription(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: CreateSubscriptionRequest = decode_request(req)?;
-    let params = CreateSubscriptionParams {
-        subscription_plan_id: body.subscription_plan_id,
-        amount: MinorUnitAmount::new(body.amount),
-        currency: Currency::from_code(&body.currency),
-        payment_methods: body.payment_methods,
-        billing_data: body.billing_data,
-        special_reference: body.special_reference,
-        notification_url: body.notification_url,
-        redirection_url: body.redirection_url,
-        extras: body.extras,
-    };
-    let res = service.client.subscriptions().create(&params).await;
-    encode_sdk_result::<_, SubscriptionEnrollmentResponseDto>(res)
-}
+sub_rpc!(
+    create_subscription,
+    CreateSubscriptionRequest,
+    SubscriptionEnrollmentResponse,
+    SubscriptionEnrollmentResponseDto,
+    |service, body| {
+        let params = CreateSubscriptionParams {
+            subscription_plan_id: body.subscription_plan_id,
+            amount: MinorUnitAmount::new(body.amount),
+            currency: Currency::from_code(&body.currency),
+            payment_methods: body.payment_methods,
+            billing_data: body.billing_data,
+            special_reference: body.special_reference,
+            notification_url: body.notification_url,
+            redirection_url: body.redirection_url,
+            extras: body.extras,
+        };
+        service.client.subscriptions().create(&params).await
+    }
+);
 
-async fn list_subscriptions(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: ListSubscriptionsRequest = decode_request(req)?;
-    let filter = SubscriptionListFilter {
-        transaction: None,
-        plan_id: body.plan_id,
-        state: body.state.as_deref().map(SubscriptionState::from_state),
-        page: body.page,
-    };
-    let res = service.client.subscriptions().list(&filter).await;
-    encode_sdk_result::<PaginatedResponse<Subscription>, PaginatedResponse<Subscription>>(res)
-}
+sub_rpc!(
+    list_subscriptions,
+    ListSubscriptionsRequest,
+    PaginatedResponse<Subscription>,
+    PaginatedResponse<Subscription>,
+    |service, body| {
+        let filter = SubscriptionListFilter {
+            transaction: None,
+            plan_id: body.plan_id,
+            state: body.state.as_deref().map(SubscriptionState::from_state),
+            page: body.page,
+        };
+        service.client.subscriptions().list(&filter).await
+    }
+);
 
-async fn update_subscription(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: UpdateSubscriptionRequest = decode_request(req)?;
-    let params = UpdateSubscriptionParams {
-        amount_cents: body.amount_cents.map(MinorUnitAmount::new),
-        plan_id: body.plan_id,
-        starts_at: body.starts_at,
-        ends_at: body.ends_at,
-        reminder_days: body.reminder_days,
-        retrial_days: body.retrial_days,
-        webhook_url: body.webhook_url,
-        is_active: body.is_active,
-    };
-    let res = service
-        .client
-        .subscriptions()
-        .update(body.sub_id, &params)
-        .await;
-    encode_sdk_result::<Subscription, Subscription>(res)
-}
+sub_rpc!(
+    update_subscription,
+    UpdateSubscriptionRequest,
+    Subscription,
+    Subscription,
+    |service, body| {
+        let params = UpdateSubscriptionParams {
+            amount_cents: body.amount_cents.map(MinorUnitAmount::new),
+            plan_id: body.plan_id,
+            starts_at: body.starts_at,
+            ends_at: body.ends_at,
+            reminder_days: body.reminder_days,
+            retrial_days: body.retrial_days,
+            webhook_url: body.webhook_url,
+            is_active: body.is_active,
+        };
+        service
+            .client
+            .subscriptions()
+            .update(body.sub_id, &params)
+            .await
+    }
+);
 
 sub_id_rpc!(retrieve_subscription, retrieve, Subscription);
 sub_id_rpc!(suspend_subscription, suspend, Subscription);
 sub_id_rpc!(resume_subscription, resume, Subscription);
 sub_id_rpc!(cancel_subscription, cancel, Subscription);
-sub_id_rpc!(get_subscription_last_transaction, last_transaction, SubscriptionTransaction);
-sub_id_rpc!(list_subscription_transactions, list_transactions, Vec<SubscriptionTransaction>);
+sub_id_rpc!(
+    get_subscription_last_transaction,
+    last_transaction,
+    SubscriptionTransaction
+);
+sub_id_rpc!(
+    list_subscription_transactions,
+    list_transactions,
+    Vec<SubscriptionTransaction>
+);
 
 async fn list_subscription_cards(
     service: &PaymobGrpcService,
@@ -455,83 +502,71 @@ async fn list_subscription_cards(
         .await
         .map_err(map_error_to_grpc_status)?;
     let dtos: Vec<SubscriptionCardDto> = cards.into_iter().map(Into::into).collect();
-    super::super::proto::encode_response(&dtos)
+    encode_response(&dtos)
 }
 
-async fn add_secondary_subscription_card(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: AddSecondaryCardRequest = decode_request(req)?;
-    let mut params =
-        AddSecondaryCardParams::new(body.card_token).map_err(map_error_to_grpc_status)?;
-    if let Some(id) = body.integration_id {
-        params = params.with_integration_id(id);
+sub_rpc!(
+    add_secondary_subscription_card,
+    AddSecondaryCardRequest,
+    SubscriptionCard,
+    SubscriptionCardDto,
+    |service, body| {
+        let mut params =
+            AddSecondaryCardParams::new(body.card_token).map_err(map_error_to_grpc_status)?;
+        if let Some(id) = body.integration_id {
+            params = params.with_integration_id(id);
+        }
+        if let Some(url) = body.redirect_url {
+            params = params
+                .with_redirect_url(url)
+                .map_err(map_error_to_grpc_status)?;
+        }
+        service
+            .client
+            .subscriptions()
+            .cards()
+            .add_secondary(body.sub_id, params)
+            .await
     }
-    if let Some(url) = body.redirect_url {
-        params = params
-            .with_redirect_url(url)
-            .map_err(map_error_to_grpc_status)?;
+);
+
+sub_card_rpc!(
+    change_primary_subscription_card,
+    ChangePrimaryCardRequest,
+    change_primary,
+    SubscriptionCardDto
+);
+sub_card_rpc!(
+    delete_secondary_subscription_card,
+    DeleteSecondaryCardRequest,
+    delete_secondary,
+    DeleteSecondaryCardResponseDto
+);
+
+sub_rpc!(
+    register_subscription_webhook,
+    RegisterWebhookRequest,
+    SubscriptionWebhookRegistration,
+    SubscriptionWebhookRegistration,
+    |service, body| {
+        service
+            .client
+            .subscriptions()
+            .register_webhook(body.sub_id, &body.webhook_url)
+            .await
     }
-    let res = service
-        .client
-        .subscriptions()
-        .cards()
-        .add_secondary(body.sub_id, params)
-        .await;
-    encode_sdk_result::<_, SubscriptionCardDto>(res)
-}
+);
 
-async fn change_primary_subscription_card(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: ChangePrimaryCardRequest = decode_request(req)?;
-    let res = service
-        .client
-        .subscriptions()
-        .cards()
-        .change_primary(body.sub_id, body.card_id)
-        .await;
-    encode_sdk_result::<_, SubscriptionCardDto>(res)
-}
-
-async fn delete_secondary_subscription_card(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: DeleteSecondaryCardRequest = decode_request(req)?;
-    let res = service
-        .client
-        .subscriptions()
-        .cards()
-        .delete_secondary(body.sub_id, body.card_id)
-        .await;
-    encode_sdk_result::<_, DeleteSecondaryCardResponseDto>(res)
-}
-
-async fn register_subscription_webhook(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: RegisterWebhookRequest = decode_request(req)?;
-    let res = service
-        .client
-        .subscriptions()
-        .register_webhook(body.sub_id, &body.webhook_url)
-        .await;
-    encode_sdk_result::<SubscriptionWebhookRegistration, SubscriptionWebhookRegistration>(res)
-}
-
-async fn refund_subscription_last_transaction(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: RefundLastTransactionRequest = decode_request(req)?;
-    let res = service
-        .client
-        .subscriptions()
-        .refund_last_transaction(body.sub_id, body.amount_cents)
-        .await;
-    encode_sdk_result::<SubscriptionRefundResponse, SubscriptionRefundResponse>(res)
-}
+sub_rpc!(
+    refund_subscription_last_transaction,
+    RefundLastTransactionRequest,
+    SubscriptionRefundResponse,
+    SubscriptionRefundResponse,
+    |service, body| {
+        service
+            .client
+            .subscriptions()
+            .refund_last_transaction(body.sub_id, body.amount_cents)
+            .await
+    }
+);

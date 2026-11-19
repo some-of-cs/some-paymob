@@ -31,7 +31,7 @@ async fn test_negative_moto_cvc_mismatch_and_tampered_webhooks() {
 
     let bad_hex = test::TestRequest::post()
         .uri("/webhooks/paymob?hmac=zzzz_not_hex")
-        .set_payload(r#"{"type":"TRANSACTION","obj":{"id":1}}"#)
+        .set_payload(OFFICIAL_TX_192036465_JSON)
         .to_request();
     assert_eq!(
         test::call_service(&app, bad_hex).await.status(),
@@ -41,7 +41,7 @@ async fn test_negative_moto_cvc_mismatch_and_tampered_webhooks() {
     let zeros_hmac = "0".repeat(128);
     let tampered = test::TestRequest::post()
         .uri(&format!("/webhooks/paymob?hmac={zeros_hmac}"))
-        .set_payload(r#"{"type":"TRANSACTION","obj":{"id":1}}"#)
+        .set_payload(OFFICIAL_TX_192036465_JSON)
         .to_request();
     assert_eq!(
         test::call_service(&app, tampered).await.status(),

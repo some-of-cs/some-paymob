@@ -221,7 +221,10 @@ async fn test_split_bps_mismatch_returns_400() {
         .uri("/splits/validate-and-quote")
         .set_json(json!({
             "total_amount_cents": 1000,
-            "recipients": [{ "recipient_id": "m1", "percentage_bps": 9999 }],
+            "recipients": [
+                { "recipient_id": "m1", "percentage_bps": 6000 },
+                { "recipient_id": "m2", "percentage_bps": 4001 }
+            ],
             "cards": [{ "amount_cents": 1000 }]
         }))
         .to_request();

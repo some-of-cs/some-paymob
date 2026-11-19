@@ -6,6 +6,14 @@ use tonic::{Request, Response, Status};
 use super::PaymobGrpcService;
 use super::proto::{JsonRpcRequest, JsonRpcResponse};
 
+macro_rules! rpc_call {
+    ($req:expr, |$payload:ident : $ty:ty| $expr:expr) => {{
+        let $payload: $ty = super::super::proto::decode_request($req)?;
+        let out = ($expr).map_err(super::super::error::map_error_to_grpc_status)?;
+        super::super::proto::encode_response(&out)
+    }};
+}
+
 #[path = "rpc_core_intentions_legacy.rs"]
 mod core_legacy;
 #[path = "rpc_manage_inquiries_splits.rs"]

@@ -36,7 +36,7 @@ fn map_gateway_paymob_status(err: PaymobError, message: String) -> Status {
         PaymobError::ApiError { .. } | PaymobError::TransportError(_) => {
             Status::new(Code::Unavailable, message)
         }
-        PaymobError::WebhookError(inner) => map_webhook_error_to_grpc_status(inner),
+        PaymobError::WebhookError(inner) => Status::invalid_argument(inner),
         _ => Status::new(Code::Internal, message),
     }
 }

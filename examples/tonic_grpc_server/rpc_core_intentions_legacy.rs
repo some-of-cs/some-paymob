@@ -363,192 +363,162 @@ async fn create_intention(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let mut payload: CreateIntentionRequest = decode_request(req)?;
-    let builder = CreateIntentionParams::builder()
-        .amount(MinorUnitAmount::new(payload.amount_cents))
-        .currency(Currency::from_code(&payload.currency))
-        .payment_methods(payload.payment_methods.clone());
-    let builder = apply_opt!(
-        builder,
-        payload,
-        items,
-        billing_data,
-        customer,
-        extras,
-        special_reference,
-        notification_url,
-        redirection_url,
-        card_tokens,
-    );
-    let params = builder.build().map_err(map_error_to_grpc_status)?;
-    let resp = service
-        .client
-        .intentions()
-        .create(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&intention_to_dto(resp))
+    rpc_call!(req, |mut p: CreateIntentionRequest| async {
+        let builder = CreateIntentionParams::builder()
+            .amount(MinorUnitAmount::new(p.amount_cents))
+            .currency(Currency::from_code(&p.currency))
+            .payment_methods(p.payment_methods.clone());
+        let builder = apply_opt!(
+            builder,
+            p,
+            items,
+            billing_data,
+            customer,
+            extras,
+            special_reference,
+            notification_url,
+            redirection_url,
+            card_tokens,
+        );
+        let resp = service.client.intentions().create(builder.build()?).await?;
+        Ok(intention_to_dto(resp))
+    }
+    .await)
 }
 
 async fn update_intention(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let mut payload: UpdateIntentionRequest = decode_request(req)?;
-    let mut builder = UpdateIntentionParams::builder();
-    if let Some(amount_cents) = payload.amount_cents {
-        builder = builder.amount(MinorUnitAmount::new(amount_cents));
+    rpc_call!(req, |mut p: UpdateIntentionRequest| async {
+        let mut builder = UpdateIntentionParams::builder();
+        if let Some(amount_cents) = p.amount_cents {
+            builder = builder.amount(MinorUnitAmount::new(amount_cents));
+        }
+        if let Some(ref currency) = p.currency {
+            builder = builder.currency(Currency::from_code(currency));
+        }
+        builder = apply_opt!(
+            builder,
+            p,
+            payment_methods,
+            items,
+            billing_data,
+            customer,
+            extras,
+            special_reference,
+            notification_url,
+            redirection_url,
+            card_tokens,
+        );
+        let resp = service.client.intentions().update(builder.build()?).await?;
+        Ok(intention_to_dto(resp))
     }
-    if let Some(ref currency) = payload.currency {
-        builder = builder.currency(Currency::from_code(currency));
-    }
-    builder = apply_opt!(
-        builder,
-        payload,
-        payment_methods,
-        items,
-        billing_data,
-        customer,
-        extras,
-        special_reference,
-        notification_url,
-        redirection_url,
-        card_tokens,
-    );
-    let params = builder.build().map_err(map_error_to_grpc_status)?;
-    let resp = service
-        .client
-        .intentions()
-        .update(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&intention_to_dto(resp))
+    .await)
 }
 
 fn build_pixel_config(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: PixelConfigRequest = decode_request(req)?;
-    let mut builder =
-        PixelConfig::from_client(&service.client, SecretString::from(payload.client_secret))
-            .map_err(map_error_to_grpc_status)?;
-    if let Some(methods) = payload.payment_methods {
-        builder = builder.payment_methods(methods);
-    }
-    if let Some(locale) = payload.locale {
-        builder = builder.locale(locale);
-    }
-    let config = builder.build().map_err(map_error_to_grpc_status)?;
-    let value = config.to_json_value().map_err(map_error_to_grpc_status)?;
-    encode_response(&value)
+    rpc_call!(req, |p: PixelConfigRequest| {
+        let mut builder =
+            PixelConfig::from_client(&service.client, SecretString::from(p.client_secret))?;
+        if let Some(methods) = p.payment_methods {
+            builder = builder.payment_methods(methods);
+        }
+        if let Some(locale) = p.locale {
+            builder = builder.locale(locale);
+        }
+        builder.build()?.to_json_value()
+    })
 }
 
 fn build_affordability_widget(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: AffordabilityRequest = decode_request(req)?;
-    let mut builder = AffordabilityWidgetConfig::from_client(
-        &service.client,
-        MinorUnitAmount::new(payload.amount_cents),
-        Currency::from_code(&payload.currency),
-    )
-    .map_err(map_error_to_grpc_status)?;
-    if let Some(banks) = payload.supported_banks {
-        builder = builder.supported_banks(banks);
-    }
-    let mut config = builder.build().map_err(map_error_to_grpc_status)?;
-    if let Some(plan_id) = payload.selected_plan_id {
-        config = config
-            .with_selected_plan(plan_id)
-            .map_err(map_error_to_grpc_status)?;
-    }
-    encode_response(&config)
+    rpc_call!(req, |p: AffordabilityRequest| {
+        let mut builder = AffordabilityWidgetConfig::from_client(
+            &service.client,
+            MinorUnitAmount::new(p.amount_cents),
+            Currency::from_code(&p.currency),
+        )?;
+        if let Some(banks) = p.supported_banks {
+            builder = builder.supported_banks(banks);
+        }
+        let mut config = builder.build()?;
+        if let Some(plan_id) = p.selected_plan_id {
+            config = config.with_selected_plan(plan_id)?;
+        }
+        Ok(config)
+    })
 }
 
 async fn create_legacy_order(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: CreateLegacyOrderRequest = decode_request(req)?;
-    let mut params =
-        CreateLegacyOrderParams::new(payload.amount_cents, Currency::from_code(&payload.currency));
-    if let Some(merchant_order_id) = payload.merchant_order_id {
-        params = params.merchant_order_id(merchant_order_id);
+    rpc_call!(req, |p: CreateLegacyOrderRequest| async {
+        let mut params =
+            CreateLegacyOrderParams::new(p.amount_cents, Currency::from_code(&p.currency));
+        if let Some(merchant_order_id) = p.merchant_order_id {
+            params = params.merchant_order_id(merchant_order_id);
+        }
+        if let Some(items) = p.items {
+            params = params.items(build_legacy_items(items));
+        }
+        service.client.legacy_v2()?.create_order(&params).await
     }
-    if let Some(items) = payload.items {
-        params = params.items(build_legacy_items(items));
-    }
-    let legacy = service
-        .client
-        .legacy_v2()
-        .map_err(map_error_to_grpc_status)?;
-    let order = legacy
-        .create_order(&params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&order)
+    .await)
 }
 
 async fn create_legacy_payment_key(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: CreatePaymentKeyRequest = decode_request(req)?;
-    let billing = build_legacy_billing(payload.billing_data);
-    let params = CreatePaymentKeyParams::new(
-        payload.order_id,
-        payload.amount_cents,
-        Currency::from_code(&payload.currency),
-        payload.integration_id,
-        billing,
-    );
-    let legacy = service
-        .client
-        .legacy_v2()
-        .map_err(map_error_to_grpc_status)?;
-    let resp = legacy
-        .create_payment_key(&params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&PaymentKeyRouteResponse {
-        token: resp.expose_token().to_owned(),
-    })
+    rpc_call!(req, |p: CreatePaymentKeyRequest| async {
+        let params = CreatePaymentKeyParams::new(
+            p.order_id,
+            p.amount_cents,
+            Currency::from_code(&p.currency),
+            p.integration_id,
+            build_legacy_billing(p.billing_data),
+        );
+        let resp = service.client.legacy_v2()?.create_payment_key(&params).await?;
+        Ok(PaymentKeyRouteResponse {
+            token: resp.expose_token().to_owned(),
+        })
+    }
+    .await)
 }
 
 async fn create_legacy_checkout(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: LegacyCheckoutRequest = decode_request(req)?;
-    let billing = build_legacy_billing(payload.billing_data);
-    let mut params = LegacyCheckoutParams::new(
-        payload.amount_cents,
-        Currency::from_code(&payload.currency),
-        payload.integration_id,
-        payload.iframe_id,
-        billing,
-    );
-    if let Some(merchant_order_id) = payload.merchant_order_id {
-        params = params.merchant_order_id(merchant_order_id);
+    rpc_call!(req, |p: LegacyCheckoutRequest| async {
+        let mut params = LegacyCheckoutParams::new(
+            p.amount_cents,
+            Currency::from_code(&p.currency),
+            p.integration_id,
+            p.iframe_id,
+            build_legacy_billing(p.billing_data),
+        );
+        if let Some(merchant_order_id) = p.merchant_order_id {
+            params = params.merchant_order_id(merchant_order_id);
+        }
+        if let Some(items) = p.items {
+            params = params.items(build_legacy_items(items));
+        }
+        let session = service.client.legacy_v2()?.create_checkout(&params).await?;
+        Ok(LegacyCheckoutRouteResponse {
+            order: session.order,
+            payment_token: session.payment_key.expose_token().to_owned(),
+            iframe_url: session.iframe_url.to_string(),
+        })
     }
-    if let Some(items) = payload.items {
-        params = params.items(build_legacy_items(items));
-    }
-    let legacy = service
-        .client
-        .legacy_v2()
-        .map_err(map_error_to_grpc_status)?;
-    let session = legacy
-        .create_checkout(&params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&LegacyCheckoutRouteResponse {
-        order: session.order,
-        payment_token: session.payment_key.expose_token().to_owned(),
-        iframe_url: session.iframe_url.to_string(),
-    })
+    .await)
 }
 
 pub(super) async fn dispatch_core_and_checkout(

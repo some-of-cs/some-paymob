@@ -4,14 +4,13 @@
 use serde::{Deserialize, Serialize};
 use some_paymob::resources::inquiries::TransactionInquiryParams;
 use some_paymob::{
-    CaptureParams, ConvenienceFeeConfig, CreateQuickLinkParams, OrderInquiryResponse,
-    QuickLinkResponse, RefundParams, SplitDescription, SplitRecipientRule, VoidParams,
+    CaptureParams, ConvenienceFeeConfig, CreateQuickLinkParams, RefundParams, SplitDescription,
+    SplitRecipientRule, VoidParams,
 };
 use tonic::{Request, Response, Status};
 
 use super::super::PaymobGrpcService;
-use super::super::error::map_error_to_grpc_status;
-use super::super::proto::{JsonRpcRequest, JsonRpcResponse, decode_request, encode_response};
+use super::super::proto::{JsonRpcRequest, JsonRpcResponse};
 
 macro_rules! manage_client {
     ($service:expr, $bearer:expr) => {
@@ -172,183 +171,143 @@ async fn refund_transaction(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let params: RefundParams = decode_request(req)?;
-    let tx = service
-        .client
-        .manage()
-        .refund(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&tx)
+    rpc_call!(req, |params: RefundParams| {
+        service.client.manage().refund(params).await
+    })
 }
 
 async fn void_transaction(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: ManageVoidRequest = decode_request(req)?;
-    let params = VoidParams::new(payload.transaction_id);
-    let manage = manage_client!(service, payload.use_legacy_v2_bearer);
-    let tx = manage
-        .void(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&tx)
+    rpc_call!(req, |p: ManageVoidRequest| {
+        let manage = manage_client!(service, p.use_legacy_v2_bearer);
+        manage.void(VoidParams::new(p.transaction_id)).await
+    })
 }
 
 async fn capture_transaction(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: ManageCaptureRequest = decode_request(req)?;
-    let params = CaptureParams::new(payload.transaction_id, payload.amount_cents);
-    let manage = manage_client!(service, payload.use_legacy_v2_bearer);
-    let tx = manage
-        .capture(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&tx)
+    rpc_call!(req, |p: ManageCaptureRequest| {
+        let manage = manage_client!(service, p.use_legacy_v2_bearer);
+        manage
+            .capture(CaptureParams::new(p.transaction_id, p.amount_cents))
+            .await
+    })
 }
 
 async fn inquire_transaction_by_id(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: InquireTransactionByIdRequest = decode_request(req)?;
-    let tx = service
-        .client
-        .inquiries()
-        .by_transaction_id(payload.transaction_id)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&tx)
+    rpc_call!(req, |p: InquireTransactionByIdRequest| {
+        service
+            .client
+            .inquiries()
+            .by_transaction_id(p.transaction_id)
+            .await
+    })
 }
 
 async fn inquire_transaction_by_order(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let params: TransactionInquiryParams = decode_request(req)?;
-    let tx = service
-        .client
-        .inquiries()
-        .by_order_or_reference(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&tx)
+    rpc_call!(req, |params: TransactionInquiryParams| {
+        service
+            .client
+            .inquiries()
+            .by_order_or_reference(params)
+            .await
+    })
 }
 
 async fn inquire_order(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: OrderIdRequest = decode_request(req)?;
-    let order: OrderInquiryResponse = service
-        .client
-        .inquiries()
-        .order_inquiry(payload.order_id)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&order)
+    rpc_call!(req, |p: OrderIdRequest| {
+        service.client.inquiries().order_inquiry(p.order_id).await
+    })
 }
 
 async fn list_order_card_tokens(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: OrderIdRequest = decode_request(req)?;
-    let tokens = service
-        .client
-        .inquiries()
-        .card_tokens(payload.order_id)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    let items: Vec<CardTokenRouteItem> = tokens
-        .into_iter()
-        .map(|env| CardTokenRouteItem {
-            token_type: env.token_type,
-            id: env.obj.id,
-            masked_pan: env.obj.masked_pan.clone(),
-            merchant_id: env.obj.merchant_id,
-            card_subtype: env.obj.card_subtype.clone(),
-            created_at: env.obj.created_at.clone(),
-            order_id: env.obj.order_id.clone(),
-            next_payment_intention: env.obj.next_payment_intention.clone(),
-        })
-        .collect();
-    encode_response(&items)
+    rpc_call!(req, |p: OrderIdRequest| async {
+        let tokens = service.client.inquiries().card_tokens(p.order_id).await?;
+        let items: Vec<CardTokenRouteItem> = tokens
+            .into_iter()
+            .map(|env| CardTokenRouteItem {
+                token_type: env.token_type,
+                id: env.obj.id,
+                masked_pan: env.obj.masked_pan.clone(),
+                merchant_id: env.obj.merchant_id,
+                card_subtype: env.obj.card_subtype.clone(),
+                created_at: env.obj.created_at.clone(),
+                order_id: env.obj.order_id.clone(),
+                next_payment_intention: env.obj.next_payment_intention.clone(),
+            })
+            .collect();
+        Ok(items)
+    }
+    .await)
 }
 
 async fn create_quick_link(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: CreateQuickLinkRequest = decode_request(req)?;
-    let params = CreateQuickLinkParams::new(
-        payload.amount_cents,
-        payload.currency.clone(),
-        payload.integrations.clone(),
-    );
-    let params = apply_quicklink_optionals(params, payload);
-    let resp: QuickLinkResponse = service
-        .client
-        .quicklinks()
-        .create(&params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&resp)
+    rpc_call!(req, |p: CreateQuickLinkRequest| async {
+        let params =
+            CreateQuickLinkParams::new(p.amount_cents, p.currency.clone(), p.integrations.clone());
+        let params = apply_quicklink_optionals(params, p);
+        service.client.quicklinks().create(&params).await
+    }
+    .await)
 }
 
 async fn cancel_quick_link(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: CancelQuickLinkRequest = decode_request(req)?;
-    service
-        .client
-        .quicklinks()
-        .cancel(&payload.link_id)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&CancelQuickLinkResponse {
-        link_id: payload.link_id,
-        cancelled: true,
-    })
+    rpc_call!(req, |p: CancelQuickLinkRequest| async {
+        service.client.quicklinks().cancel(&p.link_id).await?;
+        Ok(CancelQuickLinkResponse {
+            link_id: p.link_id,
+            cancelled: true,
+        })
+    }
+    .await)
 }
 
 fn validate_splits_and_calculate_fee(
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let payload: SplitsValidateAndQuoteRequest = decode_request(req)?;
-    let split = SplitDescription::new(payload.recipients).map_err(map_error_to_grpc_status)?;
-    let total_fixed_cents = split
-        .total_fixed_cents()
-        .map_err(map_error_to_grpc_status)?;
-    let total_percentage_bps = split
-        .total_percentage_bps()
-        .map_err(map_error_to_grpc_status)?;
-    let (fee_cents, total_with_fee_cents) = match payload.fee_config {
-        Some(cfg) => {
-            cfg.validate().map_err(map_error_to_grpc_status)?;
-            (
-                Some(
-                    cfg.compute_fee_cents(payload.amount_cents)
-                        .map_err(map_error_to_grpc_status)?,
-                ),
-                Some(
-                    cfg.total_with_fee_cents(payload.amount_cents)
-                        .map_err(map_error_to_grpc_status)?,
-                ),
-            )
-        }
-        None => (None, None),
-    };
-    encode_response(&SplitsValidateAndQuoteResponse {
-        split,
-        total_fixed_cents,
-        total_percentage_bps,
-        fee_cents,
-        total_with_fee_cents,
+    rpc_call!(req, |p: SplitsValidateAndQuoteRequest| {
+        let split = SplitDescription::new(p.recipients)?;
+        let total_fixed_cents = split.total_fixed_cents()?;
+        let total_percentage_bps = split.total_percentage_bps()?;
+        let (fee_cents, total_with_fee_cents) = match p.fee_config {
+            Some(cfg) => {
+                cfg.validate()?;
+                (
+                    Some(cfg.compute_fee_cents(p.amount_cents)?),
+                    Some(cfg.total_with_fee_cents(p.amount_cents)?),
+                )
+            }
+            None => (None, None),
+        };
+        Ok(SplitsValidateAndQuoteResponse {
+            split,
+            total_fixed_cents,
+            total_percentage_bps,
+            fee_cents,
+            total_with_fee_cents,
+        })
     })
 }
 

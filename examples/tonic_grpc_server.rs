@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::result_large_err)]
 //! Tonic gRPC reference server for `some-paymob` covering all 14 services and Protocols A-E.
 
 use std::future::Future;

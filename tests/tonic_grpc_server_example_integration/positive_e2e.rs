@@ -157,12 +157,7 @@ async fn e2e_quicklinks_and_splits_return_ok() {
         "recipients": [{ "recipient_id": "sub_1", "percentage_bps": 10_000 }]
     });
     assert_rpc_ok(&service, "CreateQuickLink", &ql_req).await;
-    assert_rpc_ok(
-        &service,
-        "CancelQuickLink",
-        &json!({ "quick_link_id": "ql_u4" }),
-    )
-    .await;
+    assert_rpc_ok(&service, "CancelQuickLink", &json!({ "link_id": "ql_u4" })).await;
     assert_rpc_ok(&service, "ValidateSplitsAndCalculateFee", &sp_req).await;
 }
 
@@ -230,7 +225,7 @@ async fn e2e_subscriptions_lifecycle_rpcs_return_ok() {
     let list_req = json!({ "plan_id": 701, "state": "active", "page": 1 });
     let upd_req = json!({ "subscription_id": 1264, "amount_cents": 25_000 });
     assert_rpc_ok(&service, "CreateSubscription", &create_req).await;
-    assert_rpc_ok(&service, "GetSubscription", &sub_ref).await;
+    assert_rpc_ok(&service, "RetrieveSubscription", &sub_ref).await;
     assert_rpc_ok(&service, "ListSubscriptions", &list_req).await;
     assert_rpc_ok(&service, "UpdateSubscription", &upd_req).await;
     assert_rpc_ok(&service, "SuspendSubscription", &sub_ref).await;
@@ -260,7 +255,7 @@ async fn e2e_subscription_cards_and_history_rpcs_return_ok() {
     assert_rpc_ok(&service, "ListSubscriptionCards", &sub_ref).await;
     assert_rpc_ok(&service, "AddSecondarySubscriptionCard", &sec_req).await;
     assert_rpc_ok(&service, "ChangePrimarySubscriptionCard", &pri_req).await;
-    assert_rpc_ok(&service, "DeleteSubscriptionCard", &del_req).await;
+    assert_rpc_ok(&service, "DeleteSecondarySubscriptionCard", &del_req).await;
     assert_rpc_ok(&service, "UpdateSubscriptionWebhook", &wh_req).await;
     assert_rpc_ok(&service, "GetSubscriptionLastTransaction", &sub_ref).await;
     assert_rpc_ok(&service, "ListSubscriptionTransactions", &sub_ref).await;
@@ -274,7 +269,7 @@ async fn e2e_payouts_auth_and_all_7_cashin_issuers_return_ok() {
     setup_payouts_cashin_mocks(&server).await;
     let service = build_grpc_service(&server);
     let ref_req = json!({ "refresh_token": "ref_tok_1" });
-    assert_rpc_ok(&service, "CreatePayoutsToken", &json!({})).await;
+    assert_rpc_ok(&service, "GeneratePayoutsToken", &json!({})).await;
     assert_rpc_ok(&service, "RefreshPayoutsToken", &ref_req).await;
     for issuer in ["vodafone", "etisalat", "orange", "bank_wallet"] {
         let wal_req = json!({ "issuer": issuer, "msisdn": "01023456789", "amount": 200 });
@@ -297,7 +292,7 @@ async fn e2e_payouts_inquiries_budget_and_topups_return_ok() {
         "currency": "egyptian_pound",
         "username": "merchant_user"
     });
-    assert_rpc_ok(&service, "InquirePayoutsTransactions", &tx_req).await;
+    assert_rpc_ok(&service, "InquirePayoutTransactions", &tx_req).await;
     assert_rpc_ok(&service, "InquirePayoutsByReference", &ref_req).await;
     assert_rpc_ok(&service, "InquirePayoutsBudget", &json!({})).await;
     assert_rpc_ok(&service, "InquirePayoutsTopups", &topup_inq).await;
@@ -317,7 +312,7 @@ async fn e2e_onboarding_auth_rpcs_return_ok() {
     setup_onboarding_mocks(&server).await;
     let service = build_grpc_service(&server);
     let login = json!({ "username": "partner@example.com", "password": "secret-password" });
-    assert_rpc_ok(&service, "OnboardingLogin", &login).await;
+    assert_rpc_ok(&service, "PartnerLogin", &login).await;
     assert_rpc_ok(
         &service,
         "CreateOnboardingApiKey",
@@ -349,7 +344,7 @@ async fn e2e_onboarding_flow_rpcs_return_ok() {
     let step = json!({ "paymob_mid": 12345, "step_id": "kyc_1", "data": { "cr": "123" } });
     assert_rpc_ok(
         &service,
-        "GetOnboardingFlowSchema",
+        "GetOnboardingSchema",
         &json!({ "partner": "acme-partner" }),
     )
     .await;
@@ -370,22 +365,22 @@ async fn e2e_merchant_scoped_rpcs_return_ok() {
     setup_scoped_and_unified_mocks(&server).await;
     let service = build_grpc_service(&server);
     let create = json!({
-        "merchant_id": 12345,
+        "mid": 12345,
         "amount": 10_000,
         "currency": "EGP",
         "payment_methods": [4097558]
     });
-    let upd = json!({ "merchant_id": 12345, "special_reference": "ref-m", "amount": 12_000 });
+    let upd = json!({ "mid": 12345, "special_reference": "ref-m", "amount": 12_000 });
     let upd_cs = json!({
-        "merchant_id": 12345,
+        "mid": 12345,
         "client_secret": "egy_csk_u4",
         "special_reference": "ref-m",
         "amount": 12_000
     });
-    let tx_inq = json!({ "merchant_id": 12345, "transaction_id": 192036465 });
-    let ord_inq = json!({ "merchant_id": 12345, "order_id": 1 });
-    let tx_void = json!({ "merchant_id": 12345, "transaction_id": 100 });
-    let tx_amt = json!({ "merchant_id": 12345, "transaction_id": 100, "amount_cents": 5000 });
+    let tx_inq = json!({ "mid": 12345, "transaction_id": 192036465 });
+    let ord_inq = json!({ "mid": 12345, "order_id": 1 });
+    let tx_void = json!({ "mid": 12345, "transaction_id": 100 });
+    let tx_amt = json!({ "mid": 12345, "transaction_id": 100, "amount_cents": 5000 });
     assert_rpc_ok(&service, "ScopedCreateIntention", &create).await;
     assert_rpc_ok(&service, "ScopedUpdateIntention", &upd).await;
     assert_rpc_ok(&service, "ScopedUpdateIntentionByClientSecret", &upd_cs).await;
@@ -418,7 +413,7 @@ async fn e2e_unified_adapter_all_rpcs_return_ok() {
     assert_rpc_ok(&service, "UnifiedCapture", &tx_amt).await;
     assert_rpc_ok(&service, "UnifiedRefund", &tx_amt).await;
     assert_rpc_ok(&service, "UnifiedVoid", &json!({ "transaction_id": 100 })).await;
-    assert_rpc_ok(&service, "UnifiedChargeSaved", &chg).await;
+    assert_rpc_ok(&service, "UnifiedChargeSavedMethod", &chg).await;
     assert_rpc_ok(&service, "UnifiedRefundSubscription", &sub_ref).await;
     assert_rpc_ok(&service, "UnifiedPayout", &po).await;
     let tx_vec = transaction_processed_192036465();
@@ -436,7 +431,7 @@ async fn e2e_webhooks_protocols_a_through_e_return_ok() {
         card_token_15978654(),
         subscription_1264(),
     ] {
-        let req = json!({ "hmac": vec.expected_hmac_hex, "payload": vec.payload_or_query });
+        let req = json!({ "hmac": vec.expected_hmac_hex, "raw_body": vec.payload_or_query });
         assert_rpc_ok(&service, "VerifyWebhookEvent", &req).await;
     }
     let redir = transaction_response_316004();
@@ -449,6 +444,6 @@ async fn e2e_webhooks_protocols_a_through_e_return_ok() {
         "currency": "EGP",
         "status": "successful"
     });
-    let proto_e_req = json!({ "payload": proto_e.to_string() });
+    let proto_e_req = json!({ "raw_body": proto_e.to_string() });
     assert_rpc_ok(&service, "VerifyWebhookEvent", &proto_e_req).await;
 }

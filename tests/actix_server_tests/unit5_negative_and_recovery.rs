@@ -4,6 +4,7 @@
 use actix_web::{App, http::StatusCode, test};
 use serde_json::json;
 use some_paymob::prelude::*;
+use some_paymob::test_utils::{OFFICIAL_TX_192036465_JSON, SAMPLE_TX_192036465_HMAC};
 
 use crate::actix_server::configure_app;
 use crate::helpers::{build_test_state, mount_accept};

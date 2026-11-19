@@ -310,21 +310,13 @@ async fn e2e_payouts_inquiries_budget_and_topups_return_ok() {
     assert_rpc_ok(&service, "RequestAcceptBalanceTopup", &acc_req).await;
 }
 
-/// Verifies partner onboarding auth and flow RPCs return `Code::Ok`.
+/// Verifies partner onboarding auth RPCs return `Code::Ok`.
 #[tokio::test]
-async fn e2e_onboarding_auth_and_flow_rpcs_return_ok() {
+async fn e2e_onboarding_auth_rpcs_return_ok() {
     let server = PaymobMockServer::start().await;
     setup_onboarding_mocks(&server).await;
     let service = build_grpc_service(&server);
     let login = json!({ "username": "partner@example.com", "password": "secret-password" });
-    let reg = json!({
-        "partner": "acme-partner",
-        "email": "partner@example.com",
-        "phone_number": "+201001234567",
-        "first_name": "Maher",
-        "last_name": "Aladdin"
-    });
-    let step = json!({ "paymob_mid": 12345, "step_id": "kyc_1", "data": { "cr": "123" } });
     assert_rpc_ok(&service, "OnboardingLogin", &login).await;
     assert_rpc_ok(
         &service,
@@ -339,6 +331,22 @@ async fn e2e_onboarding_auth_and_flow_rpcs_return_ok() {
         &json!({ "merchant_id": 12345 }),
     )
     .await;
+}
+
+/// Verifies partner onboarding flow RPCs return `Code::Ok`.
+#[tokio::test]
+async fn e2e_onboarding_flow_rpcs_return_ok() {
+    let server = PaymobMockServer::start().await;
+    setup_onboarding_mocks(&server).await;
+    let service = build_grpc_service(&server);
+    let reg = json!({
+        "partner": "acme-partner",
+        "email": "partner@example.com",
+        "phone_number": "+201001234567",
+        "first_name": "Maher",
+        "last_name": "Aladdin"
+    });
+    let step = json!({ "paymob_mid": 12345, "step_id": "kyc_1", "data": { "cr": "123" } });
     assert_rpc_ok(
         &service,
         "GetOnboardingFlowSchema",

@@ -16,8 +16,8 @@ fn map_client_paymob_code(err: &PaymobError) -> Option<Code> {
 }
 
 fn attach_retry_after_metadata(status: &mut Status, retry_after_secs: Option<u64>) {
-    let val = retry_after_secs
-        .and_then(|secs| secs.to_string().parse::<MetadataValue<Ascii>>().ok());
+    let val =
+        retry_after_secs.and_then(|secs| secs.to_string().parse::<MetadataValue<Ascii>>().ok());
     if let Some(val) = val {
         status.metadata_mut().insert("retry-after-secs", val);
     }

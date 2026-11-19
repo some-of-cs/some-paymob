@@ -96,7 +96,30 @@ pub(super) async fn assert_rpc_code(
     let err = call_rpc(service, method, payload)
         .await
         .expect_err("expected gRPC error status");
-    assert_eq!(err.code(), expected, "unexpected status for {method}: {err:?}");
+    assert_eq!(
+        err.code(),
+        expected,
+        "unexpected status for {method}: {err:?}"
+    );
+}
+
+async fn mount_host(
+    server: &PaymobMockServer,
+    host: MockHost,
+    method: &str,
+    path: &str,
+    status: u16,
+    body: Value,
+) {
+    server
+        .mount_json(JsonEndpointMockConfig {
+            host,
+            http_method: method,
+            endpoint_path: path,
+            status,
+            body,
+        })
+        .await;
 }
 
 pub(super) async fn mount_accept(
@@ -106,15 +129,7 @@ pub(super) async fn mount_accept(
     status: u16,
     body: Value,
 ) {
-    server
-        .mount_json(JsonEndpointMockConfig {
-            host: MockHost::Accept,
-            http_method: method,
-            endpoint_path: path,
-            status,
-            body,
-        })
-        .await;
+    mount_host(server, MockHost::Accept, method, path, status, body).await;
 }
 
 pub(super) async fn mount_payouts(
@@ -124,15 +139,7 @@ pub(super) async fn mount_payouts(
     status: u16,
     body: Value,
 ) {
-    server
-        .mount_json(JsonEndpointMockConfig {
-            host: MockHost::Payouts,
-            http_method: method,
-            endpoint_path: path,
-            status,
-            body,
-        })
-        .await;
+    mount_host(server, MockHost::Payouts, method, path, status, body).await;
 }
 
 pub(super) fn sample_billing_json() -> Value {

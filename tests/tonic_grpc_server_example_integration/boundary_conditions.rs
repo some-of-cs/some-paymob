@@ -35,7 +35,13 @@ async fn boundary_amount_zero_one_and_u64_max_overflow() {
     assert!(max.checked_mul(2).is_err());
     let zero_ref = json!({ "transaction_id": 100, "amount_cents": 0 });
     let one_ref = json!({ "transaction_id": 100, "amount_cents": 1 });
-    assert_rpc_code(&service, "RefundTransaction", &zero_ref, Code::InvalidArgument).await;
+    assert_rpc_code(
+        &service,
+        "RefundTransaction",
+        &zero_ref,
+        Code::InvalidArgument,
+    )
+    .await;
     assert_rpc_ok(&service, "RefundTransaction", &one_ref).await;
 }
 
@@ -45,10 +51,22 @@ async fn boundary_bulk_disbursements_0_1_1000_1001_items() {
     let server = PaymobMockServer::start().await;
     setup_payouts_cashin_mocks(&server).await;
     let service = build_grpc_service(&server);
-    assert_rpc_code(&service, "BulkCashin", &bulk_items_json(0), Code::InvalidArgument).await;
+    assert_rpc_code(
+        &service,
+        "BulkCashin",
+        &bulk_items_json(0),
+        Code::InvalidArgument,
+    )
+    .await;
     assert_rpc_ok(&service, "BulkCashin", &bulk_items_json(1)).await;
     assert_rpc_ok(&service, "BulkCashin", &bulk_items_json(1_000)).await;
-    assert_rpc_code(&service, "BulkCashin", &bulk_items_json(1_001), Code::InvalidArgument).await;
+    assert_rpc_code(
+        &service,
+        "BulkCashin",
+        &bulk_items_json(1_001),
+        Code::InvalidArgument,
+    )
+    .await;
 }
 
 /// Verifies payouts inquiry ID batch boundaries at 0, 1, 500, 501, 1,000, and 1,001.
@@ -58,11 +76,23 @@ async fn boundary_inquiry_ids_0_1_500_501() {
     setup_payouts_inquiries_and_topups_mocks(&server).await;
     let service = build_grpc_service(&server);
     let method = "InquirePayoutsTransactions";
-    assert_rpc_code(&service, method, &inquiry_ids_json(0), Code::InvalidArgument).await;
+    assert_rpc_code(
+        &service,
+        method,
+        &inquiry_ids_json(0),
+        Code::InvalidArgument,
+    )
+    .await;
     for count in [1usize, 500, 501, 1_000] {
         assert_rpc_ok(&service, method, &inquiry_ids_json(count)).await;
     }
-    assert_rpc_code(&service, method, &inquiry_ids_json(1_001), Code::InvalidArgument).await;
+    assert_rpc_code(
+        &service,
+        method,
+        &inquiry_ids_json(1_001),
+        Code::InvalidArgument,
+    )
+    .await;
 }
 
 /// Verifies bank transfer proof byte-size boundaries at 0, max, and over-limit.
@@ -75,9 +105,21 @@ async fn boundary_bank_transfer_proof_sizes_0_max_and_over() {
     assert_eq!(MAX_TOPUP_PROOF_BYTES, 2_936_012);
     assert_rpc_code(&service, method, &topup_raw_json(0), Code::InvalidArgument).await;
     assert_rpc_ok(&service, method, &topup_raw_json(2_936_012)).await;
-    assert_rpc_code(&service, method, &topup_raw_json(2_936_013), Code::InvalidArgument).await;
+    assert_rpc_code(
+        &service,
+        method,
+        &topup_raw_json(2_936_013),
+        Code::InvalidArgument,
+    )
+    .await;
     let over_b64 = "A".repeat(MAX_TOPUP_PROOF_BYTES.div_ceil(3) * 4 + 4);
-    assert_rpc_code(&service, method, &topup_b64_json(&over_b64), Code::InvalidArgument).await;
+    assert_rpc_code(
+        &service,
+        method,
+        &topup_b64_json(&over_b64),
+        Code::InvalidArgument,
+    )
+    .await;
 }
 
 /// Verifies split payment card count (0, 1, 3, 4) and recipient bps boundaries.
@@ -85,7 +127,10 @@ async fn boundary_bank_transfer_proof_sizes_0_max_and_over() {
 async fn boundary_split_payments_cards_and_bps_not_10000() {
     let server = PaymobMockServer::start().await;
     let service = build_grpc_service(&server);
-    assert!(matches!(SplitPaymentConfig::new(vec![]), Err(PaymobError::ValidationError { .. })));
+    assert!(matches!(
+        SplitPaymentConfig::new(vec![]),
+        Err(PaymobError::ValidationError { .. })
+    ));
     assert!(SplitPaymentConfig::new(vec![SplitCardPortion::new(1_000)]).is_ok());
     assert!(SplitPaymentConfig::new(vec![SplitCardPortion::new(1_000); 3]).is_ok());
     assert!(SplitPaymentConfig::new(vec![SplitCardPortion::new(1_000); 4]).is_err());
@@ -144,5 +189,11 @@ async fn boundary_sandbox_guard_credential_age_24_25_30_days() {
     let method = "CheckSandboxConstraints";
     assert_rpc_ok(&service, method, &sandbox_card_json(24)).await;
     assert_rpc_ok(&service, method, &sandbox_card_json(25)).await;
-    assert_rpc_code(&service, method, &sandbox_card_json(30), Code::FailedPrecondition).await;
+    assert_rpc_code(
+        &service,
+        method,
+        &sandbox_card_json(30),
+        Code::FailedPrecondition,
+    )
+    .await;
 }

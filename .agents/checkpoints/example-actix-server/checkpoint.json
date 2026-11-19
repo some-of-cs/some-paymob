@@ -1,0 +1,53 @@
+{
+  "module_id": "example-actix-server",
+  "module_branch": "feat/example-actix-server",
+  "story_branch": "feat/us-actix-server-and-tests",
+  "base_branch": "main",
+  "status": "ready_for_main",
+  "story_pr": {
+    "pr_number": 150,
+    "status": "merged",
+    "merge_sha": "9af93e960aed8c01a113019243d1e4c02449597f"
+  },
+  "module_pr": {
+    "pr_number": 151,
+    "status": "in_review"
+  },
+  "units": [
+    {
+      "unit_id": "unit-1",
+      "branch": "feat/us-actix/unit-1-core-checkout-legacy-manage",
+      "pr_number": 127,
+      "status": "merged",
+      "merge_sha": "d34b7b3cecc2c8c64dae33e935f49bc5b12bd6bc"
+    },
+    {
+      "unit_id": "unit-2",
+      "branch": "feat/us-actix/unit-2-saved-cards-subscriptions-payouts",
+      "pr_number": 139,
+      "status": "merged",
+      "merge_sha": "8cd5e968b65f0c8275702a3b2af78c5e06794c01"
+    },
+    {
+      "unit_id": "unit-3",
+      "branch": "feat/us-actix/unit-3-onboarding-webhooks-unified-adapter",
+      "pr_number": 148,
+      "status": "merged",
+      "merge_sha": "16f1ecf1a4647a61615fa6aeb7b745dbe36bef41"
+    },
+    {
+      "unit_id": "unit-4",
+      "branch": "feat/us-actix/unit-4-integration-tests-positive-and-boundaries",
+      "pr_number": 149,
+      "status": "merged",
+      "merge_sha": "0907a0c7681e9c91b2029de4ad347c8766a56aa8"
+    },
+    {
+      "unit_id": "unit-5",
+      "branch": "feat/us-actix/unit-5-integration-tests-negative-and-error-workflows",
+      "pr_number": 152,
+      "status": "merged",
+      "merge_sha": "13abe0b33507954e80c5591fe4499314862fc455"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "module_id": "example-tonic-grpc-server",
+  "base_branch": "main",
+  "module_branch": "feat/example-tonic-grpc-server",
+  "story_branch": "feat/us-tonic-grpc-server-and-tests",
+  "story_pr": 158,
+  "patch_pr": null,
+  "status": "ready_for_main",
+  "units": {
+    "unit-1": {
+      "branch": "feat/us-tonic/unit-1-core-checkout-legacy-manage",
+      "scope": "map_error_to_grpc_status + Services 1-7 RPCs",
+      "status": "pending",
+      "pr_number": null
+    },
+    "unit-2": {
+      "branch": "feat/us-tonic/unit-2-saved-cards-subscriptions-payouts",
+      "scope": "Services 9-12 RPCs (saved-cards, subscriptions, payouts)",
+      "status": "pending",
+      "pr_number": null
+    },
+    "unit-3": {
+      "branch": "feat/us-tonic/unit-3-onboarding-webhooks-unified-adapter",
+      "scope": "Services 13-14 RPCs (onboarding, webhooks, unified adapter) + Tonic Server router",
+      "status": "pending",
+      "pr_number": null
+    },
+    "unit-4": {
+      "branch": "feat/us-tonic/unit-4-integration-tests-positive-and-boundaries",
+      "scope": "Positive E2E & boundary condition integration tests",
+      "status": "pending",
+      "pr_number": null
+    },
+    "unit-5": {
+      "branch": "feat/us-tonic/unit-5-integration-tests-negative-and-error-workflows",
+      "scope": "Negative validation, security/redaction, and error recovery integration tests",
+      "status": "pending",
+      "pr_number": null
+    }
+  },
+  "unit_prs": {
+    "unit-1": 155,
+    "unit-2": 154,
+    "unit-3": 157,
+    "unit-4": 153,
+    "unit-5": 156
+  }
+}

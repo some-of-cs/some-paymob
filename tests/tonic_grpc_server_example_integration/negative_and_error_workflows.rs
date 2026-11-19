@@ -170,7 +170,7 @@ async fn negative_control_chars_and_path_traversal_rejected() {
         "proof_base64": "AQID",
         "proof_filename": "../passwd"
     });
-    assert_invalid(&svc, "PayoutsTopupBankTransfer", &bad_topup).await;
+    assert_invalid(&svc, "RequestBankTransferTopup", &bad_topup).await;
 }
 
 #[tokio::test]
@@ -191,9 +191,9 @@ async fn negative_invalid_msisdn_pan_and_national_id_rejected() {
         "full_name": "Test User",
         "national_id": "12345"
     });
-    assert_invalid(&svc, "PayoutsCashinWallet", &bad_wallet).await;
-    assert_invalid(&svc, "PayoutsCashinBankCard", &bad_card).await;
-    assert_invalid(&svc, "PayoutsCashinEgyptianPost", &bad_post).await;
+    assert_invalid(&svc, "DisburseMobileWallet", &bad_wallet).await;
+    assert_invalid(&svc, "DisburseBankCard", &bad_card).await;
+    assert_invalid(&svc, "DisburseEgyptianPost", &bad_post).await;
 }
 
 #[tokio::test]
@@ -212,7 +212,7 @@ async fn negative_use_cvc_with_moto_cvn_mismatch_rejected() {
         "saved_token": "saved_1",
         "use_cvc_with_moto": true
     });
-    assert_invalid(&svc, "PayMit", &mismatch).await;
+    assert_invalid(&svc, "PayWithTokenMit", &mismatch).await;
 }
 
 #[tokio::test]
@@ -226,7 +226,7 @@ async fn negative_unknown_and_kyc_only_payout_issuers_rejected() {
     assert!(serde_json::from_str::<DisbursementResponse>(bad_json).is_err());
     for issuer in ["aman", "unknown", "bank_card"] {
         let payload = json!({ "issuer": issuer, "msisdn": "01023456789", "amount": 100 });
-        assert_invalid(&svc, "PayoutsCashinWallet", &payload).await;
+        assert_invalid(&svc, "DisburseMobileWallet", &payload).await;
     }
 }
 
@@ -357,7 +357,7 @@ async fn recovery_http_429_maps_to_resource_exhausted_with_retry_after() {
         .auth()
         .payouts_cache()
         .store(CachedToken::with_default_ttl("seeded-oauth-jwt", None));
-    let status = grpc_err(svc, "PayoutsInquiriesBudget", &json!({})).await;
+    let status = grpc_err(svc, "InquirePayoutUserBudget", &json!({})).await;
     assert_eq!(status.code(), Code::ResourceExhausted);
     let retry_after = status
         .metadata()
@@ -393,7 +393,7 @@ async fn recovery_over_refund_400_maps_to_failed_precondition() {
         }
     );
     let req = json!({ "transaction_id": 192_036_465, "amount_cents": 999_999 });
-    let status = grpc_err(svc, "ManageRefund", &req).await;
+    let status = grpc_err(svc, "RefundTransaction", &req).await;
     assert_eq!(status.code(), Code::FailedPrecondition);
 }
 
@@ -420,10 +420,10 @@ async fn recovery_http_404_and_5xx_map_to_not_found_and_unavailable() {
         .await;
     let svc = build_grpc_service(&server);
     let q404 = json!({ "tx_id": 404_040 });
-    let e404 = grpc_err(svc.clone(), "InquiryByTxId", &q404).await;
+    let e404 = grpc_err(svc.clone(), "InquireTransactionById", &q404).await;
     assert_eq!(e404.code(), Code::NotFound);
     let q503 = json!({ "tx_id": 503_503 });
-    let e503 = grpc_err(svc, "InquiryByTxId", &q503).await;
+    let e503 = grpc_err(svc, "InquireTransactionById", &q503).await;
     assert_eq!(e503.code(), Code::Unavailable);
 }
 
@@ -443,7 +443,7 @@ async fn negative_test_live_environment_mismatch_maps_to_failed_precondition() {
         "credential_age_days": 0,
         "channel": "live_only"
     });
-    let status = grpc_err(svc, "SandboxCheck", &sandbox_req).await;
+    let status = grpc_err(svc, "CheckSandboxConstraints", &sandbox_req).await;
     assert!(matches!(
         status.code(),
         Code::FailedPrecondition | Code::InvalidArgument

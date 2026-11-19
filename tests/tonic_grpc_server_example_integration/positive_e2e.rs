@@ -318,7 +318,7 @@ async fn e2e_onboarding_auth_rpcs_return_ok() {
     assert_rpc_ok(
         &service,
         "RetrieveMerchantHmacSecret",
-        &json!({ "merchant_id": 12345 }),
+        &json!({ "mid": 12345 }),
     )
     .await;
 }
@@ -348,7 +348,7 @@ async fn e2e_onboarding_flow_rpcs_return_ok() {
     assert_rpc_ok(
         &service,
         "InquirePartnerMerchant",
-        &json!({ "merchant_id": 12345 }),
+        &json!({ "mid": 12345 }),
     )
     .await;
 }

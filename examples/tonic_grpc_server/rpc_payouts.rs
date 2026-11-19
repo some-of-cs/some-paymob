@@ -17,8 +17,8 @@ use tonic::{Request, Response, Status};
 
 use super::super::PaymobGrpcService;
 use super::super::error::map_error_to_grpc_status;
-use super::super::proto::{JsonRpcRequest, JsonRpcResponse, decode_request, encode_response};
-use super::{RpcFuture, RpcHandler};
+use super::super::proto::{JsonRpcRequest, JsonRpcResponse, decode_request};
+use super::{RpcFuture, RpcHandler, encode_sdk_result};
 
 define_routes![
     "GeneratePayoutsToken" => generate_payouts_token,
@@ -36,6 +36,34 @@ define_routes![
     "RequestBankTransferTopup" => request_bank_transfer_topup,
     "RequestAcceptBalanceTopup" => request_accept_balance_topup,
 ];
+
+macro_rules! cashin_rpc {
+    ($fn_name:ident, $req_ty:ty, $method:ident, $build:expr) => {
+        async fn $fn_name(
+            service: &PaymobGrpcService,
+            req: Request<JsonRpcRequest>,
+        ) -> Result<Response<JsonRpcResponse>, Status> {
+            let body: $req_ty = decode_request(req)?;
+            let params = $build(body)?;
+            let res = service.client.payouts().cashin().$method(params).await;
+            encode_sdk_result::<DisbursementResponse, DisbursementResponse>(res)
+        }
+    };
+}
+
+macro_rules! inquiry_rpc {
+    ($fn_name:ident, $req_ty:ty, $method:ident, $dto:ty, $build:expr) => {
+        async fn $fn_name(
+            service: &PaymobGrpcService,
+            req: Request<JsonRpcRequest>,
+        ) -> Result<Response<JsonRpcResponse>, Status> {
+            let body: $req_ty = decode_request(req)?;
+            let params = $build(body);
+            let res = service.client.payouts().inquiries().$method(params).await;
+            encode_sdk_result::<_, $dto>(res)
+        }
+    };
+}
 
 // ============================================================================
 // Service 12: Paymob Send (Payouts)
@@ -336,14 +364,8 @@ async fn generate_payouts_token(
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
     let _: Value = decode_request(req)?;
-    let token = service
-        .client
-        .payouts()
-        .auth()
-        .generate_token()
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&PayoutsTokenResponseDto::from(token))
+    let res = service.client.payouts().auth().generate_token().await;
+    encode_sdk_result::<_, PayoutsTokenResponseDto>(res)
 }
 
 async fn refresh_payouts_token(
@@ -352,14 +374,8 @@ async fn refresh_payouts_token(
 ) -> Result<Response<JsonRpcResponse>, Status> {
     let body: RefreshTokenRequest = decode_request(req)?;
     let refresh = SecretString::from(body.refresh_token);
-    let token = service
-        .client
-        .payouts()
-        .auth()
-        .refresh_token(&refresh)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&PayoutsTokenResponseDto::from(token))
+    let res = service.client.payouts().auth().refresh_token(&refresh).await;
+    encode_sdk_result::<_, PayoutsTokenResponseDto>(res)
 }
 
 async fn disburse_mobile_wallet(
@@ -376,96 +392,68 @@ async fn disburse_mobile_wallet(
         customer_bears_fees: body.customer_bears_fees,
     };
     let resp = dispatch_wallet_cashin(service, parsed_issuer, params).await?;
-    encode_response(&resp)
+    super::super::proto::encode_response(&resp)
 }
 
-async fn disburse_bank_card(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: BankCardCashinRequest = decode_request(req)?;
-    let tx_type = BankTransactionType::from_wire(&body.bank_transaction_type)
-        .ok_or_else(|| Status::invalid_argument("unknown bank_transaction_type"))?;
-    let params = BankCardCashinParams {
-        amount: body.amount,
-        bank_card_number: SecretString::from(body.bank_card_number),
-        bank_code: body.bank_code,
-        bank_transaction_type: tx_type,
-        full_name: body.full_name,
-        client_reference_id: body.client_reference_id,
-        customer_bears_fees: body.customer_bears_fees,
-    };
-    let resp = service
-        .client
-        .payouts()
-        .cashin()
-        .bank_card(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&resp)
-}
+cashin_rpc!(
+    disburse_bank_card,
+    BankCardCashinRequest,
+    bank_card,
+    |body: BankCardCashinRequest| -> Result<BankCardCashinParams, Status> {
+        let tx_type = BankTransactionType::from_wire(&body.bank_transaction_type)
+            .ok_or_else(|| Status::invalid_argument("unknown bank_transaction_type"))?;
+        Ok(BankCardCashinParams {
+            amount: body.amount,
+            bank_card_number: SecretString::from(body.bank_card_number),
+            bank_code: body.bank_code,
+            bank_transaction_type: tx_type,
+            full_name: body.full_name,
+            client_reference_id: body.client_reference_id,
+            customer_bears_fees: body.customer_bears_fees,
+        })
+    }
+);
 
-async fn disburse_instant_bank(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: InstantBankCashinRequest = decode_request(req)?;
-    let params = InstantBankCashinParams {
-        amount: body.amount,
-        bank_code: body.bank_code,
-        bank_account_number: SecretString::from(body.bank_account_number),
-        full_name: body.full_name,
-        client_reference_id: body.client_reference_id,
-        customer_bears_fees: body.customer_bears_fees,
-    };
-    let resp = service
-        .client
-        .payouts()
-        .cashin()
-        .bank_instant(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&resp)
-}
+cashin_rpc!(
+    disburse_instant_bank,
+    InstantBankCashinRequest,
+    bank_instant,
+    |body: InstantBankCashinRequest| -> Result<InstantBankCashinParams, Status> {
+        Ok(InstantBankCashinParams {
+            amount: body.amount,
+            bank_code: body.bank_code,
+            bank_account_number: SecretString::from(body.bank_account_number),
+            full_name: body.full_name,
+            client_reference_id: body.client_reference_id,
+            customer_bears_fees: body.customer_bears_fees,
+        })
+    }
+);
 
-async fn disburse_egyptian_post(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: EgyptianPostCashinRequest = decode_request(req)?;
-    let params = EgyptianPostCashinParams {
-        amount: body.amount,
-        msisdn: body.msisdn,
-        full_name: body.full_name,
-        national_id: SecretString::from(body.national_id),
-        client_reference_id: body.client_reference_id,
-        customer_bears_fees: body.customer_bears_fees,
-    };
-    let resp = service
-        .client
-        .payouts()
-        .cashin()
-        .egyptian_post(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&resp)
-}
+cashin_rpc!(
+    disburse_egyptian_post,
+    EgyptianPostCashinRequest,
+    egyptian_post,
+    |body: EgyptianPostCashinRequest| -> Result<EgyptianPostCashinParams, Status> {
+        Ok(EgyptianPostCashinParams {
+            amount: body.amount,
+            msisdn: body.msisdn,
+            full_name: body.full_name,
+            national_id: SecretString::from(body.national_id),
+            client_reference_id: body.client_reference_id,
+            customer_bears_fees: body.customer_bears_fees,
+        })
+    }
+);
 
-async fn cancel_aman_disbursement(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: CancelAmanRequest = decode_request(req)?;
-    let params = CancelAmanParams::new(body.transaction_id);
-    let resp = service
-        .client
-        .payouts()
-        .cashin()
-        .cancel_aman(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&resp)
-}
+cashin_rpc!(
+    cancel_aman_disbursement,
+    CancelAmanRequest,
+    cancel_aman,
+    |body: CancelAmanRequest| -> Result<CancelAmanParams, Status> {
+        Ok(CancelAmanParams::new(body.transaction_id))
+    }
+);
 
 async fn disburse_bulk(
     service: &PaymobGrpcService,
@@ -476,88 +464,52 @@ async fn disburse_bulk(
         bank_transaction: body.bank_transaction,
         transactions: body.transactions,
     };
-    let resp = service
-        .client
-        .payouts()
-        .cashin()
-        .bulk(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&BulkDisbursementResponseDto::from(resp))
+    let res = service.client.payouts().cashin().bulk(params).await;
+    encode_sdk_result::<_, BulkDisbursementResponseDto>(res)
 }
 
-async fn inquire_payout_transactions(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: TransactionInquiryRequest = decode_request(req)?;
-    let params = TransactionInquiryParams {
+inquiry_rpc!(
+    inquire_payout_transactions,
+    TransactionInquiryRequest,
+    transactions,
+    TransactionInquiryResponseDto,
+    |body: TransactionInquiryRequest| TransactionInquiryParams {
         transactions_ids: body.transactions_ids,
         is_bulk: body.is_bulk,
         bank_transactions: body.bank_transactions,
-    };
-    let resp = service
-        .client
-        .payouts()
-        .inquiries()
-        .transactions(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&TransactionInquiryResponseDto::from(resp))
-}
+    }
+);
 
-async fn inquire_payout_by_reference(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: ReferenceInquiryRequest = decode_request(req)?;
-    let params = ReferenceInquiryParams {
+inquiry_rpc!(
+    inquire_payout_by_reference,
+    ReferenceInquiryRequest,
+    by_reference,
+    TransactionInquiryResponseDto,
+    |body: ReferenceInquiryRequest| ReferenceInquiryParams {
         client_reference_ids: body.client_reference_ids,
         bank_transactions: body.bank_transactions,
-    };
-    let resp = service
-        .client
-        .payouts()
-        .inquiries()
-        .by_reference(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&TransactionInquiryResponseDto::from(resp))
-}
+    }
+);
 
 async fn inquire_payout_user_budget(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
     let _: Value = decode_request(req)?;
-    let resp = service
-        .client
-        .payouts()
-        .inquiries()
-        .user_budget()
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&UserBudgetResponseDto::from(resp))
+    let res = service.client.payouts().inquiries().user_budget().await;
+    encode_sdk_result::<_, UserBudgetResponseDto>(res)
 }
 
-async fn inquire_payout_topups(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let body: TopupsInquiryRequest = decode_request(req)?;
-    let params = TopupInquiryParams {
+inquiry_rpc!(
+    inquire_payout_topups,
+    TopupsInquiryRequest,
+    topup,
+    TopupInquiryResponseDto,
+    |body: TopupsInquiryRequest| TopupInquiryParams {
         page: body.page,
         id: body.id,
-    };
-    let resp = service
-        .client
-        .payouts()
-        .inquiries()
-        .topup(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&TopupInquiryResponseDto::from(resp))
-}
+    }
+);
 
 async fn request_bank_transfer_topup(
     service: &PaymobGrpcService,
@@ -573,14 +525,8 @@ async fn request_bank_transfer_topup(
         from_bank_name: meta.from_bank_name,
         reference_number: meta.reference_number,
     };
-    let rec = service
-        .client
-        .payouts()
-        .topups()
-        .from_bank_transfer(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&TopupRecordDto::from(rec))
+    let res = service.client.payouts().topups().from_bank_transfer(params).await;
+    encode_sdk_result::<_, TopupRecordDto>(res)
 }
 
 async fn request_accept_balance_topup(
@@ -589,12 +535,6 @@ async fn request_accept_balance_topup(
 ) -> Result<Response<JsonRpcResponse>, Status> {
     let body: AcceptBalanceTopupRequest = decode_request(req)?;
     let params = AcceptBalanceTopupParams::new(body.amount, body.currency, body.username);
-    let rec = service
-        .client
-        .payouts()
-        .topups()
-        .from_accept_balance(params)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&TopupRecordDto::from(rec))
+    let res = service.client.payouts().topups().from_accept_balance(params).await;
+    encode_sdk_result::<_, TopupRecordDto>(res)
 }

@@ -4,14 +4,26 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use serde::Serialize;
 use tonic::{Request, Response, Status};
 
 use super::PaymobGrpcService;
-use super::proto::{JsonRpcRequest, JsonRpcResponse};
+use super::error::map_error_to_grpc_status;
+use super::proto::{JsonRpcRequest, JsonRpcResponse, encode_response};
 
 pub(super) type RpcFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Response<JsonRpcResponse>, Status>> + Send + 'a>>;
 pub(super) type RpcHandler = fn(&PaymobGrpcService, Request<JsonRpcRequest>) -> RpcFuture<'_>;
+
+pub(super) fn encode_sdk_result<T, D>(
+    res: Result<T, some_paymob::PaymobError>,
+) -> Result<Response<JsonRpcResponse>, Status>
+where
+    D: Serialize + From<T>,
+{
+    let val = res.map_err(map_error_to_grpc_status)?;
+    encode_response(&D::from(val))
+}
 
 macro_rules! define_routes {
     ($( $name:literal => $handler:ident ),* $(,)?) => {

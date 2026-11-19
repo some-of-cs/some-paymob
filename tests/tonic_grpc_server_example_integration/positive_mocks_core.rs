@@ -60,7 +60,8 @@ pub(super) async fn setup_inquiries_mocks(server: &PaymobMockServer) {
     server
         .mount_accept_auth_sequence(&["jwt-inq-1", "jwt-inq-2", "jwt-inq-3"])
         .await;
-    let tx = json!({ "id": 192036465, "success": true, "amount_cents": 100_000, "currency": "EGP" });
+    let tx =
+        json!({ "id": 192036465, "success": true, "amount_cents": 100_000, "currency": "EGP" });
     let ord = json!({
         "id": 217503754,
         "amount_cents": 100_000,
@@ -78,12 +79,21 @@ pub(super) async fn setup_inquiries_mocks(server: &PaymobMockServer) {
             "order_id": "217503754"
         }
     }]);
-    let tx_get = ("GET", "/api/acceptance/transactions/192036465", 200, tx.clone());
+    let tx_get = (
+        "GET",
+        "/api/acceptance/transactions/192036465",
+        200,
+        tx.clone(),
+    );
     let tx_post = ("POST", "/api/ecommerce/orders/transaction_inquiry", 200, tx);
     mount_accept(server, tx_get).await;
     mount_accept(server, tx_post).await;
     mount_accept(server, ("GET", "/api/ecommerce/orders/217503754", 200, ord)).await;
-    mount_accept(server, ("POST", "/api/acceptance/order_card_tokens", 200, tok)).await;
+    mount_accept(
+        server,
+        ("POST", "/api/acceptance/order_card_tokens", 200, tok),
+    )
+    .await;
 }
 
 pub(super) async fn setup_quicklinks_mocks(server: &PaymobMockServer) {
@@ -95,7 +105,11 @@ pub(super) async fn setup_quicklinks_mocks(server: &PaymobMockServer) {
     });
     mount_accept(server, ("POST", "/api/ecommerce/payment-links", 201, ql)).await;
     let cancel = json!({ "detail": "cancelled" });
-    mount_accept(server, ("POST", "/api/ecommerce/payment-links/cancel", 200, cancel)).await;
+    mount_accept(
+        server,
+        ("POST", "/api/ecommerce/payment-links/cancel", 200, cancel),
+    )
+    .await;
 }
 
 async fn setup_onboarding_auth_mocks(server: &PaymobMockServer) {
@@ -109,7 +123,11 @@ async fn setup_onboarding_auth_mocks(server: &PaymobMockServer) {
     let key = json!({ "api_key": "pk_partner_999", "label": "main" });
     mount_accept(server, ("POST", "/api/auth/tokens", 200, tok)).await;
     mount_accept(server, ("POST", "/api/auth/api_keys", 200, key)).await;
-    mount_accept(server, ("GET", "/api/auth/hmac_secret/get_hmac", 200, hmac.clone())).await;
+    mount_accept(
+        server,
+        ("GET", "/api/auth/hmac_secret/get_hmac", 200, hmac.clone()),
+    )
+    .await;
     let merch_hmac = ("GET", "/api/partner/merchants/hmac_secret/12345", 200, hmac);
     mount_accept(server, merch_hmac).await;
 }
@@ -127,7 +145,11 @@ pub(super) async fn setup_onboarding_mocks(server: &PaymobMockServer) {
     mount_accept(server, ("GET", "/api/onboarding/flow/schema", 200, schema)).await;
     mount_accept(server, ("POST", "/api/onboarding/register", 201, reg)).await;
     mount_accept(server, ("POST", "/api/onboarding/flow/step", 200, step)).await;
-    mount_accept(server, ("GET", "/api/onboarding/merchant/12345", 200, merch)).await;
+    mount_accept(
+        server,
+        ("GET", "/api/onboarding/merchant/12345", 200, merch),
+    )
+    .await;
 }
 
 pub(super) async fn setup_scoped_and_unified_mocks(server: &PaymobMockServer) {
@@ -143,11 +165,25 @@ pub(super) async fn setup_scoped_and_unified_mocks(server: &PaymobMockServer) {
     mount_accept(server, ("POST", "/v1/intention/", 201, pi.clone())).await;
     mount_accept(server, ("PUT", "/v1/intention/", 200, pi.clone())).await;
     mount_accept(server, ("PUT", "/v1/intention/egy_csk_u4", 200, pi)).await;
-    let tx_get = ("GET", "/api/acceptance/transactions/192036465", 200, tx_ok.clone());
-    let tx_post = ("POST", "/api/ecommerce/orders/transaction_inquiry", 200, tx_ok);
+    let tx_get = (
+        "GET",
+        "/api/acceptance/transactions/192036465",
+        200,
+        tx_ok.clone(),
+    );
+    let tx_post = (
+        "POST",
+        "/api/ecommerce/orders/transaction_inquiry",
+        200,
+        tx_ok,
+    );
     mount_accept(server, tx_get).await;
     mount_accept(server, tx_post).await;
-    mount_accept(server, ("POST", "/api/acceptance/payments/pay", 200, pay_ok)).await;
+    mount_accept(
+        server,
+        ("POST", "/api/acceptance/payments/pay", 200, pay_ok),
+    )
+    .await;
     setup_manage_mocks(server).await;
     setup_subscription_cards_and_history_mocks(server).await;
     setup_payouts_cashin_mocks(server).await;

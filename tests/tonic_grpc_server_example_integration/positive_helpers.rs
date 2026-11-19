@@ -103,11 +103,7 @@ pub(super) async fn assert_rpc_code(
     );
 }
 
-async fn mount_host(
-    server: &PaymobMockServer,
-    host: MockHost,
-    route: (&str, &str, u16, Value),
-) {
+async fn mount_host(server: &PaymobMockServer, host: MockHost, route: (&str, &str, u16, Value)) {
     let (http_method, endpoint_path, status, body) = route;
     server
         .mount_json(JsonEndpointMockConfig {

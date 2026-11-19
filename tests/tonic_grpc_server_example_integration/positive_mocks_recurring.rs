@@ -100,7 +100,12 @@ async fn setup_sub_state_mocks(server: &PaymobMockServer, sub: Value) {
         200,
         sub.clone(),
     );
-    let can = ("POST", "/api/acceptance/subscriptions/1264/cancel", 200, sub);
+    let can = (
+        "POST",
+        "/api/acceptance/subscriptions/1264/cancel",
+        200,
+        sub,
+    );
     mount_accept(server, put_sub).await;
     mount_accept(server, susp).await;
     mount_accept(server, res).await;

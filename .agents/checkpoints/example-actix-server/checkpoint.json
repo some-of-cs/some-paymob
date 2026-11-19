@@ -1,53 +1,42 @@
 {
-  "moduleId": "example-actix-server",
-  "title": "Actix-Web Reference Server & Integration Test Suite",
-  "baseBranch": "main",
-  "moduleBranch": "feat/example-actix-server",
-  "storyBranch": "feat/us-actix-server-and-tests",
-  "updatedAt": "2026-11-18T07:12:00Z",
-  "items": {
-    "feat/example-actix-server": {
-      "status": "In Progress",
-      "branch": "feat/example-actix-server",
-      "prNumber": null,
-      "mergedSha": null
-    },
-    "us-actix-server-and-tests": {
-      "status": "In Progress",
-      "branch": "feat/us-actix-server-and-tests",
-      "prNumber": null,
-      "mergedSha": null,
-      "unitCount": 5
-    },
-    "us-actix/unit-1": {
-      "status": "In Review",
+  "module_id": "example-actix-server",
+  "module_branch": "feat/example-actix-server",
+  "story_branch": "feat/us-actix-server-and-tests",
+  "base_branch": "main",
+  "status": "unit_5_ready",
+  "units": [
+    {
+      "unit_id": "unit-1",
       "branch": "feat/us-actix/unit-1-core-checkout-legacy-manage",
-      "prNumber": 127,
-      "mergedSha": null
+      "pr_number": 127,
+      "status": "merged",
+      "merge_sha": "d34b7b3cecc2c8c64dae33e935f49bc5b12bd6bc"
     },
-    "us-actix/unit-2": {
-      "status": "Todo",
+    {
+      "unit_id": "unit-2",
       "branch": "feat/us-actix/unit-2-saved-cards-subscriptions-payouts",
-      "prNumber": null,
-      "mergedSha": null
+      "pr_number": 139,
+      "status": "merged",
+      "merge_sha": "8cd5e968b65f0c8275702a3b2af78c5e06794c01"
     },
-    "us-actix/unit-3": {
-      "status": "Todo",
+    {
+      "unit_id": "unit-3",
       "branch": "feat/us-actix/unit-3-onboarding-webhooks-unified-adapter",
-      "prNumber": null,
-      "mergedSha": null
+      "pr_number": 148,
+      "status": "merged",
+      "merge_sha": "16f1ecf1a4647a61615fa6aeb7b745dbe36bef41"
     },
-    "us-actix/unit-4": {
-      "status": "Todo",
+    {
+      "unit_id": "unit-4",
       "branch": "feat/us-actix/unit-4-integration-tests-positive-and-boundaries",
-      "prNumber": null,
-      "mergedSha": null
+      "pr_number": 149,
+      "status": "merged",
+      "merge_sha": "0907a0c7681e9c91b2029de4ad347c8766a56aa8"
     },
-    "us-actix/unit-5": {
-      "status": "Todo",
+    {
+      "unit_id": "unit-5",
       "branch": "feat/us-actix/unit-5-integration-tests-negative-and-error-workflows",
-      "prNumber": null,
-      "mergedSha": null
+      "status": "in_review"
     }
-  }
+  ]
 }

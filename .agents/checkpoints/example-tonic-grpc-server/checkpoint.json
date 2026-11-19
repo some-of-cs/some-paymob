@@ -3,9 +3,9 @@
   "base_branch": "main",
   "module_branch": "feat/example-tonic-grpc-server",
   "story_branch": "feat/us-tonic-grpc-server-and-tests",
-  "story_pr": null,
+  "story_pr": 158,
   "patch_pr": null,
-  "status": "in_progress",
+  "status": "ready_for_main",
   "units": {
     "unit-1": {
       "branch": "feat/us-tonic/unit-1-core-checkout-legacy-manage",
@@ -37,5 +37,12 @@
       "status": "pending",
       "pr_number": null
     }
+  },
+  "unit_prs": {
+    "unit-1": 155,
+    "unit-2": 154,
+    "unit-3": 157,
+    "unit-4": 153,
+    "unit-5": 156
   }
 }

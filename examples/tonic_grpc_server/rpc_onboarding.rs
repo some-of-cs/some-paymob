@@ -6,11 +6,10 @@ use std::future::Future;
 use serde::{Deserialize, Serialize};
 use some_paymob::resources::inquiries::TransactionInquiryParams;
 use some_paymob::{
-    CaptureParams, CreateIntentionParams, CreateIntentionParamsBuilder, CreatePartnerApiKeyParams,
-    Currency, IntentionResponse, MerchantScopedClient, MinorUnitAmount, OnboardingSchemaQuery,
-    PartnerHmacEnvelope, PartnerLoginCredentials, PaymentMethodInput, PaymobError, RefundParams,
-    RegisterMerchantParams, SubmitOnboardingStepParams, UpdateIntentionParams,
-    UpdateIntentionParamsBuilder, VoidParams,
+    CaptureParams, CreateIntentionParams, CreatePartnerApiKeyParams, Currency, IntentionResponse,
+    MerchantScopedClient, MinorUnitAmount, OnboardingSchemaQuery, PartnerHmacEnvelope,
+    PartnerLoginCredentials, PaymentMethodInput, PaymobError, RefundParams, RegisterMerchantParams,
+    SubmitOnboardingStepParams, UpdateIntentionParams, VoidParams,
 };
 use tonic::{Request, Response, Status};
 
@@ -46,6 +45,18 @@ macro_rules! scoped_rpc {
             run_scoped(service, $input.mid, |$scoped| async move { $body }).await
         }
     };
+}
+
+macro_rules! apply_opts {
+    ($builder:expr, $($val:expr => $method:ident),+ $(,)?) => {{
+        let mut b = $builder;
+        $(
+            if let Some(v) = $val {
+                b = b.$method(v);
+            }
+        )+
+        b
+    }};
 }
 
 const HANDLERS: &[(&str, RpcHandler)] = &[
@@ -218,80 +229,38 @@ fn intention_summary(resp: IntentionResponse) -> IntentionSummaryDto {
     }
 }
 
-fn apply_scoped_create_urls(
-    mut builder: CreateIntentionParamsBuilder,
-    input: &mut ScopedCreateIntentionInput,
-) -> CreateIntentionParamsBuilder {
-    if let Some(reference) = input.special_reference.take() {
-        builder = builder.special_reference(reference);
-    }
-    if let Some(url) = input.notification_url.take() {
-        builder = builder.notification_url(url);
-    }
-    if let Some(url) = input.redirection_url.take() {
-        builder = builder.redirection_url(url);
-    }
-    builder
-}
-
 fn build_scoped_create_params(
-    mut input: ScopedCreateIntentionInput,
+    input: ScopedCreateIntentionInput,
 ) -> Result<CreateIntentionParams, PaymobError> {
     let builder = CreateIntentionParams::builder()
         .amount(input.amount)
-        .currency(input.currency.clone())
-        .payment_methods(std::mem::take(&mut input.payment_methods));
-    let mut builder = apply_scoped_create_urls(builder, &mut input);
-    if let Some(exp) = input.expiration {
-        builder = builder.expiration(exp);
-    }
-    if let Some(extras) = input.extras {
-        builder = builder.extras(extras);
-    }
-    builder.build()
-}
-
-fn apply_scoped_update_core(
-    mut builder: UpdateIntentionParamsBuilder,
-    input: &mut ScopedUpdateIntentionInput,
-) -> UpdateIntentionParamsBuilder {
-    if let Some(amount) = input.amount.take() {
-        builder = builder.amount(amount);
-    }
-    if let Some(currency) = input.currency.take() {
-        builder = builder.currency(currency);
-    }
-    if let Some(methods) = input.payment_methods.take() {
-        builder = builder.payment_methods(methods);
-    }
-    builder
-}
-
-fn apply_scoped_update_urls(
-    mut builder: UpdateIntentionParamsBuilder,
-    input: ScopedUpdateIntentionInput,
-) -> UpdateIntentionParamsBuilder {
-    if let Some(reference) = input.special_reference {
-        builder = builder.special_reference(reference);
-    }
-    if let Some(url) = input.notification_url {
-        builder = builder.notification_url(url);
-    }
-    if let Some(url) = input.redirection_url {
-        builder = builder.redirection_url(url);
-    }
-    builder
+        .currency(input.currency)
+        .payment_methods(input.payment_methods);
+    apply_opts!(
+        builder,
+        input.special_reference => special_reference,
+        input.notification_url => notification_url,
+        input.redirection_url => redirection_url,
+        input.expiration => expiration,
+        input.extras => extras,
+    )
+    .build()
 }
 
 fn build_scoped_update_params(
-    mut input: ScopedUpdateIntentionInput,
-) -> Result<(u64, Option<String>, UpdateIntentionParams), PaymobError> {
-    let mid = input.mid;
-    let client_secret = input.client_secret.take();
-    let builder = apply_scoped_update_core(UpdateIntentionParams::builder(), &mut input);
-    let builder = apply_scoped_update_urls(builder, input);
-    let params = builder.build()?;
-    Ok((mid, client_secret, params))
+    input: ScopedUpdateIntentionInput,
+) -> Result<(Option<String>, UpdateIntentionParams), PaymobError> {
+    let params = apply_opts!(
+        UpdateIntentionParams::builder(),
+        input.amount => amount,
+        input.currency => currency,
+        input.payment_methods => payment_methods,
+        input.special_reference => special_reference,
+        input.notification_url => notification_url,
+        input.redirection_url => redirection_url,
+    )
+    .build()?;
+    Ok((input.client_secret, params))
 }
 
 async fn run_scoped<Resp, F, Fut>(
@@ -416,28 +385,21 @@ onboarding_rpc!(
     }
 );
 
-async fn scoped_create_intention(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: ScopedCreateIntentionInput = decode_request(req)?;
-    let mid = input.mid;
-    let params = build_scoped_create_params(input).map_err(map_error_to_grpc_status)?;
-    run_scoped(service, mid, |scoped| async move {
+scoped_rpc!(
+    scoped_create_intention,
+    ScopedCreateIntentionInput,
+    |scoped, input| {
+        let params = build_scoped_create_params(input)?;
         let resp = scoped.intentions().create(&params).await?;
         Ok(intention_summary(resp))
-    })
-    .await
-}
+    }
+);
 
-async fn scoped_update_intention(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: ScopedUpdateIntentionInput = decode_request(req)?;
-    let (mid, client_secret, params) =
-        build_scoped_update_params(input).map_err(map_error_to_grpc_status)?;
-    run_scoped(service, mid, |scoped| async move {
+scoped_rpc!(
+    scoped_update_intention,
+    ScopedUpdateIntentionInput,
+    |scoped, input| {
+        let (client_secret, params) = build_scoped_update_params(input)?;
         let resp = match client_secret {
             Some(secret) => {
                 scoped
@@ -448,9 +410,8 @@ async fn scoped_update_intention(
             None => scoped.intentions().update(&params).await?,
         };
         Ok(intention_summary(resp))
-    })
-    .await
-}
+    }
+);
 
 scoped_rpc!(
     scoped_inquire_transaction,

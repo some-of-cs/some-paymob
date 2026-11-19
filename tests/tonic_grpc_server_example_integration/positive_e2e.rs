@@ -345,12 +345,7 @@ async fn e2e_onboarding_flow_rpcs_return_ok() {
     .await;
     assert_rpc_ok(&service, "RegisterPartnerMerchant", &reg).await;
     assert_rpc_ok(&service, "SubmitOnboardingStep", &step).await;
-    assert_rpc_ok(
-        &service,
-        "InquirePartnerMerchant",
-        &json!({ "mid": 12345 }),
-    )
-    .await;
+    assert_rpc_ok(&service, "InquirePartnerMerchant", &json!({ "mid": 12345 })).await;
 }
 
 /// Verifies merchant-scoped intention, inquiry, and manage RPCs return `Code::Ok`.

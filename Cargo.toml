@@ -58,12 +58,18 @@ zeroize = { version = "1.8", features = ["derive"] }
 http = "1"
 prost = "0.13"
 tonic = "0.12"
+actix-rt = "2"
+actix-web = "4"
 axum = { version = "0.8", features = ["macros"] }
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
 rocket = { version = "0.5", features = ["json"] }
 tokio = { version = "1.40", features = ["full"] }
 wiremock = "0.6"
+
+[[example]]
+name = "actix_server"
+required-features = ["full"]
 
 [[example]]
 name = "rocket_server"

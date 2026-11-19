@@ -89,7 +89,7 @@ impl tower::Service<http::Request<tonic::body::BoxBody>> for PaymobGrpcServer {
         let service = self.service.clone();
         let method = extract_grpc_method(req.uri().path());
         Box::pin(async move {
-            let codec = tonic::codec::ProstCodec::<JsonRpcRequest, JsonRpcResponse>::default();
+            let codec = tonic::codec::ProstCodec::<JsonRpcResponse, JsonRpcRequest>::default();
             let mut grpc = tonic::server::Grpc::new(codec);
             let res = grpc.unary(DynamicUnarySvc { service, method }, req).await;
             Ok(res)

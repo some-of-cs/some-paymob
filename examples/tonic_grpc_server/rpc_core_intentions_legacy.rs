@@ -18,15 +18,47 @@ use super::super::PaymobGrpcService;
 use super::super::error::{map_error_to_grpc_status, map_sandbox_error_to_grpc_status};
 use super::super::proto::{JsonRpcRequest, JsonRpcResponse, decode_request, encode_response};
 
-macro_rules! apply_opt {
-    ($builder:expr, $src:expr, $($field:ident),+ $(,)?) => {{
+macro_rules! apply_intention_common {
+    ($builder:expr, $src:expr) => {{
         let mut b = $builder;
-        $(
-            if let Some(val) = $src.$field.take() {
-                b = b.$field(val);
-            }
-        )+
+        if let Some(v) = $src.items.take() {
+            b = b.items(v);
+        }
+        if let Some(v) = $src.billing_data.take() {
+            b = b.billing_data(v);
+        }
+        if let Some(v) = $src.customer.take() {
+            b = b.customer(v);
+        }
+        if let Some(v) = $src.extras.take() {
+            b = b.extras(v);
+        }
+        if let Some(v) = $src.special_reference.take() {
+            b = b.special_reference(v);
+        }
+        if let Some(v) = $src.notification_url.take() {
+            b = b.notification_url(v);
+        }
+        if let Some(v) = $src.redirection_url.take() {
+            b = b.redirection_url(v);
+        }
+        if let Some(v) = $src.card_tokens.take() {
+            b = b.card_tokens(v);
+        }
         b
+    }};
+}
+
+macro_rules! apply_legacy_opts {
+    ($params:expr, $src:expr) => {{
+        let mut p = $params;
+        if let Some(id) = $src.merchant_order_id {
+            p = p.merchant_order_id(id);
+        }
+        if let Some(items) = $src.items {
+            p = p.items(build_legacy_items(items));
+        }
+        p
     }};
 }
 
@@ -332,7 +364,10 @@ fn build_legacy_items(items: Vec<LegacyOrderItemInput>) -> Vec<LegacyOrderItem> 
         .collect()
 }
 
-fn get_health(service: &PaymobGrpcService) -> Result<Response<JsonRpcResponse>, Status> {
+async fn get_health(
+    service: &PaymobGrpcService,
+    _req: Request<JsonRpcRequest>,
+) -> Result<Response<JsonRpcResponse>, Status> {
     let config = service.client.config();
     encode_response(&HealthResponse {
         status: "ok",
@@ -341,7 +376,8 @@ fn get_health(service: &PaymobGrpcService) -> Result<Response<JsonRpcResponse>, 
     })
 }
 
-fn check_sandbox_constraints(
+async fn check_sandbox_constraints(
+    _service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
     let payload: SandboxCheckPayload = decode_request(req)?;
@@ -368,18 +404,7 @@ async fn create_intention(
             .amount(MinorUnitAmount::new(p.amount_cents))
             .currency(Currency::from_code(&p.currency))
             .payment_methods(p.payment_methods.clone());
-        let builder = apply_opt!(
-            builder,
-            p,
-            items,
-            billing_data,
-            customer,
-            extras,
-            special_reference,
-            notification_url,
-            redirection_url,
-            card_tokens,
-        );
+        let builder = apply_intention_common!(builder, p);
         let resp = service.client.intentions().create(builder.build()?).await?;
         Ok(intention_to_dto(resp))
     }
@@ -398,26 +423,17 @@ async fn update_intention(
         if let Some(ref currency) = p.currency {
             builder = builder.currency(Currency::from_code(currency));
         }
-        builder = apply_opt!(
-            builder,
-            p,
-            payment_methods,
-            items,
-            billing_data,
-            customer,
-            extras,
-            special_reference,
-            notification_url,
-            redirection_url,
-            card_tokens,
-        );
+        if let Some(methods) = p.payment_methods.take() {
+            builder = builder.payment_methods(methods);
+        }
+        builder = apply_intention_common!(builder, p);
         let resp = service.client.intentions().update(builder.build()?).await?;
         Ok(intention_to_dto(resp))
     }
     .await)
 }
 
-fn build_pixel_config(
+async fn build_pixel_config(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
@@ -434,7 +450,7 @@ fn build_pixel_config(
     })
 }
 
-fn build_affordability_widget(
+async fn build_affordability_widget(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
@@ -460,14 +476,10 @@ async fn create_legacy_order(
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
     rpc_call!(req, |p: CreateLegacyOrderRequest| async {
-        let mut params =
-            CreateLegacyOrderParams::new(p.amount_cents, Currency::from_code(&p.currency));
-        if let Some(merchant_order_id) = p.merchant_order_id {
-            params = params.merchant_order_id(merchant_order_id);
-        }
-        if let Some(items) = p.items {
-            params = params.items(build_legacy_items(items));
-        }
+        let params = apply_legacy_opts!(
+            CreateLegacyOrderParams::new(p.amount_cents, Currency::from_code(&p.currency)),
+            p
+        );
         service.client.legacy_v2()?.create_order(&params).await
     }
     .await)
@@ -485,7 +497,11 @@ async fn create_legacy_payment_key(
             p.integration_id,
             build_legacy_billing(p.billing_data),
         );
-        let resp = service.client.legacy_v2()?.create_payment_key(&params).await?;
+        let resp = service
+            .client
+            .legacy_v2()?
+            .create_payment_key(&params)
+            .await?;
         Ok(PaymentKeyRouteResponse {
             token: resp.expose_token().to_owned(),
         })
@@ -498,19 +514,16 @@ async fn create_legacy_checkout(
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
     rpc_call!(req, |p: LegacyCheckoutRequest| async {
-        let mut params = LegacyCheckoutParams::new(
-            p.amount_cents,
-            Currency::from_code(&p.currency),
-            p.integration_id,
-            p.iframe_id,
-            build_legacy_billing(p.billing_data),
+        let params = apply_legacy_opts!(
+            LegacyCheckoutParams::new(
+                p.amount_cents,
+                Currency::from_code(&p.currency),
+                p.integration_id,
+                p.iframe_id,
+                build_legacy_billing(p.billing_data),
+            ),
+            p
         );
-        if let Some(merchant_order_id) = p.merchant_order_id {
-            params = params.merchant_order_id(merchant_order_id);
-        }
-        if let Some(items) = p.items {
-            params = params.items(build_legacy_items(items));
-        }
         let session = service.client.legacy_v2()?.create_checkout(&params).await?;
         Ok(LegacyCheckoutRouteResponse {
             order: session.order,
@@ -521,31 +534,19 @@ async fn create_legacy_checkout(
     .await)
 }
 
-pub(super) async fn dispatch_core_and_checkout(
-    service: &PaymobGrpcService,
-    method: &str,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    match method {
-        "GetHealth" => get_health(service),
-        "CheckSandboxConstraints" => check_sandbox_constraints(req),
-        "BuildPixelConfig" => build_pixel_config(service, req),
-        "BuildAffordabilityWidget" => build_affordability_widget(service, req),
-        _ => Err(Status::unimplemented(format!("unknown method `{method}`"))),
-    }
-}
+dispatch_group!(
+    dispatch_core_and_checkout,
+    "GetHealth" => get_health,
+    "CheckSandboxConstraints" => check_sandbox_constraints,
+    "BuildPixelConfig" => build_pixel_config,
+    "BuildAffordabilityWidget" => build_affordability_widget,
+);
 
-pub(super) async fn dispatch_intentions_and_legacy(
-    service: &PaymobGrpcService,
-    method: &str,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    match method {
-        "CreateIntention" => create_intention(service, req).await,
-        "UpdateIntention" => update_intention(service, req).await,
-        "CreateLegacyOrder" => create_legacy_order(service, req).await,
-        "CreateLegacyPaymentKey" => create_legacy_payment_key(service, req).await,
-        "CreateLegacyCheckout" => create_legacy_checkout(service, req).await,
-        _ => Err(Status::unimplemented(format!("unknown method `{method}`"))),
-    }
-}
+dispatch_group!(
+    dispatch_intentions_and_legacy,
+    "CreateIntention" => create_intention,
+    "UpdateIntention" => update_intention,
+    "CreateLegacyOrder" => create_legacy_order,
+    "CreateLegacyPaymentKey" => create_legacy_payment_key,
+    "CreateLegacyCheckout" => create_legacy_checkout,
+);

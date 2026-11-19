@@ -14,6 +14,21 @@ macro_rules! rpc_call {
     }};
 }
 
+macro_rules! dispatch_group {
+    ($fn_name:ident, $($lit:literal => $handler:expr),+ $(,)?) => {
+        pub(super) async fn $fn_name(
+            service: &PaymobGrpcService,
+            method: &str,
+            req: Request<JsonRpcRequest>,
+        ) -> Result<Response<JsonRpcResponse>, Status> {
+            match method {
+                $($lit => $handler(service, req).await,)+
+                _ => Err(Status::unimplemented(format!("unknown method `{method}`"))),
+            }
+        }
+    };
+}
+
 #[path = "rpc_core_intentions_legacy.rs"]
 mod core_legacy;
 #[path = "rpc_manage_inquiries_splits.rs"]

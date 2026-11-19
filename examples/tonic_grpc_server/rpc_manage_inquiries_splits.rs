@@ -167,71 +167,58 @@ fn apply_quicklink_optionals(
     params
 }
 
-async fn refund_transaction(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    rpc_call!(req, |params: RefundParams| {
-        service.client.manage().refund(params).await
-    })
+macro_rules! unary_rpc {
+    ($fn_name:ident, |$service:ident, $p:ident : $ty:ty| $body:expr) => {
+        async fn $fn_name(
+            $service: &PaymobGrpcService,
+            req: Request<JsonRpcRequest>,
+        ) -> Result<Response<JsonRpcResponse>, Status> {
+            rpc_call!(req, |$p: $ty| $body)
+        }
+    };
 }
 
-async fn void_transaction(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    rpc_call!(req, |p: ManageVoidRequest| {
-        let manage = manage_client!(service, p.use_legacy_v2_bearer);
-        manage.void(VoidParams::new(p.transaction_id)).await
-    })
-}
+unary_rpc!(refund_transaction, |service, params: RefundParams| {
+    service.client.manage().refund(params).await
+});
 
-async fn capture_transaction(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    rpc_call!(req, |p: ManageCaptureRequest| {
-        let manage = manage_client!(service, p.use_legacy_v2_bearer);
-        manage
-            .capture(CaptureParams::new(p.transaction_id, p.amount_cents))
-            .await
-    })
-}
+unary_rpc!(void_transaction, |service, p: ManageVoidRequest| {
+    let manage = manage_client!(service, p.use_legacy_v2_bearer);
+    manage.void(VoidParams::new(p.transaction_id)).await
+});
 
-async fn inquire_transaction_by_id(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    rpc_call!(req, |p: InquireTransactionByIdRequest| {
+unary_rpc!(capture_transaction, |service, p: ManageCaptureRequest| {
+    let manage = manage_client!(service, p.use_legacy_v2_bearer);
+    manage
+        .capture(CaptureParams::new(p.transaction_id, p.amount_cents))
+        .await
+});
+
+unary_rpc!(
+    inquire_transaction_by_id,
+    |service, p: InquireTransactionByIdRequest| {
         service
             .client
             .inquiries()
             .by_transaction_id(p.transaction_id)
             .await
-    })
-}
+    }
+);
 
-async fn inquire_transaction_by_order(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    rpc_call!(req, |params: TransactionInquiryParams| {
+unary_rpc!(
+    inquire_transaction_by_order,
+    |service, params: TransactionInquiryParams| {
         service
             .client
             .inquiries()
             .by_order_or_reference(params)
             .await
-    })
-}
+    }
+);
 
-async fn inquire_order(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    rpc_call!(req, |p: OrderIdRequest| {
-        service.client.inquiries().order_inquiry(p.order_id).await
-    })
-}
+unary_rpc!(inquire_order, |service, p: OrderIdRequest| {
+    service.client.inquiries().order_inquiry(p.order_id).await
+});
 
 async fn list_order_card_tokens(
     service: &PaymobGrpcService,
@@ -284,7 +271,8 @@ async fn cancel_quick_link(
     .await)
 }
 
-fn validate_splits_and_calculate_fee(
+async fn validate_splits_and_calculate_fee(
+    _service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
     rpc_call!(req, |p: SplitsValidateAndQuoteRequest| {
@@ -311,32 +299,20 @@ fn validate_splits_and_calculate_fee(
     })
 }
 
-pub(super) async fn dispatch_manage_and_inquiries(
-    service: &PaymobGrpcService,
-    method: &str,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    match method {
-        "RefundTransaction" => refund_transaction(service, req).await,
-        "VoidTransaction" => void_transaction(service, req).await,
-        "CaptureTransaction" => capture_transaction(service, req).await,
-        "InquireTransactionById" => inquire_transaction_by_id(service, req).await,
-        "InquireTransactionByOrder" => inquire_transaction_by_order(service, req).await,
-        _ => Err(Status::unimplemented(format!("unknown method `{method}`"))),
-    }
-}
+dispatch_group!(
+    dispatch_manage_and_inquiries,
+    "RefundTransaction" => refund_transaction,
+    "VoidTransaction" => void_transaction,
+    "CaptureTransaction" => capture_transaction,
+    "InquireTransactionById" => inquire_transaction_by_id,
+    "InquireTransactionByOrder" => inquire_transaction_by_order,
+);
 
-pub(super) async fn dispatch_order_quicklinks_splits(
-    service: &PaymobGrpcService,
-    method: &str,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    match method {
-        "InquireOrder" => inquire_order(service, req).await,
-        "ListOrderCardTokens" => list_order_card_tokens(service, req).await,
-        "CreateQuickLink" => create_quick_link(service, req).await,
-        "CancelQuickLink" => cancel_quick_link(service, req).await,
-        "ValidateSplitsAndCalculateFee" => validate_splits_and_calculate_fee(req),
-        _ => Err(Status::unimplemented(format!("unknown method `{method}`"))),
-    }
-}
+dispatch_group!(
+    dispatch_order_quicklinks_splits,
+    "InquireOrder" => inquire_order,
+    "ListOrderCardTokens" => list_order_card_tokens,
+    "CreateQuickLink" => create_quick_link,
+    "CancelQuickLink" => cancel_quick_link,
+    "ValidateSplitsAndCalculateFee" => validate_splits_and_calculate_fee,
+);

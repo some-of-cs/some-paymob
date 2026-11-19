@@ -121,11 +121,25 @@ async fn e2e_inquiries_tx_order_and_card_tokens_return_ok() {
     let server = PaymobMockServer::start().await;
     setup_inquiries_mocks(&server).await;
     let service = build_grpc_service(&server);
-    assert_rpc_ok(&service, "InquireTransactionById", &json!({ "transaction_id": 192036465 }))
-        .await;
-    assert_rpc_ok(&service, "InquireTransactionByOrder", &json!({ "order_id": 217503754 })).await;
+    assert_rpc_ok(
+        &service,
+        "InquireTransactionById",
+        &json!({ "transaction_id": 192036465 }),
+    )
+    .await;
+    assert_rpc_ok(
+        &service,
+        "InquireTransactionByOrder",
+        &json!({ "order_id": 217503754 }),
+    )
+    .await;
     assert_rpc_ok(&service, "InquireOrder", &json!({ "order_id": 217503754 })).await;
-    assert_rpc_ok(&service, "ListOrderCardTokens", &json!({ "order_id": 217503754 })).await;
+    assert_rpc_ok(
+        &service,
+        "ListOrderCardTokens",
+        &json!({ "order_id": 217503754 }),
+    )
+    .await;
 }
 
 /// Verifies QuickLinks create/cancel and split fee calculation RPCs return `Code::Ok`.
@@ -140,7 +154,12 @@ async fn e2e_quicklinks_and_splits_return_ok() {
         "recipients": [{ "recipient_id": "sub_1", "percentage_bps": 10_000 }]
     });
     assert_rpc_ok(&service, "CreateQuickLink", &ql_req).await;
-    assert_rpc_ok(&service, "CancelQuickLink", &json!({ "quick_link_id": "ql_u4" })).await;
+    assert_rpc_ok(
+        &service,
+        "CancelQuickLink",
+        &json!({ "quick_link_id": "ql_u4" }),
+    )
+    .await;
     assert_rpc_ok(&service, "ValidateSplitsAndCalculateFee", &sp_req).await;
 }
 
@@ -155,7 +174,14 @@ async fn e2e_saved_cards_mit_wallet_kiosk_and_raw_return_ok() {
         "pending": false,
         "data": { "bill_reference": "998877" }
     });
-    mount_accept(&server, "POST", "/api/acceptance/payments/pay", 200, pay_resp).await;
+    mount_accept(
+        &server,
+        "POST",
+        "/api/acceptance/payments/pay",
+        200,
+        pay_resp,
+    )
+    .await;
     let service = build_grpc_service(&server);
     let mit = json!({ "payment_token": "tok_u4", "saved_token": "saved_tok_1" });
     let wal = json!({ "payment_token": "tok_u4", "wallet_phone": "01023456789" });
@@ -278,7 +304,12 @@ async fn e2e_payouts_inquiries_budget_and_topups_return_ok() {
     assert_rpc_ok(&service, "InquirePayoutsByReference", &ref_req).await;
     assert_rpc_ok(&service, "InquirePayoutsBudget", &json!({})).await;
     assert_rpc_ok(&service, "InquirePayoutsTopups", &topup_inq).await;
-    assert_rpc_ok(&service, "RequestBankTransferTopup", &topup_b64_json("AQIDBA==")).await;
+    assert_rpc_ok(
+        &service,
+        "RequestBankTransferTopup",
+        &topup_b64_json("AQIDBA=="),
+    )
+    .await;
     assert_rpc_ok(&service, "RequestAcceptBalanceTopup", &acc_req).await;
 }
 
@@ -298,13 +329,33 @@ async fn e2e_onboarding_auth_and_flow_rpcs_return_ok() {
     });
     let step = json!({ "paymob_mid": 12345, "step_id": "kyc_1", "data": { "cr": "123" } });
     assert_rpc_ok(&service, "OnboardingLogin", &login).await;
-    assert_rpc_ok(&service, "CreateOnboardingApiKey", &json!({ "label": "main" })).await;
+    assert_rpc_ok(
+        &service,
+        "CreateOnboardingApiKey",
+        &json!({ "label": "main" }),
+    )
+    .await;
     assert_rpc_ok(&service, "GetOnboardingHmacSecret", &json!({})).await;
-    assert_rpc_ok(&service, "GetMerchantHmacSecret", &json!({ "merchant_id": 12345 })).await;
-    assert_rpc_ok(&service, "GetOnboardingFlowSchema", &json!({ "partner": "acme-partner" })).await;
+    assert_rpc_ok(
+        &service,
+        "GetMerchantHmacSecret",
+        &json!({ "merchant_id": 12345 }),
+    )
+    .await;
+    assert_rpc_ok(
+        &service,
+        "GetOnboardingFlowSchema",
+        &json!({ "partner": "acme-partner" }),
+    )
+    .await;
     assert_rpc_ok(&service, "RegisterOnboardingMerchant", &reg).await;
     assert_rpc_ok(&service, "SubmitOnboardingFlowStep", &step).await;
-    assert_rpc_ok(&service, "InquireOnboardingMerchant", &json!({ "merchant_id": 12345 })).await;
+    assert_rpc_ok(
+        &service,
+        "InquireOnboardingMerchant",
+        &json!({ "merchant_id": 12345 }),
+    )
+    .await;
 }
 
 /// Verifies merchant-scoped intention, inquiry, and manage RPCs return `Code::Ok`.

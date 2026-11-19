@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! Wiremock endpoint setups for Unit 4 positive E2E and boundary integration tests.
 
-use serde_json::json;
+use serde_json::{Value, json};
 use some_paymob::test_utils::PaymobMockServer;
 
 use super::positive_helpers::{
@@ -61,8 +61,22 @@ pub(super) async fn setup_manage_mocks(server: &PaymobMockServer) {
         "is_captured": true,
         "amount_cents": 5000
     });
-    mount_accept(server, "POST", "/api/acceptance/void_refund/refund", 200, refund_tx).await;
-    mount_accept(server, "POST", "/api/acceptance/void_refund/void", 200, void_tx).await;
+    mount_accept(
+        server,
+        "POST",
+        "/api/acceptance/void_refund/refund",
+        200,
+        refund_tx,
+    )
+    .await;
+    mount_accept(
+        server,
+        "POST",
+        "/api/acceptance/void_refund/void",
+        200,
+        void_tx,
+    )
+    .await;
     mount_accept(server, "POST", "/api/acceptance/capture", 200, cap_tx).await;
 }
 
@@ -101,9 +115,30 @@ pub(super) async fn setup_inquiries_mocks(server: &PaymobMockServer) {
         tx_body.clone(),
     )
     .await;
-    mount_accept(server, "POST", "/api/ecommerce/orders/transaction_inquiry", 200, tx_body).await;
-    mount_accept(server, "GET", "/api/ecommerce/orders/217503754", 200, ord_body).await;
-    mount_accept(server, "POST", "/api/acceptance/order_card_tokens", 200, tok_body).await;
+    mount_accept(
+        server,
+        "POST",
+        "/api/ecommerce/orders/transaction_inquiry",
+        200,
+        tx_body,
+    )
+    .await;
+    mount_accept(
+        server,
+        "GET",
+        "/api/ecommerce/orders/217503754",
+        200,
+        ord_body,
+    )
+    .await;
+    mount_accept(
+        server,
+        "POST",
+        "/api/acceptance/order_card_tokens",
+        200,
+        tok_body,
+    )
+    .await;
 }
 
 pub(super) async fn setup_quicklinks_mocks(server: &PaymobMockServer) {
@@ -136,15 +171,31 @@ pub(super) async fn setup_subscription_plans_mocks(server: &PaymobMockServer) {
         "amount_cents": 20_000,
         "is_active": true
     });
-    let page = json!({
-        "count": 1,
-        "next": null,
-        "previous": null,
-        "results": [plan.clone()]
-    });
-    mount_accept(server, "POST", "/api/acceptance/subscription-plans", 201, plan.clone()).await;
-    mount_accept(server, "PUT", "/api/acceptance/subscription-plans/701", 200, plan.clone()).await;
-    mount_accept(server, "GET", "/api/acceptance/subscription-plans", 200, page).await;
+    let page = json!({ "count": 1, "next": null, "previous": null, "results": [plan.clone()] });
+    mount_accept(
+        server,
+        "POST",
+        "/api/acceptance/subscription-plans",
+        201,
+        plan.clone(),
+    )
+    .await;
+    mount_accept(
+        server,
+        "PUT",
+        "/api/acceptance/subscription-plans/701",
+        200,
+        plan.clone(),
+    )
+    .await;
+    mount_accept(
+        server,
+        "GET",
+        "/api/acceptance/subscription-plans",
+        200,
+        page,
+    )
+    .await;
     mount_accept(
         server,
         "POST",
@@ -153,7 +204,14 @@ pub(super) async fn setup_subscription_plans_mocks(server: &PaymobMockServer) {
         plan.clone(),
     )
     .await;
-    mount_accept(server, "POST", "/api/acceptance/subscription-plans/701/resume", 200, plan).await;
+    mount_accept(
+        server,
+        "POST",
+        "/api/acceptance/subscription-plans/701/resume",
+        200,
+        plan,
+    )
+    .await;
 }
 
 pub(super) async fn setup_subscriptions_lifecycle_mocks(server: &PaymobMockServer) {
@@ -167,16 +225,29 @@ pub(super) async fn setup_subscriptions_lifecycle_mocks(server: &PaymobMockServe
         "status": "intended"
     });
     let sub = sample_subscription_json(1264, "active");
-    let list = json!({
-        "count": 1,
-        "next": null,
-        "previous": null,
-        "results": [sub.clone()]
-    });
+    let list = json!({ "count": 1, "next": null, "previous": null, "results": [sub.clone()] });
     mount_accept(server, "POST", "/v1/intention/", 201, enroll).await;
-    mount_accept(server, "GET", "/api/acceptance/subscriptions/1264", 200, sub.clone()).await;
+    mount_accept(
+        server,
+        "GET",
+        "/api/acceptance/subscriptions/1264",
+        200,
+        sub.clone(),
+    )
+    .await;
     mount_accept(server, "GET", "/api/acceptance/subscriptions", 200, list).await;
-    mount_accept(server, "PUT", "/api/acceptance/subscriptions/1264", 200, sub.clone()).await;
+    setup_sub_state_mocks(server, sub).await;
+}
+
+async fn setup_sub_state_mocks(server: &PaymobMockServer, sub: Value) {
+    mount_accept(
+        server,
+        "PUT",
+        "/api/acceptance/subscriptions/1264",
+        200,
+        sub.clone(),
+    )
+    .await;
     mount_accept(
         server,
         "POST",
@@ -193,25 +264,18 @@ pub(super) async fn setup_subscriptions_lifecycle_mocks(server: &PaymobMockServe
         sub.clone(),
     )
     .await;
-    mount_accept(server, "POST", "/api/acceptance/subscriptions/1264/cancel", 200, sub).await;
+    mount_accept(
+        server,
+        "POST",
+        "/api/acceptance/subscriptions/1264/cancel",
+        200,
+        sub,
+    )
+    .await;
 }
 
-pub(super) async fn setup_subscription_cards_and_history_mocks(server: &PaymobMockServer) {
-    server
-        .mount_accept_auth_sequence(&[
-            "jwt-c1", "jwt-c2", "jwt-c3", "jwt-c4", "jwt-c5", "jwt-c6", "jwt-c7", "jwt-c8",
-        ])
-        .await;
+async fn setup_sub_cards_mocks(server: &PaymobMockServer) {
     let card = sample_subscription_card_json(374, true);
-    let tx = sample_subscription_tx_json(998877);
-    let refund = json!({
-        "id": 998878,
-        "success": true,
-        "is_refund": true,
-        "is_refunded": true,
-        "amount_cents": 20_000,
-        "parent_transaction": 998877
-    });
     mount_accept(
         server,
         "GET",
@@ -244,6 +308,18 @@ pub(super) async fn setup_subscription_cards_and_history_mocks(server: &PaymobMo
         json!({ "detail": "deleted" }),
     )
     .await;
+}
+
+async fn setup_sub_history_mocks(server: &PaymobMockServer) {
+    let tx = sample_subscription_tx_json(998877);
+    let refund = json!({
+        "id": 998878,
+        "success": true,
+        "is_refund": true,
+        "is_refunded": true,
+        "amount_cents": 20_000,
+        "parent_transaction": 998877
+    });
     mount_accept(
         server,
         "POST",
@@ -268,7 +344,24 @@ pub(super) async fn setup_subscription_cards_and_history_mocks(server: &PaymobMo
         json!([tx]),
     )
     .await;
-    mount_accept(server, "POST", "/api/acceptance/void_refund/refund", 200, refund).await;
+    mount_accept(
+        server,
+        "POST",
+        "/api/acceptance/void_refund/refund",
+        200,
+        refund,
+    )
+    .await;
+}
+
+pub(super) async fn setup_subscription_cards_and_history_mocks(server: &PaymobMockServer) {
+    server
+        .mount_accept_auth_sequence(&[
+            "jwt-c1", "jwt-c2", "jwt-c3", "jwt-c4", "jwt-c5", "jwt-c6", "jwt-c7", "jwt-c8",
+        ])
+        .await;
+    setup_sub_cards_mocks(server).await;
+    setup_sub_history_mocks(server).await;
 }
 
 pub(super) async fn setup_payouts_cashin_mocks(server: &PaymobMockServer) {
@@ -288,7 +381,14 @@ pub(super) async fn setup_payouts_cashin_mocks(server: &PaymobMockServer) {
     });
     mount_payouts(server, "POST", "/api/secure/o/token/", 200, tok).await;
     mount_payouts(server, "POST", "/api/secure/disburse/", 200, disb.clone()).await;
-    mount_payouts(server, "POST", "/api/secure/transaction/aman/cancel/", 200, disb.clone()).await;
+    mount_payouts(
+        server,
+        "POST",
+        "/api/secure/transaction/aman/cancel/",
+        200,
+        disb.clone(),
+    )
+    .await;
     mount_payouts(
         server,
         "POST",
@@ -311,7 +411,14 @@ pub(super) async fn setup_payouts_inquiries_and_topups_mocks(server: &PaymobMock
         "type": "from_bank_transfer",
         "currency": "egyptian_pound"
     });
-    mount_payouts(server, "POST", "/api/secure/transaction/inquire/", 200, inq.clone()).await;
+    mount_payouts(
+        server,
+        "POST",
+        "/api/secure/transaction/inquire/",
+        200,
+        inq.clone(),
+    )
+    .await;
     mount_payouts(
         server,
         "POST",
@@ -339,17 +446,12 @@ pub(super) async fn setup_payouts_inquiries_and_topups_mocks(server: &PaymobMock
     mount_payouts(server, "POST", "/api/secure/topup/request/", 200, topup_rec).await;
 }
 
-pub(super) async fn setup_onboarding_mocks(server: &PaymobMockServer) {
+async fn setup_onboarding_auth_mocks(server: &PaymobMockServer) {
     let hmac_env = json!({
         "label": "sub",
         "status": "Created",
         "code": 201,
         "body": { "hmac_secret": "HMAC_SECRET_999" }
-    });
-    let schema = json!({
-        "partner": "acme-partner",
-        "resubmission": false,
-        "steps": [{ "step_id": "kyc_1", "order": 1, "fields": [] }]
     });
     mount_accept(
         server,
@@ -367,8 +469,31 @@ pub(super) async fn setup_onboarding_mocks(server: &PaymobMockServer) {
         json!({ "api_key": "pk_partner_999", "label": "main" }),
     )
     .await;
-    mount_accept(server, "GET", "/api/auth/hmac_secret/get_hmac", 200, hmac_env.clone()).await;
-    mount_accept(server, "GET", "/api/partner/merchants/hmac_secret/12345", 200, hmac_env).await;
+    mount_accept(
+        server,
+        "GET",
+        "/api/auth/hmac_secret/get_hmac",
+        200,
+        hmac_env.clone(),
+    )
+    .await;
+    mount_accept(
+        server,
+        "GET",
+        "/api/partner/merchants/hmac_secret/12345",
+        200,
+        hmac_env,
+    )
+    .await;
+}
+
+pub(super) async fn setup_onboarding_mocks(server: &PaymobMockServer) {
+    setup_onboarding_auth_mocks(server).await;
+    let schema = json!({
+        "partner": "acme-partner",
+        "resubmission": false,
+        "steps": [{ "step_id": "kyc_1", "order": 1, "fields": [] }]
+    });
     mount_accept(server, "GET", "/api/onboarding/flow/schema", 200, schema).await;
     mount_accept(
         server,
@@ -417,7 +542,14 @@ pub(super) async fn setup_scoped_and_unified_mocks(server: &PaymobMockServer) {
         tx_ok.clone(),
     )
     .await;
-    mount_accept(server, "POST", "/api/ecommerce/orders/transaction_inquiry", 200, tx_ok).await;
+    mount_accept(
+        server,
+        "POST",
+        "/api/ecommerce/orders/transaction_inquiry",
+        200,
+        tx_ok,
+    )
+    .await;
     mount_accept(server, "POST", "/api/acceptance/payments/pay", 200, pay_ok).await;
     setup_manage_mocks(server).await;
     setup_subscription_cards_and_history_mocks(server).await;

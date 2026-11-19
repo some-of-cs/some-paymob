@@ -4,10 +4,14 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use some_paymob::PaymobError;
 use tonic::{Request, Response, Status};
 
 use super::PaymobGrpcService;
-use super::proto::{JsonRpcRequest, JsonRpcResponse};
+use super::error::map_error_to_grpc_status;
+use super::proto::{JsonRpcRequest, JsonRpcResponse, decode_request, encode_response};
 
 #[path = "rpc_onboarding.rs"]
 mod rpc_onboarding;
@@ -18,6 +22,21 @@ pub(crate) type RpcFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Response<JsonRpcResponse>, Status>> + Send + 'a>>;
 pub(crate) type RpcHandler =
     for<'a> fn(&'a PaymobGrpcService, Request<JsonRpcRequest>) -> RpcFuture<'a>;
+
+pub(crate) async fn run_rpc<Req, Resp, F, Fut>(
+    req: Request<JsonRpcRequest>,
+    op: F,
+) -> Result<Response<JsonRpcResponse>, Status>
+where
+    Req: DeserializeOwned,
+    Resp: Serialize,
+    F: FnOnce(Req) -> Fut,
+    Fut: Future<Output = Result<Resp, PaymobError>>,
+{
+    let input: Req = decode_request(req)?;
+    let resp = op(input).await.map_err(map_error_to_grpc_status)?;
+    encode_response(&resp)
+}
 
 /// Dispatches Unit 3 unary RPC methods (Services 13-14, webhooks Protocols A-E, and unified adapter).
 pub async fn dispatch(

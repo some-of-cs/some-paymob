@@ -2,6 +2,7 @@
 //! Constant-time Webhooks (Protocols A-E + Replay Deduplication) & Unified Adapter unary RPCs.
 
 use serde::{Deserialize, Serialize};
+use some_paymob::webhooks::WebhookEvent;
 use some_paymob::{
     PaymentProvider, PayoutProvider, SubscriptionProvider, UnifiedCaptureRequest,
     UnifiedPaymentSessionRequest, UnifiedPayoutRequest, UnifiedRefundRequest,
@@ -10,35 +11,27 @@ use some_paymob::{
 use tonic::{Request, Response, Status};
 
 use super::super::PaymobGrpcService;
-use super::super::error::{map_error_to_grpc_status, map_webhook_error_to_grpc_status};
+use super::super::error::map_webhook_error_to_grpc_status;
 use super::super::proto::{JsonRpcRequest, JsonRpcResponse, decode_request, encode_response};
-use super::RpcHandler;
+use super::{RpcHandler, run_rpc};
+
+macro_rules! rpc_entry {
+    ($name:literal, $func:ident) => {
+        ($name, |s, r| Box::pin($func(s, r)))
+    };
+}
 
 const HANDLERS: &[(&str, RpcHandler)] = &[
-    ("VerifyWebhookEvent", |s, r| {
-        Box::pin(verify_webhook_event(s, r))
-    }),
-    ("VerifyWebhookRedirect", |s, r| {
-        Box::pin(verify_webhook_redirect(s, r))
-    }),
-    ("UnifiedCreateSession", |s, r| {
-        Box::pin(unified_create_session(s, r))
-    }),
-    ("UnifiedCapture", |s, r| Box::pin(unified_capture(s, r))),
-    ("UnifiedRefund", |s, r| Box::pin(unified_refund(s, r))),
-    ("UnifiedVoid", |s, r| Box::pin(unified_void(s, r))),
-    ("UnifiedChargeSavedMethod", |s, r| {
-        Box::pin(unified_charge_saved_method(s, r))
-    }),
-    ("UnifiedRefundSubscription", |s, r| {
-        Box::pin(unified_refund_subscription(s, r))
-    }),
-    ("UnifiedExecutePayout", |s, r| {
-        Box::pin(unified_execute_payout(s, r))
-    }),
-    ("UnifiedVerifyWebhook", |s, r| {
-        Box::pin(unified_verify_webhook(s, r))
-    }),
+    rpc_entry!("VerifyWebhookEvent", verify_webhook_event),
+    rpc_entry!("VerifyWebhookRedirect", verify_webhook_redirect),
+    rpc_entry!("UnifiedCreateSession", unified_create_session),
+    rpc_entry!("UnifiedCapture", unified_capture),
+    rpc_entry!("UnifiedRefund", unified_refund),
+    rpc_entry!("UnifiedVoid", unified_void),
+    rpc_entry!("UnifiedChargeSavedMethod", unified_charge_saved_method),
+    rpc_entry!("UnifiedRefundSubscription", unified_refund_subscription),
+    rpc_entry!("UnifiedExecutePayout", unified_execute_payout),
+    rpc_entry!("UnifiedVerifyWebhook", unified_verify_webhook),
 ];
 
 pub(super) fn find_handler(method: &str) -> Option<RpcHandler> {
@@ -96,10 +89,10 @@ struct UnifiedSavedChargeInput {
     cvn: Option<String>,
 }
 
-async fn verify_webhook_event(
+async fn verify_and_claim_event(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
+) -> Result<WebhookEvent, Status> {
     let input: WebhookEventInput = decode_request(req)?;
     let event = service
         .webhook_engine
@@ -109,6 +102,14 @@ async fn verify_webhook_event(
         .deduplicator
         .claim_or_reject(&event)
         .map_err(map_webhook_error_to_grpc_status)?;
+    Ok(event)
+}
+
+async fn verify_webhook_event(
+    service: &PaymobGrpcService,
+    req: Request<JsonRpcRequest>,
+) -> Result<Response<JsonRpcResponse>, Status> {
+    let event = verify_and_claim_event(service, req).await?;
     encode_response(&WebhookAckDto {
         event_type: event.event_type().to_string(),
         verified: true,
@@ -144,115 +145,87 @@ async fn unified_create_session(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: UnifiedPaymentSessionRequest = decode_request(req)?;
-    let session = service
-        .client
-        .create_payment_session(&input)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&UnifiedSessionDto {
-        session_id: session.session_id.clone(),
-        order_id: session.order_id.clone(),
-        status: session.status.clone(),
-        confirmed: session.confirmed,
+    run_rpc(req, |input: UnifiedPaymentSessionRequest| async move {
+        let session = service.client.create_payment_session(&input).await?;
+        Ok(UnifiedSessionDto {
+            session_id: session.session_id.clone(),
+            order_id: session.order_id.clone(),
+            status: session.status.clone(),
+            confirmed: session.confirmed,
+        })
     })
+    .await
 }
 
 async fn unified_capture(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: UnifiedCaptureRequest = decode_request(req)?;
-    let receipt = service
-        .client
-        .capture_payment(&input)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&receipt)
+    run_rpc(req, |input: UnifiedCaptureRequest| async move {
+        service.client.capture_payment(&input).await
+    })
+    .await
 }
 
 async fn unified_refund(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: UnifiedRefundRequest = decode_request(req)?;
-    let receipt = service
-        .client
-        .refund_payment(&input)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&receipt)
+    run_rpc(req, |input: UnifiedRefundRequest| async move {
+        service.client.refund_payment(&input).await
+    })
+    .await
 }
 
 async fn unified_void(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: UnifiedVoidRequest = decode_request(req)?;
-    let receipt = service
-        .client
-        .void_payment(&input)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&receipt)
+    run_rpc(req, |input: UnifiedVoidRequest| async move {
+        service.client.void_payment(&input).await
+    })
+    .await
 }
 
 async fn unified_charge_saved_method(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: UnifiedSavedChargeInput = decode_request(req)?;
-    let mut charge_req =
-        UnifiedSavedMethodChargeRequest::new(input.payment_token, input.saved_method_token);
-    if let Some(cvn) = input.cvn {
-        charge_req = charge_req.with_cvn(cvn);
-    }
-    let receipt = service
-        .client
-        .charge_saved_method(&charge_req)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&receipt)
+    run_rpc(req, |input: UnifiedSavedChargeInput| async move {
+        let mut charge_req =
+            UnifiedSavedMethodChargeRequest::new(input.payment_token, input.saved_method_token);
+        if let Some(cvn) = input.cvn {
+            charge_req = charge_req.with_cvn(cvn);
+        }
+        service.client.charge_saved_method(&charge_req).await
+    })
+    .await
 }
 
 async fn unified_refund_subscription(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: UnifiedSubscriptionRefundRequest = decode_request(req)?;
-    let receipt = service
-        .client
-        .refund_last_transaction(&input)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&receipt)
+    run_rpc(req, |input: UnifiedSubscriptionRefundRequest| async move {
+        service.client.refund_last_transaction(&input).await
+    })
+    .await
 }
 
 async fn unified_execute_payout(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: UnifiedPayoutRequest = decode_request(req)?;
-    let receipt = service
-        .client
-        .execute_payout(&input)
-        .await
-        .map_err(map_error_to_grpc_status)?;
-    encode_response(&receipt)
+    run_rpc(req, |input: UnifiedPayoutRequest| async move {
+        service.client.execute_payout(&input).await
+    })
+    .await
 }
 
 async fn unified_verify_webhook(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: WebhookEventInput = decode_request(req)?;
-    let event = service
-        .webhook_engine
-        .construct_event(&input.raw_body, input.hmac.as_deref())
-        .map_err(map_webhook_error_to_grpc_status)?;
-    service
-        .deduplicator
-        .claim_or_reject(&event)
-        .map_err(map_webhook_error_to_grpc_status)?;
+    let event = verify_and_claim_event(service, req).await?;
     encode_response(&some_paymob::normalize_webhook_event(&event))
 }

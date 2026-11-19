@@ -400,6 +400,7 @@ async fn recovery_over_refund_400_maps_to_failed_precondition() {
 #[tokio::test]
 async fn recovery_http_404_and_5xx_map_to_not_found_and_unavailable() {
     let server = PaymobMockServer::start().await;
+    server.mount_accept_auth_sequence(&["jwt-err-test"]).await;
     server
         .mount_json(JsonEndpointMockConfig {
             host: MockHost::Accept,

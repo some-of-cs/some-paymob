@@ -66,7 +66,8 @@ pub(super) async fn call_rpc(
         .await
         .map_err(|err| Status::internal(format!("grpc_not_ready: {err}")))?;
     let codec = ProstCodec::<JsonRpcRequest, JsonRpcResponse>::default();
-    let path = PathAndQuery::from_shared(format!("/{PAYMOB_GRPC_SERVICE_NAME}/{method}"))
+    let path = format!("/{PAYMOB_GRPC_SERVICE_NAME}/{method}")
+        .parse::<PathAndQuery>()
         .map_err(|err| Status::invalid_argument(format!("invalid_grpc_path: {err}")))?;
     let req = Request::new(JsonRpcRequest {
         payload_json: payload.to_string(),

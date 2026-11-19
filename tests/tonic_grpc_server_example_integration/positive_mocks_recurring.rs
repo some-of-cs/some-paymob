@@ -9,6 +9,18 @@ use super::positive_helpers::{
     sample_subscription_tx_json,
 };
 
+async fn mount_accept_all(server: &PaymobMockServer, routes: Vec<(&str, &str, u16, Value)>) {
+    for route in routes {
+        mount_accept(server, route).await;
+    }
+}
+
+async fn mount_payouts_all(server: &PaymobMockServer, routes: Vec<(&str, &str, u16, Value)>) {
+    for route in routes {
+        mount_payouts(server, route).await;
+    }
+}
+
 pub(super) async fn setup_subscription_plans_mocks(server: &PaymobMockServer) {
     server
         .mount_accept_auth_sequence(&["jwt-pl-1", "jwt-pl-2", "jwt-pl-3", "jwt-pl-4", "jwt-pl-5"])
@@ -22,36 +34,17 @@ pub(super) async fn setup_subscription_plans_mocks(server: &PaymobMockServer) {
         "is_active": true
     });
     let page = json!({ "count": 1, "next": null, "previous": null, "results": [plan.clone()] });
-    let post_plan = (
-        "POST",
-        "/api/acceptance/subscription-plans",
-        201,
-        plan.clone(),
-    );
-    let put_plan = (
-        "PUT",
-        "/api/acceptance/subscription-plans/701",
-        200,
-        plan.clone(),
-    );
-    let get_plans = ("GET", "/api/acceptance/subscription-plans", 200, page);
-    let susp = (
-        "POST",
-        "/api/acceptance/subscription-plans/701/suspend",
-        200,
-        plan.clone(),
-    );
-    let res = (
-        "POST",
-        "/api/acceptance/subscription-plans/701/resume",
-        200,
-        plan,
-    );
-    mount_accept(server, post_plan).await;
-    mount_accept(server, put_plan).await;
-    mount_accept(server, get_plans).await;
-    mount_accept(server, susp).await;
-    mount_accept(server, res).await;
+    mount_accept_all(
+        server,
+        vec![
+            ("POST", "/api/acceptance/subscription-plans", 201, plan.clone()),
+            ("PUT", "/api/acceptance/subscription-plans/701", 200, plan.clone()),
+            ("GET", "/api/acceptance/subscription-plans", 200, page),
+            ("POST", "/api/acceptance/subscription-plans/701/suspend", 200, plan.clone()),
+            ("POST", "/api/acceptance/subscription-plans/701/resume", 200, plan),
+        ],
+    )
+    .await;
 }
 
 pub(super) async fn setup_subscriptions_lifecycle_mocks(server: &PaymobMockServer) {
@@ -66,82 +59,33 @@ pub(super) async fn setup_subscriptions_lifecycle_mocks(server: &PaymobMockServe
     });
     let sub = sample_subscription_json(1264, "active");
     let list = json!({ "count": 1, "next": null, "previous": null, "results": [sub.clone()] });
-    mount_accept(server, ("POST", "/v1/intention/", 201, enroll)).await;
-    mount_accept(
+    mount_accept_all(
         server,
-        (
-            "GET",
-            "/api/acceptance/subscriptions/1264",
-            200,
-            sub.clone(),
-        ),
+        vec![
+            ("POST", "/v1/intention/", 201, enroll),
+            ("GET", "/api/acceptance/subscriptions/1264", 200, sub.clone()),
+            ("GET", "/api/acceptance/subscriptions", 200, list),
+            ("PUT", "/api/acceptance/subscriptions/1264", 200, sub.clone()),
+            ("POST", "/api/acceptance/subscriptions/1264/suspend", 200, sub.clone()),
+            ("POST", "/api/acceptance/subscriptions/1264/resume", 200, sub.clone()),
+            ("POST", "/api/acceptance/subscriptions/1264/cancel", 200, sub),
+        ],
     )
     .await;
-    mount_accept(server, ("GET", "/api/acceptance/subscriptions", 200, list)).await;
-    setup_sub_state_mocks(server, sub).await;
-}
-
-async fn setup_sub_state_mocks(server: &PaymobMockServer, sub: Value) {
-    let put_sub = (
-        "PUT",
-        "/api/acceptance/subscriptions/1264",
-        200,
-        sub.clone(),
-    );
-    let susp = (
-        "POST",
-        "/api/acceptance/subscriptions/1264/suspend",
-        200,
-        sub.clone(),
-    );
-    let res = (
-        "POST",
-        "/api/acceptance/subscriptions/1264/resume",
-        200,
-        sub.clone(),
-    );
-    let can = (
-        "POST",
-        "/api/acceptance/subscriptions/1264/cancel",
-        200,
-        sub,
-    );
-    mount_accept(server, put_sub).await;
-    mount_accept(server, susp).await;
-    mount_accept(server, res).await;
-    mount_accept(server, can).await;
 }
 
 async fn setup_sub_cards_mocks(server: &PaymobMockServer) {
     let card = sample_subscription_card_json(374, true);
-    let get_cards = (
-        "GET",
-        "/api/acceptance/subscriptions/1264/cards",
-        200,
-        json!([card.clone()]),
-    );
-    let add_sec = (
-        "POST",
-        "/api/acceptance/subscriptions/1264/add-secondary-card",
-        200,
-        card.clone(),
-    );
-    let chg_pri = (
-        "POST",
-        "/api/acceptance/subscriptions/1264/change-primary-card",
-        200,
-        card,
-    );
-    let del_card = (
-        "POST",
-        "/api/acceptance/subscriptions/1264/delete-card",
-        200,
-        json!({ "detail": "deleted" }),
-    );
-    mount_accept(server, get_cards).await;
-    mount_accept(server, add_sec).await;
-    mount_accept(server, chg_pri).await;
-    mount_accept(server, del_card).await;
+    mount_accept_all(
+        server,
+        vec![
+            ("GET", "/api/acceptance/subscriptions/1264/cards", 200, json!([card.clone()])),
+            ("POST", "/api/acceptance/subscriptions/1264/add-secondary-card", 200, card.clone()),
+            ("POST", "/api/acceptance/subscriptions/1264/change-primary-card", 200, card),
+            ("POST", "/api/acceptance/subscriptions/1264/delete-card", 200, json!({ "detail": "deleted" })),
+        ],
+    )
+    .await;
 }
 
 async fn setup_sub_history_mocks(server: &PaymobMockServer) {
@@ -155,33 +99,14 @@ async fn setup_sub_history_mocks(server: &PaymobMockServer) {
         "parent_transaction": 998877
     });
     let wh = json!({ "id": 1264, "webhook_url": "https://merchant.example.com/hook" });
-    mount_accept(
+    mount_accept_all(
         server,
-        (
-            "POST",
-            "/api/acceptance/subscriptions/1264/webhook",
-            200,
-            wh,
-        ),
-    )
-    .await;
-    let last_tx = (
-        "GET",
-        "/api/acceptance/subscriptions/1264/last-transaction",
-        200,
-        tx.clone(),
-    );
-    let tx_list = (
-        "GET",
-        "/api/acceptance/subscriptions/1264/transactions",
-        200,
-        json!([tx]),
-    );
-    mount_accept(server, last_tx).await;
-    mount_accept(server, tx_list).await;
-    mount_accept(
-        server,
-        ("POST", "/api/acceptance/void_refund/refund", 200, refund),
+        vec![
+            ("POST", "/api/acceptance/subscriptions/1264/webhook", 200, wh),
+            ("GET", "/api/acceptance/subscriptions/1264/last-transaction", 200, tx.clone()),
+            ("GET", "/api/acceptance/subscriptions/1264/transactions", 200, json!([tx])),
+            ("POST", "/api/acceptance/void_refund/refund", 200, refund),
+        ],
     )
     .await;
 }
@@ -212,21 +137,14 @@ pub(super) async fn setup_payouts_cashin_mocks(server: &PaymobMockServer) {
         "status_code": "200"
     });
     let bulk = json!({ "status": "ok", "results": [disb] });
-    mount_payouts(server, ("POST", "/api/secure/o/token/", 200, tok)).await;
-    mount_payouts(server, ("POST", "/api/secure/disburse/", 200, disb.clone())).await;
-    mount_payouts(
+    mount_payouts_all(
         server,
-        ("POST", "/api/secure/transaction/aman/cancel/", 200, disb),
-    )
-    .await;
-    mount_payouts(
-        server,
-        (
-            "POST",
-            "/disburse/api/v1/disburse/bulk_transaction",
-            200,
-            bulk,
-        ),
+        vec![
+            ("POST", "/api/secure/o/token/", 200, tok),
+            ("POST", "/api/secure/disburse/", 200, disb.clone()),
+            ("POST", "/api/secure/transaction/aman/cancel/", 200, disb),
+            ("POST", "/disburse/api/v1/disburse/bulk_transaction", 200, bulk),
+        ],
     )
     .await;
 }
@@ -245,19 +163,15 @@ pub(super) async fn setup_payouts_inquiries_and_topups_mocks(server: &PaymobMock
     });
     let budget = json!({ "current_budget": "1000.00 EGP" });
     let topups = json!({ "results": [topup.clone()], "count": 1 });
-    mount_payouts(
+    mount_payouts_all(
         server,
-        ("POST", "/api/secure/transaction/inquire/", 200, inq.clone()),
+        vec![
+            ("POST", "/api/secure/transaction/inquire/", 200, inq.clone()),
+            ("POST", "/disburse/api/v1/bulk_transaction/inquire_by_reference", 200, inq),
+            ("GET", "/api/secure/budget/inquire/", 200, budget),
+            ("GET", "/api/secure/topup/inquire/", 200, topups),
+            ("POST", "/api/secure/topup/request/", 200, topup),
+        ],
     )
     .await;
-    let bulk_inq = (
-        "POST",
-        "/disburse/api/v1/bulk_transaction/inquire_by_reference",
-        200,
-        inq,
-    );
-    mount_payouts(server, bulk_inq).await;
-    mount_payouts(server, ("GET", "/api/secure/budget/inquire/", 200, budget)).await;
-    mount_payouts(server, ("GET", "/api/secure/topup/inquire/", 200, topups)).await;
-    mount_payouts(server, ("POST", "/api/secure/topup/request/", 200, topup)).await;
 }

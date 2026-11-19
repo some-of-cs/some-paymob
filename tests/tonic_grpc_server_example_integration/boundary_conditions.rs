@@ -16,8 +16,9 @@ use super::positive_helpers::{
     assert_rpc_code, assert_rpc_ok, build_grpc_service, bulk_items_json, inquiry_ids_json,
     topup_b64_json, topup_raw_json,
 };
-use super::positive_mocks::{
-    setup_manage_mocks, setup_payouts_cashin_mocks, setup_payouts_inquiries_and_topups_mocks,
+use super::positive_mocks_core::setup_manage_mocks;
+use super::positive_mocks_recurring::{
+    setup_payouts_cashin_mocks, setup_payouts_inquiries_and_topups_mocks,
 };
 
 /// Verifies amount boundaries at 0, 1, and `u64::MAX` overflow.

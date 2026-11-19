@@ -106,40 +106,26 @@ pub(super) async fn assert_rpc_code(
 async fn mount_host(
     server: &PaymobMockServer,
     host: MockHost,
-    method: &str,
-    path: &str,
-    status: u16,
-    body: Value,
+    route: (&str, &str, u16, Value),
 ) {
+    let (http_method, endpoint_path, status, body) = route;
     server
         .mount_json(JsonEndpointMockConfig {
             host,
-            http_method: method,
-            endpoint_path: path,
+            http_method,
+            endpoint_path,
             status,
             body,
         })
         .await;
 }
 
-pub(super) async fn mount_accept(
-    server: &PaymobMockServer,
-    method: &str,
-    path: &str,
-    status: u16,
-    body: Value,
-) {
-    mount_host(server, MockHost::Accept, method, path, status, body).await;
+pub(super) async fn mount_accept(server: &PaymobMockServer, route: (&str, &str, u16, Value)) {
+    mount_host(server, MockHost::Accept, route).await;
 }
 
-pub(super) async fn mount_payouts(
-    server: &PaymobMockServer,
-    method: &str,
-    path: &str,
-    status: u16,
-    body: Value,
-) {
-    mount_host(server, MockHost::Payouts, method, path, status, body).await;
+pub(super) async fn mount_payouts(server: &PaymobMockServer, route: (&str, &str, u16, Value)) {
+    mount_host(server, MockHost::Payouts, route).await;
 }
 
 pub(super) fn sample_billing_json() -> Value {

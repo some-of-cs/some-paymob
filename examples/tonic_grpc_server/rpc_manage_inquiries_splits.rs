@@ -275,7 +275,7 @@ async fn validate_splits_and_calculate_fee(
     _service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    rpc_call!(req, |p: SplitsValidateAndQuoteRequest| {
+    rpc_call!(req, |p: SplitsValidateAndQuoteRequest| async {
         let split = SplitDescription::new(p.recipients)?;
         let total_fixed_cents = split.total_fixed_cents()?;
         let total_percentage_bps = split.total_percentage_bps()?;
@@ -296,7 +296,8 @@ async fn validate_splits_and_calculate_fee(
             fee_cents,
             total_with_fee_cents,
         })
-    })
+    }
+    .await)
 }
 
 dispatch_group!(

@@ -437,7 +437,7 @@ async fn build_pixel_config(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    rpc_call!(req, |p: PixelConfigRequest| {
+    rpc_call!(req, |p: PixelConfigRequest| async {
         let mut builder =
             PixelConfig::from_client(&service.client, SecretString::from(p.client_secret))?;
         if let Some(methods) = p.payment_methods {
@@ -447,14 +447,15 @@ async fn build_pixel_config(
             builder = builder.locale(locale);
         }
         builder.build()?.to_json_value()
-    })
+    }
+    .await)
 }
 
 async fn build_affordability_widget(
     service: &PaymobGrpcService,
     req: Request<JsonRpcRequest>,
 ) -> Result<Response<JsonRpcResponse>, Status> {
-    rpc_call!(req, |p: AffordabilityRequest| {
+    rpc_call!(req, |p: AffordabilityRequest| async {
         let mut builder = AffordabilityWidgetConfig::from_client(
             &service.client,
             MinorUnitAmount::new(p.amount_cents),
@@ -468,7 +469,8 @@ async fn build_affordability_widget(
             config = config.with_selected_plan(plan_id)?;
         }
         Ok(config)
-    })
+    }
+    .await)
 }
 
 async fn create_legacy_order(

@@ -84,8 +84,8 @@ impl From<PayoutsTokenResponse> for PayoutsTokenResponseDto {
             access_token: resp.access_token.expose_secret().to_owned(),
             refresh_token: resp.refresh_token.expose_secret().to_owned(),
             expires_in: resp.expires_in,
-            scope: resp.scope,
-            token_type: resp.token_type,
+            scope: resp.scope.clone(),
+            token_type: resp.token_type.clone(),
         }
     }
 }

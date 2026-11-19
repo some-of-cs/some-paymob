@@ -54,16 +54,16 @@ async fn boundary_bulk_disbursements_0_1_1000_1001_items() {
     let service = build_grpc_service(&server);
     assert_rpc_code(
         &service,
-        "BulkCashin",
+        "DisburseBulk",
         &bulk_items_json(0),
         Code::InvalidArgument,
     )
     .await;
-    assert_rpc_ok(&service, "BulkCashin", &bulk_items_json(1)).await;
-    assert_rpc_ok(&service, "BulkCashin", &bulk_items_json(1_000)).await;
+    assert_rpc_ok(&service, "DisburseBulk", &bulk_items_json(1)).await;
+    assert_rpc_ok(&service, "DisburseBulk", &bulk_items_json(1_000)).await;
     assert_rpc_code(
         &service,
-        "BulkCashin",
+        "DisburseBulk",
         &bulk_items_json(1_001),
         Code::InvalidArgument,
     )
@@ -76,7 +76,7 @@ async fn boundary_inquiry_ids_0_1_500_501() {
     let server = PaymobMockServer::start().await;
     setup_payouts_inquiries_and_topups_mocks(&server).await;
     let service = build_grpc_service(&server);
-    let method = "InquirePayoutsTransactions";
+    let method = "InquirePayoutTransactions";
     assert_rpc_code(
         &service,
         method,

@@ -56,13 +56,13 @@ pub(super) fn build_grpc_service(server: &PaymobMockServer) -> PaymobGrpcService
     PaymobGrpcService::new(client, webhook_engine, deduplicator)
 }
 
-#[allow(clippy::result_large_err)]
 pub(super) async fn call_rpc(
     service: &PaymobGrpcService,
     method: &str,
     payload: &Value,
 ) -> Result<Value, Status> {
-    let mut grpc = Grpc::new(build_grpc_server(service.clone()));
+    let mut grpc = Grpc::new(build_grpc_server(service.clone()))
+        .max_encoding_message_size(8 * 1024 * 1024);
     grpc.ready()
         .await
         .map_err(|err| Status::internal(format!("grpc_not_ready: {err}")))?;
@@ -233,5 +233,5 @@ pub(super) async fn assert_non_wallet_cashin_rpcs(service: &PaymobGrpcService) {
     assert_rpc_ok(service, "CashinBankInstant", &inst_req).await;
     assert_rpc_ok(service, "CashinEgyptianPost", &post_req).await;
     assert_rpc_ok(service, "CancelAmanCashin", &aman_req).await;
-    assert_rpc_ok(service, "BulkCashin", &bulk_items_json(1)).await;
+    assert_rpc_ok(service, "DisburseBulk", &bulk_items_json(1)).await;
 }

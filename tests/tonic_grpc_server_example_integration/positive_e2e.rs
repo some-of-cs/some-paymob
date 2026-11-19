@@ -11,11 +11,14 @@ use super::positive_helpers::{
     assert_non_wallet_cashin_rpcs, assert_rpc_ok, build_grpc_service, mount_accept,
     sample_billing_json, topup_b64_json,
 };
-use super::positive_mocks::{
+use super::positive_mocks_core::{
     setup_inquiries_mocks, setup_legacy_v2_mocks, setup_manage_mocks, setup_onboarding_mocks,
-    setup_payouts_cashin_mocks, setup_payouts_inquiries_and_topups_mocks, setup_quicklinks_mocks,
-    setup_scoped_and_unified_mocks, setup_subscription_cards_and_history_mocks,
-    setup_subscription_plans_mocks, setup_subscriptions_lifecycle_mocks,
+    setup_quicklinks_mocks, setup_scoped_and_unified_mocks,
+};
+use super::positive_mocks_recurring::{
+    setup_payouts_cashin_mocks, setup_payouts_inquiries_and_topups_mocks,
+    setup_subscription_cards_and_history_mocks, setup_subscription_plans_mocks,
+    setup_subscriptions_lifecycle_mocks,
 };
 
 /// Verifies `GetHealth` and `CheckSandboxConstraints` return `Code::Ok`.
@@ -42,8 +45,8 @@ async fn e2e_intentions_create_and_update_return_ok() {
         "status": "intended",
         "intention_order_id": 99001
     });
-    mount_accept(&server, "POST", "/v1/intention/", 201, body.clone()).await;
-    mount_accept(&server, "PUT", "/v1/intention/", 200, body).await;
+    mount_accept(&server, ("POST", "/v1/intention/", 201, body.clone())).await;
+    mount_accept(&server, ("PUT", "/v1/intention/", 200, body)).await;
     let service = build_grpc_service(&server);
     let create_req = json!({
         "amount_cents": 10_000,
@@ -174,14 +177,8 @@ async fn e2e_saved_cards_mit_wallet_kiosk_and_raw_return_ok() {
         "pending": false,
         "data": { "bill_reference": "998877" }
     });
-    mount_accept(
-        &server,
-        "POST",
-        "/api/acceptance/payments/pay",
-        200,
-        pay_resp,
-    )
-    .await;
+    let pay_route = ("POST", "/api/acceptance/payments/pay", 200, pay_resp);
+    mount_accept(&server, pay_route).await;
     let service = build_grpc_service(&server);
     let mit = json!({ "payment_token": "tok_u4", "saved_token": "saved_tok_1" });
     let wal = json!({ "payment_token": "tok_u4", "wallet_phone": "01023456789" });

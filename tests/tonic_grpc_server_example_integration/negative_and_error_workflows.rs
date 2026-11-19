@@ -257,13 +257,9 @@ async fn security_duplicate_webhook_replay_rejected() {
         "hmac": SAMPLE_TX_192036465_HMAC,
         "raw_body": OFFICIAL_TX_192036465_JSON
     });
-    let malformed = grpc_unary_raw(
-        svc.clone(),
-        "VerifyWebhookEvent",
-        "{malformed".to_owned(),
-    )
-    .await
-    .expect_err("malformed json must fail");
+    let malformed = grpc_unary_raw(svc.clone(), "VerifyWebhookEvent", "{malformed".to_owned())
+        .await
+        .expect_err("malformed json must fail");
     assert_eq!(malformed.code(), Code::InvalidArgument);
     let ok = grpc_call(svc.clone(), "UnifiedVerifyWebhook", &valid_wh).await;
     assert!(ok.is_ok());

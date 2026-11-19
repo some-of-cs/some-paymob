@@ -29,9 +29,7 @@ use some_paymob::test_utils::{
 use some_paymob::webhooks::InMemoryWebhookDeduplicator;
 use some_paymob::{ClientConfig, PaymobClient, PaymobError, PaymobRegion, WebhookError};
 
-use super::tonic_grpc_server::proto::{
-    JsonRpcRequest, JsonRpcResponse, PAYMOB_GRPC_SERVICE_NAME,
-};
+use super::tonic_grpc_server::proto::{JsonRpcRequest, JsonRpcResponse, PAYMOB_GRPC_SERVICE_NAME};
 use super::tonic_grpc_server::{PaymobGrpcService, build_grpc_server};
 
 fn build_test_config(server: &PaymobMockServer) -> ClientConfig {
@@ -68,8 +66,12 @@ async fn grpc_unary_raw(
     let rpc_path = PathAndQuery::try_from(path_str)
         .map_err(|err| Status::invalid_argument(err.to_string()))?;
     let codec = ProstCodec::<JsonRpcRequest, JsonRpcResponse>::default();
-    grpc.unary(Request::new(JsonRpcRequest { payload_json }), rpc_path, codec)
-        .await
+    grpc.unary(
+        Request::new(JsonRpcRequest { payload_json }),
+        rpc_path,
+        codec,
+    )
+    .await
 }
 
 async fn grpc_call(
@@ -86,14 +88,9 @@ async fn grpc_err(service: PaymobGrpcService, method_name: &str, payload: &Value
         .expect_err("expected gRPC error status")
 }
 
-async fn assert_grpc_code(
-    service: &PaymobGrpcService,
-    method_name: &str,
-    payload: &Value,
-    expected: Code,
-) {
-    let status = grpc_err(service.clone(), method_name, payload).await;
-    assert_eq!(status.code(), expected, "unexpected code for {method_name}");
+async fn assert_invalid(svc: &PaymobGrpcService, method_name: &str, payload: &Value) {
+    let status = grpc_err(svc.clone(), method_name, payload).await;
+    assert_eq!(status.code(), Code::InvalidArgument);
 }
 
 async fn mount_oauth_fallback_mocks(server: &MockServer) {
@@ -134,8 +131,9 @@ async fn mount_jwt_expiry_inquiry_mock(server: &PaymobMockServer) {
 #[tokio::test]
 async fn negative_empty_and_whitespace_credentials_rejected() {
     let server = PaymobMockServer::start().await;
-    let service = build_grpc_service(&server);
-    assert_grpc_code(&service, "UnmountedUnit5Probe", &json!({}), Code::Unimplemented).await;
+    let svc = build_grpc_service(&server);
+    let err = grpc_err(svc, "UnmountedUnit5Probe", &json!({})).await;
+    assert_eq!(err.code(), Code::Unimplemented);
     assert!(SecretKey::new("").is_err() && SecretKey::new("   ").is_err());
     assert!(PublicKey::new(" \t ").is_err() && ApiKey::new("").is_err());
     assert!(HmacSecret::new("   ").is_err());
@@ -146,30 +144,39 @@ async fn negative_empty_and_whitespace_credentials_rejected() {
 #[tokio::test]
 async fn negative_control_chars_and_path_traversal_rejected() {
     let server = PaymobMockServer::start().await;
-    let service = build_grpc_service(&server);
+    let svc = build_grpc_service(&server);
     let bad_paths = [
-        "", "   ", "/v1/intention/\0", "/v1/intention/\r",
-        "/v1/intention/\n", "../admin", "//evil.com", "https://evil.com",
+        "",
+        "   ",
+        "/v1/intention/\0",
+        "/v1/intention/\r",
+        "/v1/intention/\n",
+        "../admin",
+        "//evil.com",
+        "https://evil.com",
     ];
     for bad_path in bad_paths {
-        let err = service.client.accept_url(bad_path).expect_err("unsafe path");
-        assert!(matches!(err, PaymobError::ValidationError { field: "path", .. }));
+        let err = svc.client.accept_url(bad_path).expect_err("unsafe path");
+        assert!(matches!(
+            err,
+            PaymobError::ValidationError { field: "path", .. }
+        ));
     }
-    assert!(service.client.checkout_url("../escape").is_err());
-    assert!(service.client.payouts_url("//evil.com/disburse").is_err());
+    assert!(svc.client.checkout_url("../escape").is_err());
+    assert!(svc.client.payouts_url("//evil.com/disburse").is_err());
     let bad_topup = json!({
         "amount": 500,
         "currency": "egyptian_pound",
         "proof_base64": "AQID",
         "proof_filename": "../passwd"
     });
-    assert_grpc_code(&service, "PayoutsTopupBankTransfer", &bad_topup, Code::InvalidArgument).await;
+    assert_invalid(&svc, "PayoutsTopupBankTransfer", &bad_topup).await;
 }
 
 #[tokio::test]
 async fn negative_invalid_msisdn_pan_and_national_id_rejected() {
     let server = PaymobMockServer::start().await;
-    let service = build_grpc_service(&server);
+    let svc = build_grpc_service(&server);
     let bad_wallet = json!({ "issuer": "vodafone", "msisdn": "12345", "amount": 100 });
     let bad_card = json!({
         "amount": 500,
@@ -184,15 +191,15 @@ async fn negative_invalid_msisdn_pan_and_national_id_rejected() {
         "full_name": "Test User",
         "national_id": "12345"
     });
-    assert_grpc_code(&service, "PayoutsCashinWallet", &bad_wallet, Code::InvalidArgument).await;
-    assert_grpc_code(&service, "PayoutsCashinBankCard", &bad_card, Code::InvalidArgument).await;
-    assert_grpc_code(&service, "PayoutsCashinEgyptianPost", &bad_post, Code::InvalidArgument).await;
+    assert_invalid(&svc, "PayoutsCashinWallet", &bad_wallet).await;
+    assert_invalid(&svc, "PayoutsCashinBankCard", &bad_card).await;
+    assert_invalid(&svc, "PayoutsCashinEgyptianPost", &bad_post).await;
 }
 
 #[tokio::test]
 async fn negative_use_cvc_with_moto_cvn_mismatch_rejected() {
     let server = PaymobMockServer::start().await;
-    let service = build_grpc_service(&server);
+    let svc = build_grpc_service(&server);
     let valid_cvn = SecretString::from("123");
     let short_cvn = SecretString::from("12");
     assert!(validate_use_cvc_with_moto(true, None).is_err());
@@ -205,13 +212,13 @@ async fn negative_use_cvc_with_moto_cvn_mismatch_rejected() {
         "saved_token": "saved_1",
         "use_cvc_with_moto": true
     });
-    assert_grpc_code(&service, "PayMit", &mismatch, Code::InvalidArgument).await;
+    assert_invalid(&svc, "PayMit", &mismatch).await;
 }
 
 #[tokio::test]
 async fn negative_unknown_and_kyc_only_payout_issuers_rejected() {
     let server = PaymobMockServer::start().await;
-    let service = build_grpc_service(&server);
+    let svc = build_grpc_service(&server);
     assert_eq!(DisburseIssuer::from_wire("unknown_issuer"), None);
     assert_eq!(DisburseIssuer::from_wire("kyc_only"), None);
     assert_eq!(DisburseIssuer::from_wire("aman"), None);
@@ -219,46 +226,51 @@ async fn negative_unknown_and_kyc_only_payout_issuers_rejected() {
     assert!(serde_json::from_str::<DisbursementResponse>(bad_json).is_err());
     for issuer in ["aman", "unknown", "bank_card"] {
         let payload = json!({ "issuer": issuer, "msisdn": "01023456789", "amount": 100 });
-        assert_grpc_code(&service, "PayoutsCashinWallet", &payload, Code::InvalidArgument).await;
+        assert_invalid(&svc, "PayoutsCashinWallet", &payload).await;
     }
 }
 
 #[tokio::test]
 async fn security_tampered_hmac_and_malformed_hex_rejected() {
     let server = PaymobMockServer::start().await;
-    let service = build_grpc_service(&server);
+    let svc = build_grpc_service(&server);
     let mut tampered = SAMPLE_TX_192036465_HMAC.to_owned();
     tampered.replace_range(0..4, "0000");
-    let hex_res = service
+    let hex_res = svc
         .webhook_engine
         .verify_transaction_post(OFFICIAL_TX_192036465_JSON, "bad-hex!");
     assert!(matches!(hex_res, Err(WebhookError::MalformedSignatureHex)));
     let bad_wh = json!({ "hmac": tampered, "raw_body": OFFICIAL_TX_192036465_JSON });
     let bad_hex = json!({ "hmac": "bad-hex!", "raw_body": OFFICIAL_TX_192036465_JSON });
-    assert_grpc_code(&service, "VerifyWebhookEvent", &bad_wh, Code::Unauthenticated).await;
-    assert_grpc_code(&service, "UnifiedVerifyWebhook", &bad_wh, Code::Unauthenticated).await;
-    assert_grpc_code(&service, "VerifyWebhookEvent", &bad_hex, Code::InvalidArgument).await;
+    let s1 = grpc_err(svc.clone(), "VerifyWebhookEvent", &bad_wh).await;
+    assert_eq!(s1.code(), Code::Unauthenticated);
+    let s2 = grpc_err(svc.clone(), "UnifiedVerifyWebhook", &bad_wh).await;
+    assert_eq!(s2.code(), Code::Unauthenticated);
+    assert_invalid(&svc, "VerifyWebhookEvent", &bad_hex).await;
 }
 
 #[tokio::test]
 async fn security_duplicate_webhook_replay_rejected() {
     let server = PaymobMockServer::start().await;
-    let service = build_grpc_service(&server);
+    let svc = build_grpc_service(&server);
     let valid_wh = json!({
         "hmac": SAMPLE_TX_192036465_HMAC,
         "raw_body": OFFICIAL_TX_192036465_JSON
     });
     let malformed = grpc_unary_raw(
-        service.clone(),
+        svc.clone(),
         "VerifyWebhookEvent",
         "{malformed".to_owned(),
     )
     .await
     .expect_err("malformed json must fail");
     assert_eq!(malformed.code(), Code::InvalidArgument);
-    assert!(grpc_call(service.clone(), "UnifiedVerifyWebhook", &valid_wh).await.is_ok());
-    assert_grpc_code(&service, "UnifiedVerifyWebhook", &valid_wh, Code::AlreadyExists).await;
-    assert_grpc_code(&service, "VerifyWebhookEvent", &valid_wh, Code::AlreadyExists).await;
+    let ok = grpc_call(svc.clone(), "UnifiedVerifyWebhook", &valid_wh).await;
+    assert!(ok.is_ok());
+    let d1 = grpc_err(svc.clone(), "UnifiedVerifyWebhook", &valid_wh).await;
+    assert_eq!(d1.code(), Code::AlreadyExists);
+    let d2 = grpc_err(svc, "VerifyWebhookEvent", &valid_wh).await;
+    assert_eq!(d2.code(), Code::AlreadyExists);
 }
 
 #[tokio::test]
@@ -284,7 +296,10 @@ async fn recovery_regime2_401_cache_eviction_and_single_flight_retry() {
     let provider = AcceptJwtProvider::new(&server.accept_uri(), SecretString::from("test_api_key"))
         .expect("valid provider");
     let http = reqwest::Client::new();
-    let url = format!("{}/api/ecommerce/orders/transaction_inquiry", server.accept_uri());
+    let url = format!(
+        "{}/api/ecommerce/orders/transaction_inquiry",
+        server.accept_uri()
+    );
     let resp = provider
         .execute_with_retry(|tok| {
             let (c, u) = (http.clone(), url.clone());
@@ -298,7 +313,8 @@ async fn recovery_regime2_401_cache_eviction_and_single_flight_retry() {
         .await
         .expect("401 retry succeeds");
     assert_eq!(resp.status().as_u16(), 200);
-    assert_eq!(provider.token().await.expect("cached").expose_secret(), "fresh-jwt-2");
+    let tok = provider.token().await.expect("cached");
+    assert_eq!(tok.expose_secret(), "fresh-jwt-2");
 }
 
 #[tokio::test]
@@ -319,7 +335,10 @@ async fn recovery_regime3_oauth2_refresh_token_and_password_fallback() {
         cache,
     )
     .expect("valid oauth provider");
-    let tok = provider.access_token().await.expect("password fallback succeeds");
+    let tok = provider
+        .access_token()
+        .await
+        .expect("password fallback succeeds");
     assert_eq!(tok.expose_secret(), "po-fallback");
 }
 
@@ -337,13 +356,12 @@ async fn recovery_http_429_maps_to_resource_exhausted_with_retry_after() {
             ok_body: json!({ "current_budget": "100.00 EGP" }),
         })
         .await;
-    let service = build_grpc_service(&server);
-    service
-        .client
+    let svc = build_grpc_service(&server);
+    svc.client
         .auth()
         .payouts_cache()
         .store(CachedToken::with_default_ttl("seeded-oauth-jwt", None));
-    let status = grpc_err(service, "PayoutsInquiriesBudget", &json!({})).await;
+    let status = grpc_err(svc, "PayoutsInquiriesBudget", &json!({})).await;
     assert_eq!(status.code(), Code::ResourceExhausted);
     let retry_after = status
         .metadata()
@@ -365,8 +383,8 @@ async fn recovery_over_refund_400_maps_to_failed_precondition() {
             body: json!({ "message": msg }),
         })
         .await;
-    let service = build_grpc_service(&server);
-    let err = service
+    let svc = build_grpc_service(&server);
+    let err = svc
         .client
         .manage()
         .refund(RefundParams::new(192_036_465, 999_999))
@@ -379,7 +397,8 @@ async fn recovery_over_refund_400_maps_to_failed_precondition() {
         }
     );
     let req = json!({ "transaction_id": 192_036_465, "amount_cents": 999_999 });
-    assert_grpc_code(&service, "ManageRefund", &req, Code::FailedPrecondition).await;
+    let status = grpc_err(svc, "ManageRefund", &req).await;
+    assert_eq!(status.code(), Code::FailedPrecondition);
 }
 
 #[tokio::test]
@@ -403,10 +422,13 @@ async fn recovery_http_404_and_5xx_map_to_not_found_and_unavailable() {
             body: json!({ "detail": "Service unavailable." }),
         })
         .await;
-    let service = build_grpc_service(&server);
-    assert_grpc_code(&service, "InquiryByTxId", &json!({ "tx_id": 404_040 }), Code::NotFound).await;
-    assert_grpc_code(&service, "InquiryByTxId", &json!({ "tx_id": 503_503 }), Code::Unavailable)
-        .await;
+    let svc = build_grpc_service(&server);
+    let q404 = json!({ "tx_id": 404_040 });
+    let e404 = grpc_err(svc.clone(), "InquiryByTxId", &q404).await;
+    assert_eq!(e404.code(), Code::NotFound);
+    let q503 = json!({ "tx_id": 503_503 });
+    let e503 = grpc_err(svc, "InquiryByTxId", &q503).await;
+    assert_eq!(e503.code(), Code::Unavailable);
 }
 
 #[tokio::test]
@@ -419,13 +441,13 @@ async fn negative_test_live_environment_mismatch_maps_to_failed_precondition() {
         .expect_err("mixed test/live keys must fail");
     assert!(matches!(err, PaymobError::EnvironmentMismatch(_)));
     let server = PaymobMockServer::start().await;
-    let service = build_grpc_service(&server);
+    let svc = build_grpc_service(&server);
     let sandbox_req = json!({
         "is_sandbox": true,
         "credential_age_days": 0,
         "channel": "live_only"
     });
-    let status = grpc_err(service, "SandboxCheck", &sandbox_req).await;
+    let status = grpc_err(svc, "SandboxCheck", &sandbox_req).await;
     assert!(matches!(
         status.code(),
         Code::FailedPrecondition | Code::InvalidArgument

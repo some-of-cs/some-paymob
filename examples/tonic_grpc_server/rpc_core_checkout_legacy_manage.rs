@@ -18,9 +18,9 @@ use some_paymob::{
 };
 use tonic::{Request, Response, Status};
 
-use crate::PaymobGrpcService;
-use crate::error::{map_error_to_grpc_status, map_sandbox_error_to_grpc_status};
-use crate::proto::{JsonRpcRequest, JsonRpcResponse, decode_request, encode_response};
+use super::PaymobGrpcService;
+use super::error::{map_error_to_grpc_status, map_sandbox_error_to_grpc_status};
+use super::proto::{JsonRpcRequest, JsonRpcResponse, decode_request, encode_response};
 
 /// Response returned by `GetHealth`.
 #[derive(Debug, Serialize)]
@@ -396,9 +396,10 @@ fn format_sandbox_warning(warning: &SandboxWarning) -> String {
         SandboxWarning::CredentialExpiringSoon {
             age_days,
             days_remaining,
-        } => format!(
-            "sandbox credentials expiring soon ({age_days} days old, {days_remaining} days remaining)"
-        ),
+        } => {
+            let msg = format!("{age_days} days old, {days_remaining} days remaining");
+            format!("sandbox credentials expiring soon ({msg})")
+        }
     }
 }
 
@@ -1027,12 +1028,16 @@ pub async fn dispatch(
         "GetHealth"
         | "CheckSandboxConstraints"
         | "BuildPixelConfig"
-        | "BuildAffordabilityWidget" => Some(dispatch_core_and_checkout(service, method, req).await),
+        | "BuildAffordabilityWidget" => {
+            Some(dispatch_core_and_checkout(service, method, req).await)
+        }
         "CreateIntention"
         | "UpdateIntention"
         | "CreateLegacyOrder"
         | "CreateLegacyPaymentKey"
-        | "CreateLegacyCheckout" => Some(dispatch_intentions_and_legacy(service, method, req).await),
+        | "CreateLegacyCheckout" => {
+            Some(dispatch_intentions_and_legacy(service, method, req).await)
+        }
         "RefundTransaction"
         | "VoidTransaction"
         | "CaptureTransaction"

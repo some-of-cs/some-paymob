@@ -372,10 +372,10 @@ async fn e2e_merchant_scoped_rpcs_return_ok() {
         "special_reference": "ref-m",
         "amount": 12_000
     });
-    let tx_inq = json!({ "mid": 12345, "transaction_id": 192036465 });
+    let tx_inq = json!({ "mid": 12345, "tx_id": 192036465 });
     let ord_inq = json!({ "mid": 12345, "order_id": 1 });
-    let tx_void = json!({ "mid": 12345, "transaction_id": 100 });
-    let tx_amt = json!({ "mid": 12345, "transaction_id": 100, "amount_cents": 5000 });
+    let tx_void = json!({ "mid": 12345, "tx_id": 100 });
+    let tx_amt = json!({ "mid": 12345, "tx_id": 100, "amount_cents": 5000 });
     assert_rpc_ok(&service, "ScopedCreateIntention", &create).await;
     assert_rpc_ok(&service, "ScopedUpdateIntention", &upd).await;
     assert_rpc_ok(&service, "ScopedUpdateIntention", &upd_cs).await;

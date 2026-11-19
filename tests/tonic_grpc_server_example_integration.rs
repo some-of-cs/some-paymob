@@ -2,6 +2,7 @@
 //! Full Edge/Error/Negative Integration Test Suite for `examples/tonic_grpc_server.rs`.
 
 #[path = "../examples/tonic_grpc_server.rs"]
+#[allow(dead_code)]
 mod tonic_grpc_server;
 
 #[path = "tonic_grpc_server_example_integration/negative_and_error_workflows.rs"]

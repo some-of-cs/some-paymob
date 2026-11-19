@@ -9,12 +9,14 @@ use super::proto::{JsonRpcRequest, JsonRpcResponse};
 macro_rules! rpc_call {
     ($req:expr, |mut $payload:ident : $ty:ty| $expr:expr) => {{
         let mut $payload: $ty = super::super::proto::decode_request($req)?;
-        let out = ($expr).map_err(super::super::error::map_error_to_grpc_status)?;
+        let out: Result<_, some_paymob::PaymobError> = $expr;
+        let out = out.map_err(super::super::error::map_error_to_grpc_status)?;
         super::super::proto::encode_response(&out)
     }};
     ($req:expr, |$payload:ident : $ty:ty| $expr:expr) => {{
         let $payload: $ty = super::super::proto::decode_request($req)?;
-        let out = ($expr).map_err(super::super::error::map_error_to_grpc_status)?;
+        let out: Result<_, some_paymob::PaymobError> = $expr;
+        let out = out.map_err(super::super::error::map_error_to_grpc_status)?;
         super::super::proto::encode_response(&out)
     }};
 }

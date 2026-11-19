@@ -8,8 +8,9 @@ use some_paymob::resources::inquiries::TransactionInquiryParams;
 use some_paymob::{
     CaptureParams, CreateIntentionParams, CreateIntentionParamsBuilder, CreatePartnerApiKeyParams,
     Currency, IntentionResponse, MerchantScopedClient, MinorUnitAmount, OnboardingSchemaQuery,
-    PartnerLoginCredentials, PaymentMethodInput, PaymobError, RefundParams, RegisterMerchantParams,
-    SubmitOnboardingStepParams, UpdateIntentionParams, UpdateIntentionParamsBuilder, VoidParams,
+    PartnerHmacEnvelope, PartnerLoginCredentials, PaymentMethodInput, PaymobError, RefundParams,
+    RegisterMerchantParams, SubmitOnboardingStepParams, UpdateIntentionParams,
+    UpdateIntentionParamsBuilder, VoidParams,
 };
 use tonic::{Request, Response, Status};
 
@@ -21,6 +22,29 @@ use super::{RpcHandler, run_rpc};
 macro_rules! rpc_entry {
     ($name:literal, $func:ident) => {
         ($name, |s, r| Box::pin($func(s, r)))
+    };
+}
+
+macro_rules! onboarding_rpc {
+    ($fn_name:ident, $input_ty:ty, |$service:ident, $input:ident| $body:expr) => {
+        async fn $fn_name(
+            $service: &PaymobGrpcService,
+            req: Request<JsonRpcRequest>,
+        ) -> Result<Response<JsonRpcResponse>, Status> {
+            run_rpc(req, |$input: $input_ty| async move { $body }).await
+        }
+    };
+}
+
+macro_rules! scoped_rpc {
+    ($fn_name:ident, $input_ty:ty, |$scoped:ident, $input:ident| $body:expr) => {
+        async fn $fn_name(
+            service: &PaymobGrpcService,
+            req: Request<JsonRpcRequest>,
+        ) -> Result<Response<JsonRpcResponse>, Status> {
+            let $input: $input_ty = decode_request(req)?;
+            run_scoped(service, $input.mid, |$scoped| async move { $body }).await
+        }
     };
 }
 
@@ -174,6 +198,15 @@ struct ScopedCaptureInput {
     params: CaptureParams,
 }
 
+fn partner_hmac_ack(env: &PartnerHmacEnvelope) -> PartnerHmacAck {
+    PartnerHmacAck {
+        status: env.status.clone(),
+        code: env.code,
+        label: env.label.clone(),
+        hmac_present: !env.hmac_secret().is_empty(),
+    }
+}
+
 fn intention_summary(resp: IntentionResponse) -> IntentionSummaryDto {
     IntentionSummaryDto {
         id: resp.id,
@@ -279,26 +312,19 @@ where
     encode_response(&resp)
 }
 
-async fn partner_login(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    run_rpc(req, |input: PartnerLoginInput| async move {
-        let creds = PartnerLoginCredentials::try_new(input.username, input.password)?;
-        let resp = service.client.onboarding().auth().login(creds).await?;
-        Ok(PartnerAuthAck {
-            authenticated: true,
-            token_present: !resp.token().is_empty(),
-        })
+onboarding_rpc!(partner_login, PartnerLoginInput, |service, input| {
+    let creds = PartnerLoginCredentials::try_new(input.username, input.password)?;
+    let resp = service.client.onboarding().auth().login(creds).await?;
+    Ok(PartnerAuthAck {
+        authenticated: true,
+        token_present: !resp.token().is_empty(),
     })
-    .await
-}
+});
 
-async fn create_partner_api_key(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    run_rpc(req, |params: CreatePartnerApiKeyParams| async move {
+onboarding_rpc!(
+    create_partner_api_key,
+    CreatePartnerApiKeyParams,
+    |service, params| {
         let resp = service
             .client
             .onboarding()
@@ -309,104 +335,86 @@ async fn create_partner_api_key(
             provisioned: !resp.api_key().is_empty(),
             label: resp.label.clone(),
         })
-    })
-    .await
-}
+    }
+);
 
-async fn retrieve_partner_hmac_secret(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    run_rpc(req, |_: serde_json::Value| async move {
+onboarding_rpc!(
+    retrieve_partner_hmac_secret,
+    serde_json::Value,
+    |service, _input| {
         let env = service
             .client
             .onboarding()
             .auth()
             .retrieve_hmac_secret()
             .await?;
-        Ok(PartnerHmacAck {
-            status: env.status.clone(),
-            code: env.code,
-            label: env.label.clone(),
-            hmac_present: !env.hmac_secret().is_empty(),
-        })
-    })
-    .await
-}
+        Ok(partner_hmac_ack(&env))
+    }
+);
 
-async fn retrieve_merchant_hmac_secret(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    run_rpc(req, |input: MerchantIdInput| async move {
+onboarding_rpc!(
+    retrieve_merchant_hmac_secret,
+    MerchantIdInput,
+    |service, input| {
         let env = service
             .client
             .onboarding()
             .auth()
             .retrieve_merchant_hmac_secret(input.mid)
             .await?;
-        Ok(PartnerHmacAck {
-            status: env.status.clone(),
-            code: env.code,
-            label: env.label.clone(),
-            hmac_present: !env.hmac_secret().is_empty(),
-        })
-    })
-    .await
-}
+        Ok(partner_hmac_ack(&env))
+    }
+);
 
-async fn register_partner_merchant(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    run_rpc(req, |params: RegisterMerchantParams| async move {
+onboarding_rpc!(
+    register_partner_merchant,
+    RegisterMerchantParams,
+    |service, params| {
         service
             .client
             .onboarding()
             .flow()
             .register_merchant(&params)
             .await
-    })
-    .await
-}
+    }
+);
 
-async fn get_onboarding_schema(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    run_rpc(req, |input: OnboardingSchemaInput| async move {
+onboarding_rpc!(
+    get_onboarding_schema,
+    OnboardingSchemaInput,
+    |service, input| {
         let mut query = OnboardingSchemaQuery::new(input.partner)?;
         query.resubmission = input.resubmission;
         query.paymob_mid = input.paymob_mid;
         service.client.onboarding().flow().get_schema(&query).await
-    })
-    .await
-}
+    }
+);
 
-async fn submit_onboarding_step(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    run_rpc(req, |params: SubmitOnboardingStepParams| async move {
-        service.client.onboarding().flow().submit_step(&params).await
-    })
-    .await
-}
+onboarding_rpc!(
+    submit_onboarding_step,
+    SubmitOnboardingStepParams,
+    |service, params| {
+        service
+            .client
+            .onboarding()
+            .flow()
+            .submit_step(&params)
+            .await
+    }
+);
 
-async fn inquire_partner_merchant(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    run_rpc(req, |input: MerchantIdInput| async move {
+onboarding_rpc!(
+    inquire_partner_merchant,
+    MerchantIdInput,
+    |service, input| {
         service
             .client
             .onboarding()
             .flow()
             .merchant_inquiry(input.mid)
             .await
-    })
-    .await
-}
+    }
+);
 
 async fn scoped_create_intention(
     service: &PaymobGrpcService,
@@ -444,42 +452,31 @@ async fn scoped_update_intention(
     .await
 }
 
-async fn scoped_inquire_transaction(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: ScopedTransactionInput = decode_request(req)?;
-    run_scoped(service, input.mid, |scoped| async move {
+scoped_rpc!(
+    scoped_inquire_transaction,
+    ScopedTransactionInput,
+    |scoped, input| {
         if input.raw {
             return scoped.inquiries().transaction_by_id(input.tx_id).await;
         }
         let tx = scoped.inquiries().transaction(input.tx_id).await?;
         Ok(serde_json::to_value(tx).unwrap_or_default())
-    })
-    .await
-}
+    }
+);
 
-async fn scoped_inquire_by_order(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: ScopedInquireByOrderInput = decode_request(req)?;
-    run_scoped(service, input.mid, |scoped| async move {
-        scoped.inquiries().by_order(&input.params).await
-    })
-    .await
-}
+scoped_rpc!(
+    scoped_inquire_by_order,
+    ScopedInquireByOrderInput,
+    |scoped, input| scoped.inquiries().by_order(&input.params).await
+);
 
-async fn scoped_refund(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: ScopedRefundInput = decode_request(req)?;
-    run_scoped(service, input.mid, |scoped| async move {
-        scoped.manage().refund(&input.params).await
-    })
-    .await
-}
+scoped_rpc!(scoped_refund, ScopedRefundInput, |scoped, input| {
+    scoped.manage().refund(&input.params).await
+});
+
+scoped_rpc!(scoped_capture, ScopedCaptureInput, |scoped, input| {
+    scoped.manage().capture(&input.params).await
+});
 
 async fn scoped_void(
     service: &PaymobGrpcService,
@@ -496,17 +493,6 @@ async fn scoped_void(
         .map_err(|err| Status::invalid_argument(format!("invalid_void_params: {err}")))?;
     run_scoped(service, input.mid, |scoped| async move {
         scoped.manage().void(&params).await
-    })
-    .await
-}
-
-async fn scoped_capture(
-    service: &PaymobGrpcService,
-    req: Request<JsonRpcRequest>,
-) -> Result<Response<JsonRpcResponse>, Status> {
-    let input: ScopedCaptureInput = decode_request(req)?;
-    run_scoped(service, input.mid, |scoped| async move {
-        scoped.manage().capture(&input.params).await
     })
     .await
 }

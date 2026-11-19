@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Unit 4: Positive E2E and boundary condition integration tests for `examples/tonic_grpc_server.rs`.
+//! Unit 4: Positive E2E and boundary integration tests for `examples/tonic_grpc_server.rs`.
 
 use std::sync::Arc;
 
@@ -25,9 +25,7 @@ use tonic::client::Grpc;
 use tonic::codec::ProstCodec;
 use tonic::{Code, Request, Status};
 
-use super::tonic_grpc_server::proto::{
-    JsonRpcRequest, JsonRpcResponse, PAYMOB_GRPC_SERVICE_NAME,
-};
+use super::tonic_grpc_server::proto::{JsonRpcRequest, JsonRpcResponse, PAYMOB_GRPC_SERVICE_NAME};
 use super::tonic_grpc_server::{PaymobGrpcService, build_grpc_server};
 
 fn build_test_client(server: &PaymobMockServer) -> PaymobClient {
@@ -237,22 +235,8 @@ async fn setup_manage_mocks(server: &PaymobMockServer) {
         "is_captured": true,
         "amount_cents": 5000
     });
-    mount_accept(
-        server,
-        "POST",
-        "/api/acceptance/void_refund/refund",
-        200,
-        refund_tx,
-    )
-    .await;
-    mount_accept(
-        server,
-        "POST",
-        "/api/acceptance/void_refund/void",
-        200,
-        void_tx,
-    )
-    .await;
+    mount_accept(server, "POST", "/api/acceptance/void_refund/refund", 200, refund_tx).await;
+    mount_accept(server, "POST", "/api/acceptance/void_refund/void", 200, void_tx).await;
     mount_accept(server, "POST", "/api/acceptance/capture", 200, cap_tx).await;
 }
 
@@ -291,30 +275,9 @@ async fn setup_inquiries_mocks(server: &PaymobMockServer) {
         tx_body.clone(),
     )
     .await;
-    mount_accept(
-        server,
-        "POST",
-        "/api/ecommerce/orders/transaction_inquiry",
-        200,
-        tx_body,
-    )
-    .await;
-    mount_accept(
-        server,
-        "GET",
-        "/api/ecommerce/orders/217503754",
-        200,
-        ord_body,
-    )
-    .await;
-    mount_accept(
-        server,
-        "POST",
-        "/api/acceptance/order_card_tokens",
-        200,
-        tok_body,
-    )
-    .await;
+    mount_accept(server, "POST", "/api/ecommerce/orders/transaction_inquiry", 200, tx_body).await;
+    mount_accept(server, "GET", "/api/ecommerce/orders/217503754", 200, ord_body).await;
+    mount_accept(server, "POST", "/api/acceptance/order_card_tokens", 200, tok_body).await;
 }
 
 async fn setup_quicklinks_mocks(server: &PaymobMockServer) {
@@ -353,30 +316,9 @@ async fn setup_subscription_plans_mocks(server: &PaymobMockServer) {
         "previous": null,
         "results": [plan.clone()]
     });
-    mount_accept(
-        server,
-        "POST",
-        "/api/acceptance/subscription-plans",
-        201,
-        plan.clone(),
-    )
-    .await;
-    mount_accept(
-        server,
-        "PUT",
-        "/api/acceptance/subscription-plans/701",
-        200,
-        plan.clone(),
-    )
-    .await;
-    mount_accept(
-        server,
-        "GET",
-        "/api/acceptance/subscription-plans",
-        200,
-        page,
-    )
-    .await;
+    mount_accept(server, "POST", "/api/acceptance/subscription-plans", 201, plan.clone()).await;
+    mount_accept(server, "PUT", "/api/acceptance/subscription-plans/701", 200, plan.clone()).await;
+    mount_accept(server, "GET", "/api/acceptance/subscription-plans", 200, page).await;
     mount_accept(
         server,
         "POST",
@@ -385,14 +327,7 @@ async fn setup_subscription_plans_mocks(server: &PaymobMockServer) {
         plan.clone(),
     )
     .await;
-    mount_accept(
-        server,
-        "POST",
-        "/api/acceptance/subscription-plans/701/resume",
-        200,
-        plan,
-    )
-    .await;
+    mount_accept(server, "POST", "/api/acceptance/subscription-plans/701/resume", 200, plan).await;
 }
 
 async fn setup_subscriptions_lifecycle_mocks(server: &PaymobMockServer) {
@@ -413,23 +348,9 @@ async fn setup_subscriptions_lifecycle_mocks(server: &PaymobMockServer) {
         "results": [sub.clone()]
     });
     mount_accept(server, "POST", "/v1/intention/", 201, enroll).await;
-    mount_accept(
-        server,
-        "GET",
-        "/api/acceptance/subscriptions/1264",
-        200,
-        sub.clone(),
-    )
-    .await;
+    mount_accept(server, "GET", "/api/acceptance/subscriptions/1264", 200, sub.clone()).await;
     mount_accept(server, "GET", "/api/acceptance/subscriptions", 200, list).await;
-    mount_accept(
-        server,
-        "PUT",
-        "/api/acceptance/subscriptions/1264",
-        200,
-        sub.clone(),
-    )
-    .await;
+    mount_accept(server, "PUT", "/api/acceptance/subscriptions/1264", 200, sub.clone()).await;
     mount_accept(
         server,
         "POST",
@@ -446,14 +367,7 @@ async fn setup_subscriptions_lifecycle_mocks(server: &PaymobMockServer) {
         sub.clone(),
     )
     .await;
-    mount_accept(
-        server,
-        "POST",
-        "/api/acceptance/subscriptions/1264/cancel",
-        200,
-        sub,
-    )
-    .await;
+    mount_accept(server, "POST", "/api/acceptance/subscriptions/1264/cancel", 200, sub).await;
 }
 
 async fn setup_subscription_cards_and_history_mocks(server: &PaymobMockServer) {
@@ -528,14 +442,7 @@ async fn setup_subscription_cards_and_history_mocks(server: &PaymobMockServer) {
         json!([tx]),
     )
     .await;
-    mount_accept(
-        server,
-        "POST",
-        "/api/acceptance/void_refund/refund",
-        200,
-        refund,
-    )
-    .await;
+    mount_accept(server, "POST", "/api/acceptance/void_refund/refund", 200, refund).await;
 }
 
 async fn setup_payouts_cashin_mocks(server: &PaymobMockServer) {
@@ -555,14 +462,7 @@ async fn setup_payouts_cashin_mocks(server: &PaymobMockServer) {
     });
     mount_payouts(server, "POST", "/api/secure/o/token/", 200, tok).await;
     mount_payouts(server, "POST", "/api/secure/disburse/", 200, disb.clone()).await;
-    mount_payouts(
-        server,
-        "POST",
-        "/api/secure/transaction/aman/cancel/",
-        200,
-        disb.clone(),
-    )
-    .await;
+    mount_payouts(server, "POST", "/api/secure/transaction/aman/cancel/", 200, disb.clone()).await;
     mount_payouts(
         server,
         "POST",
@@ -585,14 +485,7 @@ async fn setup_payouts_inquiries_and_topups_mocks(server: &PaymobMockServer) {
         "type": "from_bank_transfer",
         "currency": "egyptian_pound"
     });
-    mount_payouts(
-        server,
-        "POST",
-        "/api/secure/transaction/inquire/",
-        200,
-        inq.clone(),
-    )
-    .await;
+    mount_payouts(server, "POST", "/api/secure/transaction/inquire/", 200, inq.clone()).await;
     mount_payouts(
         server,
         "POST",
@@ -648,22 +541,8 @@ async fn setup_onboarding_mocks(server: &PaymobMockServer) {
         json!({ "api_key": "pk_partner_999", "label": "main" }),
     )
     .await;
-    mount_accept(
-        server,
-        "GET",
-        "/api/auth/hmac_secret/get_hmac",
-        200,
-        hmac_env.clone(),
-    )
-    .await;
-    mount_accept(
-        server,
-        "GET",
-        "/api/partner/merchants/hmac_secret/12345",
-        200,
-        hmac_env,
-    )
-    .await;
+    mount_accept(server, "GET", "/api/auth/hmac_secret/get_hmac", 200, hmac_env.clone()).await;
+    mount_accept(server, "GET", "/api/partner/merchants/hmac_secret/12345", 200, hmac_env).await;
     mount_accept(server, "GET", "/api/onboarding/flow/schema", 200, schema).await;
     mount_accept(
         server,
@@ -712,14 +591,7 @@ async fn setup_scoped_and_unified_mocks(server: &PaymobMockServer) {
         tx_ok.clone(),
     )
     .await;
-    mount_accept(
-        server,
-        "POST",
-        "/api/ecommerce/orders/transaction_inquiry",
-        200,
-        tx_ok,
-    )
-    .await;
+    mount_accept(server, "POST", "/api/ecommerce/orders/transaction_inquiry", 200, tx_ok).await;
     mount_accept(server, "POST", "/api/acceptance/payments/pay", 200, pay_ok).await;
     setup_manage_mocks(server).await;
     setup_subscription_cards_and_history_mocks(server).await;
@@ -795,6 +667,7 @@ async fn assert_non_wallet_cashin_rpcs(service: &PaymobGrpcService) {
 // Positive E2E Tests: All 14 Services & Protocols A-E (Code::Ok)
 // ---------------------------------------------------------------------------
 
+/// Verifies `GetHealth` and `CheckSandboxConstraints` return `Code::Ok`.
 #[tokio::test]
 async fn e2e_health_and_sandbox_check_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -808,6 +681,7 @@ async fn e2e_health_and_sandbox_check_return_ok() {
     assert_rpc_ok(&service, "CheckSandboxConstraints", &check_body).await;
 }
 
+/// Verifies `CreateIntention` and `UpdateIntention` return `Code::Ok`.
 #[tokio::test]
 async fn e2e_intentions_create_and_update_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -831,6 +705,7 @@ async fn e2e_intentions_create_and_update_return_ok() {
     assert_rpc_ok(&service, "UpdateIntention", &update_req).await;
 }
 
+/// Verifies `BuildPixelConfig` and `BuildAffordabilityWidget` return `Code::Ok`.
 #[tokio::test]
 async fn e2e_checkout_pixel_and_affordability_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -841,6 +716,7 @@ async fn e2e_checkout_pixel_and_affordability_return_ok() {
     assert_rpc_ok(&service, "BuildAffordabilityWidget", &afford_req).await;
 }
 
+/// Verifies legacy v2 order, payment key, and checkout RPCs return `Code::Ok`.
 #[tokio::test]
 async fn e2e_legacy_v2_orders_payment_keys_and_checkout_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -866,6 +742,7 @@ async fn e2e_legacy_v2_orders_payment_keys_and_checkout_return_ok() {
     assert_rpc_ok(&service, "CreateLegacyCheckout", &chk_req).await;
 }
 
+/// Verifies refund, void, and capture RPCs across Regime 1 and Legacy v2 bearer.
 #[tokio::test]
 async fn e2e_manage_refund_void_capture_and_legacy_bearer_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -887,32 +764,20 @@ async fn e2e_manage_refund_void_capture_and_legacy_bearer_return_ok() {
     assert_rpc_ok(&service, "CaptureTransaction", &cap_v2).await;
 }
 
+/// Verifies transaction, order, and card token inquiry RPCs return `Code::Ok`.
 #[tokio::test]
 async fn e2e_inquiries_tx_order_and_card_tokens_return_ok() {
     let server = PaymobMockServer::start().await;
     setup_inquiries_mocks(&server).await;
     let service = build_grpc_service(&server);
-    assert_rpc_ok(
-        &service,
-        "InquireTransactionById",
-        &json!({ "transaction_id": 192036465 }),
-    )
-    .await;
-    assert_rpc_ok(
-        &service,
-        "InquireTransactionByOrder",
-        &json!({ "order_id": 217503754 }),
-    )
-    .await;
+    assert_rpc_ok(&service, "InquireTransactionById", &json!({ "transaction_id": 192036465 }))
+        .await;
+    assert_rpc_ok(&service, "InquireTransactionByOrder", &json!({ "order_id": 217503754 })).await;
     assert_rpc_ok(&service, "InquireOrder", &json!({ "order_id": 217503754 })).await;
-    assert_rpc_ok(
-        &service,
-        "ListOrderCardTokens",
-        &json!({ "order_id": 217503754 }),
-    )
-    .await;
+    assert_rpc_ok(&service, "ListOrderCardTokens", &json!({ "order_id": 217503754 })).await;
 }
 
+/// Verifies QuickLinks create/cancel and split fee calculation RPCs return `Code::Ok`.
 #[tokio::test]
 async fn e2e_quicklinks_and_splits_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -928,6 +793,7 @@ async fn e2e_quicklinks_and_splits_return_ok() {
     assert_rpc_ok(&service, "ValidateSplitsAndCalculateFee", &sp_req).await;
 }
 
+/// Verifies saved-card MIT, wallet, kiosk, and raw pay RPCs return `Code::Ok`.
 #[tokio::test]
 async fn e2e_saved_cards_mit_wallet_kiosk_and_raw_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -953,6 +819,7 @@ async fn e2e_saved_cards_mit_wallet_kiosk_and_raw_return_ok() {
     assert_rpc_ok(&service, "PayRaw", &raw).await;
 }
 
+/// Verifies subscription plan CRUD, list, suspend, and resume RPCs return `Code::Ok`.
 #[tokio::test]
 async fn e2e_subscription_plans_crud_and_suspend_resume_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -973,6 +840,7 @@ async fn e2e_subscription_plans_crud_and_suspend_resume_return_ok() {
     assert_rpc_ok(&service, "ResumeSubscriptionPlan", &plan_ref).await;
 }
 
+/// Verifies subscription lifecycle RPCs return `Code::Ok`.
 #[tokio::test]
 async fn e2e_subscriptions_lifecycle_rpcs_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -996,16 +864,24 @@ async fn e2e_subscriptions_lifecycle_rpcs_return_ok() {
     assert_rpc_ok(&service, "CancelSubscription", &sub_ref).await;
 }
 
+/// Verifies subscription cards, webhook, history, and last-tx refund RPCs return `Code::Ok`.
 #[tokio::test]
 async fn e2e_subscription_cards_and_history_rpcs_return_ok() {
     let server = PaymobMockServer::start().await;
     setup_subscription_cards_and_history_mocks(&server).await;
     let service = build_grpc_service(&server);
     let sub_ref = json!({ "subscription_id": 1264 });
-    let sec_req = json!({ "subscription_id": 1264, "card_token": "tok_sec_2", "integration_id": 4097558 });
+    let sec_req = json!({
+        "subscription_id": 1264,
+        "card_token": "tok_sec_2",
+        "integration_id": 4097558
+    });
     let pri_req = json!({ "subscription_id": 1264, "card_id": 374 });
     let del_req = json!({ "subscription_id": 1264, "card_id": 374 });
-    let wh_req = json!({ "subscription_id": 1264, "webhook_url": "https://merchant.example.com/hook" });
+    let wh_req = json!({
+        "subscription_id": 1264,
+        "webhook_url": "https://merchant.example.com/hook"
+    });
     let ref_req = json!({ "subscription_id": 1264, "amount_cents": 5000 });
     assert_rpc_ok(&service, "ListSubscriptionCards", &sub_ref).await;
     assert_rpc_ok(&service, "AddSecondarySubscriptionCard", &sec_req).await;
@@ -1017,6 +893,7 @@ async fn e2e_subscription_cards_and_history_rpcs_return_ok() {
     assert_rpc_ok(&service, "RefundSubscriptionLastTransaction", &ref_req).await;
 }
 
+/// Verifies payouts auth token, 7 cashin issuers, Aman cancel, and bulk cashin return `Code::Ok`.
 #[tokio::test]
 async fn e2e_payouts_auth_and_all_7_cashin_issuers_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -1032,6 +909,7 @@ async fn e2e_payouts_auth_and_all_7_cashin_issuers_return_ok() {
     assert_non_wallet_cashin_rpcs(&service).await;
 }
 
+/// Verifies payouts inquiry, budget, and topup RPCs return `Code::Ok`.
 #[tokio::test]
 async fn e2e_payouts_inquiries_budget_and_topups_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -1053,6 +931,7 @@ async fn e2e_payouts_inquiries_budget_and_topups_return_ok() {
     assert_rpc_ok(&service, "RequestAcceptBalanceTopup", &acc_req).await;
 }
 
+/// Verifies partner onboarding auth and flow RPCs return `Code::Ok`.
 #[tokio::test]
 async fn e2e_onboarding_auth_and_flow_rpcs_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -1077,28 +956,42 @@ async fn e2e_onboarding_auth_and_flow_rpcs_return_ok() {
     assert_rpc_ok(&service, "InquireOnboardingMerchant", &json!({ "merchant_id": 12345 })).await;
 }
 
+/// Verifies merchant-scoped intention, inquiry, and manage RPCs return `Code::Ok`.
 #[tokio::test]
 async fn e2e_merchant_scoped_rpcs_return_ok() {
     let server = PaymobMockServer::start().await;
     setup_scoped_and_unified_mocks(&server).await;
     let service = build_grpc_service(&server);
-    let create = json!({ "merchant_id": 12345, "amount": 10_000, "currency": "EGP", "payment_methods": [4097558] });
+    let create = json!({
+        "merchant_id": 12345,
+        "amount": 10_000,
+        "currency": "EGP",
+        "payment_methods": [4097558]
+    });
     let upd = json!({ "merchant_id": 12345, "special_reference": "ref-m", "amount": 12_000 });
-    let upd_cs = json!({ "merchant_id": 12345, "client_secret": "egy_csk_u4", "special_reference": "ref-m", "amount": 12_000 });
+    let upd_cs = json!({
+        "merchant_id": 12345,
+        "client_secret": "egy_csk_u4",
+        "special_reference": "ref-m",
+        "amount": 12_000
+    });
     let tx_inq = json!({ "merchant_id": 12345, "transaction_id": 192036465 });
+    let ord_inq = json!({ "merchant_id": 12345, "order_id": 1 });
+    let tx_void = json!({ "merchant_id": 12345, "transaction_id": 100 });
     let tx_amt = json!({ "merchant_id": 12345, "transaction_id": 100, "amount_cents": 5000 });
     assert_rpc_ok(&service, "ScopedCreateIntention", &create).await;
     assert_rpc_ok(&service, "ScopedUpdateIntention", &upd).await;
     assert_rpc_ok(&service, "ScopedUpdateIntentionByClientSecret", &upd_cs).await;
     assert_rpc_ok(&service, "ScopedInquireTransactionById", &tx_inq).await;
     assert_rpc_ok(&service, "ScopedInquireTransactionRaw", &tx_inq).await;
-    assert_rpc_ok(&service, "ScopedInquireTransactionByOrder", &json!({ "merchant_id": 12345, "order_id": 1 })).await;
-    assert_rpc_ok(&service, "ScopedVoidTransaction", &json!({ "merchant_id": 12345, "transaction_id": 100 })).await;
-    assert_rpc_ok(&service, "ScopedVoidTransactionById", &json!({ "merchant_id": 12345, "transaction_id": 100 })).await;
+    assert_rpc_ok(&service, "ScopedInquireTransactionByOrder", &ord_inq).await;
+    assert_rpc_ok(&service, "ScopedVoidTransaction", &tx_void).await;
+    assert_rpc_ok(&service, "ScopedVoidTransactionById", &tx_void).await;
     assert_rpc_ok(&service, "ScopedCaptureTransaction", &tx_amt).await;
     assert_rpc_ok(&service, "ScopedRefundTransaction", &tx_amt).await;
 }
 
+/// Verifies all unified payment adapter RPCs return `Code::Ok`.
 #[tokio::test]
 async fn e2e_unified_adapter_all_rpcs_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -1126,6 +1019,7 @@ async fn e2e_unified_adapter_all_rpcs_return_ok() {
     assert_rpc_ok(&service, "UnifiedVerifyWebhook", &wh_req).await;
 }
 
+/// Verifies webhook verification across Protocols A through E returns `Code::Ok`.
 #[tokio::test]
 async fn e2e_webhooks_protocols_a_through_e_return_ok() {
     let server = PaymobMockServer::start().await;
@@ -1156,6 +1050,7 @@ async fn e2e_webhooks_protocols_a_through_e_return_ok() {
 // Boundary Condition Tests (SDK + Tonic gRPC Status Verification)
 // ---------------------------------------------------------------------------
 
+/// Verifies amount boundaries at 0, 1, and `u64::MAX` overflow.
 #[tokio::test]
 async fn boundary_amount_zero_one_and_u64_max_overflow() {
     let server = PaymobMockServer::start().await;
@@ -1174,6 +1069,7 @@ async fn boundary_amount_zero_one_and_u64_max_overflow() {
     assert_rpc_ok(&service, "RefundTransaction", &one_ref).await;
 }
 
+/// Verifies bulk disbursement boundaries at 0, 1, 1,000, and 1,001 items.
 #[tokio::test]
 async fn boundary_bulk_disbursements_0_1_1000_1001_items() {
     let server = PaymobMockServer::start().await;
@@ -1185,6 +1081,7 @@ async fn boundary_bulk_disbursements_0_1_1000_1001_items() {
     assert_rpc_code(&service, "BulkCashin", &bulk_items_json(1_001), Code::InvalidArgument).await;
 }
 
+/// Verifies payouts inquiry ID batch boundaries at 0, 1, 500, 501, 1,000, and 1,001.
 #[tokio::test]
 async fn boundary_inquiry_ids_0_1_500_501() {
     let server = PaymobMockServer::start().await;
@@ -1198,6 +1095,7 @@ async fn boundary_inquiry_ids_0_1_500_501() {
     assert_rpc_code(&service, method, &inquiry_ids_json(1_001), Code::InvalidArgument).await;
 }
 
+/// Verifies bank transfer proof byte-size boundaries at 0, max, and over-limit.
 #[tokio::test]
 async fn boundary_bank_transfer_proof_sizes_0_max_and_over() {
     let server = PaymobMockServer::start().await;
@@ -1212,14 +1110,12 @@ async fn boundary_bank_transfer_proof_sizes_0_max_and_over() {
     assert_rpc_code(&service, method, &topup_b64_json(&over_b64), Code::InvalidArgument).await;
 }
 
+/// Verifies split payment card count (0, 1, 3, 4) and recipient bps boundaries.
 #[tokio::test]
 async fn boundary_split_payments_cards_and_bps_not_10000() {
     let server = PaymobMockServer::start().await;
     let service = build_grpc_service(&server);
-    assert!(matches!(
-        SplitPaymentConfig::new(vec![]),
-        Err(PaymobError::ValidationError { .. })
-    ));
+    assert!(matches!(SplitPaymentConfig::new(vec![]), Err(PaymobError::ValidationError { .. })));
     assert!(SplitPaymentConfig::new(vec![SplitCardPortion::new(1_000)]).is_ok());
     assert!(SplitPaymentConfig::new(vec![SplitCardPortion::new(1_000); 3]).is_ok());
     assert!(SplitPaymentConfig::new(vec![SplitCardPortion::new(1_000); 4]).is_err());
@@ -1258,6 +1154,7 @@ fn sandbox_card_json(age: u64) -> Value {
     })
 }
 
+/// Verifies `SandboxGuard` credential age boundaries at 24, 25, and 30 days.
 #[tokio::test]
 async fn boundary_sandbox_guard_credential_age_24_25_30_days() {
     let server = PaymobMockServer::start().await;

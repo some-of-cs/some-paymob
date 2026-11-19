@@ -56,6 +56,7 @@ pub(super) fn build_grpc_service(server: &PaymobMockServer) -> PaymobGrpcService
     PaymobGrpcService::new(client, webhook_engine, deduplicator)
 }
 
+#[allow(clippy::result_large_err)]
 pub(super) async fn call_rpc(
     service: &PaymobGrpcService,
     method: &str,

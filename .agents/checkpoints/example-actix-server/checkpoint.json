@@ -3,7 +3,16 @@
   "module_branch": "feat/example-actix-server",
   "story_branch": "feat/us-actix-server-and-tests",
   "base_branch": "main",
-  "status": "unit_5_ready",
+  "status": "ready_for_main",
+  "story_pr": {
+    "pr_number": 150,
+    "status": "merged",
+    "merge_sha": "9af93e960aed8c01a113019243d1e4c02449597f"
+  },
+  "module_pr": {
+    "pr_number": 151,
+    "status": "in_review"
+  },
   "units": [
     {
       "unit_id": "unit-1",
@@ -36,7 +45,9 @@
     {
       "unit_id": "unit-5",
       "branch": "feat/us-actix/unit-5-integration-tests-negative-and-error-workflows",
-      "status": "in_review"
+      "pr_number": 152,
+      "status": "merged",
+      "merge_sha": "13abe0b33507954e80c5591fe4499314862fc455"
     }
   ]
 }

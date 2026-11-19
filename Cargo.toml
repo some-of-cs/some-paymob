@@ -55,6 +55,9 @@ wiremock = { version = "0.6", optional = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
+http = "1"
+prost = "0.13"
+tonic = "0.12"
 axum = { version = "0.8", features = ["macros"] }
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
@@ -73,4 +76,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [[example]]
 name = "axum_server"
+required-features = ["full"]
+
+[[example]]
+name = "tonic_grpc_server"
 required-features = ["full"]

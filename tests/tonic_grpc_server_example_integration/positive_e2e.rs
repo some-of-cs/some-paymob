@@ -256,7 +256,7 @@ async fn e2e_subscription_cards_and_history_rpcs_return_ok() {
     assert_rpc_ok(&service, "AddSecondarySubscriptionCard", &sec_req).await;
     assert_rpc_ok(&service, "ChangePrimarySubscriptionCard", &pri_req).await;
     assert_rpc_ok(&service, "DeleteSecondarySubscriptionCard", &del_req).await;
-    assert_rpc_ok(&service, "UpdateSubscriptionWebhook", &wh_req).await;
+    assert_rpc_ok(&service, "RegisterSubscriptionWebhook", &wh_req).await;
     assert_rpc_ok(&service, "GetSubscriptionLastTransaction", &sub_ref).await;
     assert_rpc_ok(&service, "ListSubscriptionTransactions", &sub_ref).await;
     assert_rpc_ok(&service, "RefundSubscriptionLastTransaction", &ref_req).await;
@@ -273,7 +273,7 @@ async fn e2e_payouts_auth_and_all_7_cashin_issuers_return_ok() {
     assert_rpc_ok(&service, "RefreshPayoutsToken", &ref_req).await;
     for issuer in ["vodafone", "etisalat", "orange", "bank_wallet"] {
         let wal_req = json!({ "issuer": issuer, "msisdn": "01023456789", "amount": 200 });
-        assert_rpc_ok(&service, "CashinWallet", &wal_req).await;
+        assert_rpc_ok(&service, "DisburseMobileWallet", &wal_req).await;
     }
     assert_non_wallet_cashin_rpcs(&service).await;
 }
@@ -293,7 +293,7 @@ async fn e2e_payouts_inquiries_budget_and_topups_return_ok() {
         "username": "merchant_user"
     });
     assert_rpc_ok(&service, "InquirePayoutTransactions", &tx_req).await;
-    assert_rpc_ok(&service, "InquirePayoutsByReference", &ref_req).await;
+    assert_rpc_ok(&service, "InquirePayoutByReference", &ref_req).await;
     assert_rpc_ok(&service, "InquirePayoutsBudget", &json!({})).await;
     assert_rpc_ok(&service, "InquirePayoutsTopups", &topup_inq).await;
     assert_rpc_ok(
@@ -315,7 +315,7 @@ async fn e2e_onboarding_auth_rpcs_return_ok() {
     assert_rpc_ok(&service, "PartnerLogin", &login).await;
     assert_rpc_ok(
         &service,
-        "CreateOnboardingApiKey",
+        "CreatePartnerApiKey",
         &json!({ "label": "main" }),
     )
     .await;
@@ -348,7 +348,7 @@ async fn e2e_onboarding_flow_rpcs_return_ok() {
         &json!({ "partner": "acme-partner" }),
     )
     .await;
-    assert_rpc_ok(&service, "RegisterOnboardingMerchant", &reg).await;
+    assert_rpc_ok(&service, "RegisterPartnerMerchant", &reg).await;
     assert_rpc_ok(&service, "SubmitOnboardingFlowStep", &step).await;
     assert_rpc_ok(
         &service,
@@ -383,7 +383,7 @@ async fn e2e_merchant_scoped_rpcs_return_ok() {
     let tx_amt = json!({ "mid": 12345, "transaction_id": 100, "amount_cents": 5000 });
     assert_rpc_ok(&service, "ScopedCreateIntention", &create).await;
     assert_rpc_ok(&service, "ScopedUpdateIntention", &upd).await;
-    assert_rpc_ok(&service, "ScopedUpdateIntentionByClientSecret", &upd_cs).await;
+    assert_rpc_ok(&service, "ScopedUpdateIntention", &upd_cs).await;
     assert_rpc_ok(&service, "ScopedInquireTransactionById", &tx_inq).await;
     assert_rpc_ok(&service, "ScopedInquireTransactionRaw", &tx_inq).await;
     assert_rpc_ok(&service, "ScopedInquireTransactionByOrder", &ord_inq).await;
@@ -415,7 +415,7 @@ async fn e2e_unified_adapter_all_rpcs_return_ok() {
     assert_rpc_ok(&service, "UnifiedVoid", &json!({ "transaction_id": 100 })).await;
     assert_rpc_ok(&service, "UnifiedChargeSavedMethod", &chg).await;
     assert_rpc_ok(&service, "UnifiedRefundSubscription", &sub_ref).await;
-    assert_rpc_ok(&service, "UnifiedPayout", &po).await;
+    assert_rpc_ok(&service, "UnifiedExecutePayout", &po).await;
     let tx_vec = transaction_processed_192036465();
     let wh_req = json!({ "hmac": tx_vec.expected_hmac_hex, "payload": tx_vec.payload_or_query });
     assert_rpc_ok(&service, "UnifiedVerifyWebhook", &wh_req).await;

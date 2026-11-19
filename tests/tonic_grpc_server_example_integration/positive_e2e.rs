@@ -294,8 +294,8 @@ async fn e2e_payouts_inquiries_budget_and_topups_return_ok() {
     });
     assert_rpc_ok(&service, "InquirePayoutTransactions", &tx_req).await;
     assert_rpc_ok(&service, "InquirePayoutByReference", &ref_req).await;
-    assert_rpc_ok(&service, "InquirePayoutsBudget", &json!({})).await;
-    assert_rpc_ok(&service, "InquirePayoutsTopups", &topup_inq).await;
+    assert_rpc_ok(&service, "InquirePayoutUserBudget", &json!({})).await;
+    assert_rpc_ok(&service, "InquirePayoutTopups", &topup_inq).await;
     assert_rpc_ok(
         &service,
         "RequestBankTransferTopup",
@@ -314,10 +314,10 @@ async fn e2e_onboarding_auth_rpcs_return_ok() {
     let login = json!({ "username": "partner@example.com", "password": "secret-password" });
     assert_rpc_ok(&service, "PartnerLogin", &login).await;
     assert_rpc_ok(&service, "CreatePartnerApiKey", &json!({ "label": "main" })).await;
-    assert_rpc_ok(&service, "GetOnboardingHmacSecret", &json!({})).await;
+    assert_rpc_ok(&service, "RetrievePartnerHmacSecret", &json!({})).await;
     assert_rpc_ok(
         &service,
-        "GetMerchantHmacSecret",
+        "RetrieveMerchantHmacSecret",
         &json!({ "merchant_id": 12345 }),
     )
     .await;
@@ -344,10 +344,10 @@ async fn e2e_onboarding_flow_rpcs_return_ok() {
     )
     .await;
     assert_rpc_ok(&service, "RegisterPartnerMerchant", &reg).await;
-    assert_rpc_ok(&service, "SubmitOnboardingFlowStep", &step).await;
+    assert_rpc_ok(&service, "SubmitOnboardingStep", &step).await;
     assert_rpc_ok(
         &service,
-        "InquireOnboardingMerchant",
+        "InquirePartnerMerchant",
         &json!({ "merchant_id": 12345 }),
     )
     .await;
@@ -379,13 +379,13 @@ async fn e2e_merchant_scoped_rpcs_return_ok() {
     assert_rpc_ok(&service, "ScopedCreateIntention", &create).await;
     assert_rpc_ok(&service, "ScopedUpdateIntention", &upd).await;
     assert_rpc_ok(&service, "ScopedUpdateIntention", &upd_cs).await;
-    assert_rpc_ok(&service, "ScopedInquireTransactionById", &tx_inq).await;
-    assert_rpc_ok(&service, "ScopedInquireTransactionRaw", &tx_inq).await;
-    assert_rpc_ok(&service, "ScopedInquireTransactionByOrder", &ord_inq).await;
-    assert_rpc_ok(&service, "ScopedVoidTransaction", &tx_void).await;
-    assert_rpc_ok(&service, "ScopedVoidTransactionById", &tx_void).await;
-    assert_rpc_ok(&service, "ScopedCaptureTransaction", &tx_amt).await;
-    assert_rpc_ok(&service, "ScopedRefundTransaction", &tx_amt).await;
+    assert_rpc_ok(&service, "ScopedInquireTransaction", &tx_inq).await;
+    assert_rpc_ok(&service, "ScopedInquireTransaction", &tx_inq).await;
+    assert_rpc_ok(&service, "ScopedInquireByOrder", &ord_inq).await;
+    assert_rpc_ok(&service, "ScopedVoid", &tx_void).await;
+    assert_rpc_ok(&service, "ScopedVoid", &tx_void).await;
+    assert_rpc_ok(&service, "ScopedCapture", &tx_amt).await;
+    assert_rpc_ok(&service, "ScopedRefund", &tx_amt).await;
 }
 
 /// Verifies all unified payment adapter RPCs return `Code::Ok`.
@@ -412,7 +412,7 @@ async fn e2e_unified_adapter_all_rpcs_return_ok() {
     assert_rpc_ok(&service, "UnifiedRefundSubscription", &sub_ref).await;
     assert_rpc_ok(&service, "UnifiedExecutePayout", &po).await;
     let tx_vec = transaction_processed_192036465();
-    let wh_req = json!({ "hmac": tx_vec.expected_hmac_hex, "payload": tx_vec.payload_or_query });
+    let wh_req = json!({ "hmac": tx_vec.expected_hmac_hex, "raw_body": tx_vec.payload_or_query });
     assert_rpc_ok(&service, "UnifiedVerifyWebhook", &wh_req).await;
 }
 

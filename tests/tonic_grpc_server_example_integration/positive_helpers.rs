@@ -230,9 +230,9 @@ pub(super) async fn assert_non_wallet_cashin_rpcs(service: &PaymobGrpcService) {
         "national_id": "29501011234567"
     });
     let aman_req = json!({ "transaction_id": "tx_aman_1" });
-    assert_rpc_ok(service, "CashinBankCard", &card_req).await;
+    assert_rpc_ok(service, "DisburseBankCard", &card_req).await;
     assert_rpc_ok(service, "CashinBankInstant", &inst_req).await;
-    assert_rpc_ok(service, "CashinEgyptianPost", &post_req).await;
+    assert_rpc_ok(service, "DisburseEgyptianPost", &post_req).await;
     assert_rpc_ok(service, "CancelAmanCashin", &aman_req).await;
     assert_rpc_ok(service, "DisburseBulk", &bulk_items_json(1)).await;
 }

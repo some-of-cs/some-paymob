@@ -166,10 +166,23 @@ async fn test_topup_proof_size_and_filename_boundaries() {
 }
 
 #[actix_rt::test]
-async fn test_split_cards_0_1_3_4_and_bps_mismatch() {
+async fn test_split_cards_0_1_4_boundaries() {
     let mock = PaymobMockServer::start().await;
     let state = build_test_state(&mock);
     let app = init_actix_app!(state);
+
+    let r0 = test::TestRequest::post()
+        .uri("/splits/validate-and-quote")
+        .set_json(json!({
+            "total_amount_cents": 1000,
+            "recipients": [{ "recipient_id": "m1", "percentage_bps": 10000 }],
+            "cards": []
+        }))
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, r0).await.status(),
+        StatusCode::BAD_REQUEST
+    );
 
     let r1 = test::TestRequest::post()
         .uri("/splits/validate-and-quote")
@@ -179,10 +192,7 @@ async fn test_split_cards_0_1_3_4_and_bps_mismatch() {
             "cards": [{ "amount_cents": 1000 }]
         }))
         .to_request();
-    assert_eq!(
-        test::call_service(&app, r1).await.status(),
-        StatusCode::BAD_REQUEST
-    );
+    assert_eq!(test::call_service(&app, r1).await.status(), StatusCode::OK);
 
     let r4 = test::TestRequest::post()
         .uri("/splits/validate-and-quote")
@@ -197,6 +207,29 @@ async fn test_split_cards_0_1_3_4_and_bps_mismatch() {
         .to_request();
     assert_eq!(
         test::call_service(&app, r4).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[actix_rt::test]
+async fn test_split_bps_mismatch_returns_400() {
+    let mock = PaymobMockServer::start().await;
+    let state = build_test_state(&mock);
+    let app = init_actix_app!(state);
+
+    let req = test::TestRequest::post()
+        .uri("/splits/validate-and-quote")
+        .set_json(json!({
+            "total_amount_cents": 1000,
+            "recipients": [
+                { "recipient_id": "m1", "percentage_bps": 6000 },
+                { "recipient_id": "m2", "percentage_bps": 4001 }
+            ],
+            "cards": [{ "amount_cents": 1000 }]
+        }))
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, req).await.status(),
         StatusCode::BAD_REQUEST
     );
 }

@@ -314,14 +314,16 @@ impl DynSplitSettlementCapability for PaymobClient {
     }
 }
 
+const fn _assert_object_safe<T: ?Sized + Send + Sync>() {}
+
 #[allow(dead_code)]
-const fn _assert_dyn_safe(
-    _: &dyn DynPaymentCapability,
-    _: &dyn DynWebhookCapability,
-    _: &dyn DynSubscriptionCapability,
-    _: &dyn DynPayoutCapability,
-    _: &dyn DynSplitSettlementCapability,
-) {}
+const fn _assert_dyn_safe() {
+    _assert_object_safe::<dyn DynPaymentCapability>();
+    _assert_object_safe::<dyn DynWebhookCapability>();
+    _assert_object_safe::<dyn DynSubscriptionCapability>();
+    _assert_object_safe::<dyn DynPayoutCapability>();
+    _assert_object_safe::<dyn DynSplitSettlementCapability>();
+}
 
 #[cfg(test)]
 mod tests {
@@ -410,19 +412,13 @@ mod tests {
     #[test]
     fn paymob_client_coerces_to_all_dyn_trait_objects() {
         let client = Arc::new(test_egypt_client());
-        let payment: Arc<dyn DynPaymentCapability> = Arc::clone(&client);
-        let webhook: Arc<dyn DynWebhookCapability> = Arc::clone(&client);
-        let subs: Arc<dyn DynSubscriptionCapability> = Arc::clone(&client);
-        let payout: Arc<dyn DynPayoutCapability> = Arc::clone(&client);
-        let splits: Arc<dyn DynSplitSettlementCapability> = client;
+        let _payment: Arc<dyn DynPaymentCapability> = Arc::clone(&client);
+        let _webhook: Arc<dyn DynWebhookCapability> = Arc::clone(&client);
+        let _subs: Arc<dyn DynSubscriptionCapability> = Arc::clone(&client);
+        let _payout: Arc<dyn DynPayoutCapability> = Arc::clone(&client);
+        let _splits: Arc<dyn DynSplitSettlementCapability> = client;
 
-        _assert_dyn_safe(
-            payment.as_ref(),
-            webhook.as_ref(),
-            subs.as_ref(),
-            payout.as_ref(),
-            splits.as_ref(),
-        );
+        _assert_dyn_safe();
     }
 
     #[tokio::test]

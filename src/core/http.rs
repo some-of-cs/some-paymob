@@ -512,8 +512,10 @@ impl HttpClient {
         let builder = reqwest::Client::builder()
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)
-            .min_tls_version(reqwest::tls::Version::TLS_1_3)
             .redirect(reqwest::redirect::Policy::none());
+
+        #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
+        let builder = builder.min_tls_version(reqwest::tls::Version::TLS_1_3);
 
         #[cfg(feature = "rustls-tls")]
         let builder = builder.use_rustls_tls();
@@ -1318,8 +1320,10 @@ mod tests {
 
         let client = HttpClient::new(fast_config()).expect("client builds");
         let secret = "sk_partner_secret_987654321";
-        let req = HttpRequest::get(&format!("http://{addr}/api/auth?api_key={secret}&mode=live"))
-            .expect("valid URL");
+        let req = HttpRequest::get(&format!(
+            "http://{addr}/api/auth?api_key={secret}&mode=live"
+        ))
+        .expect("valid URL");
         let err = client.execute(&req).await.unwrap_err();
         let _ = server_task.await;
 
@@ -1367,7 +1371,10 @@ mod tests {
             .expect("302 response returned directly");
 
         assert_eq!(resp.status, StatusCode::FOUND);
-        let location = resp.headers.get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok());
+        let location = resp
+            .headers
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok());
         assert_eq!(location, Some(redirect_target.as_str()));
     }
 }

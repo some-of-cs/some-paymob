@@ -11,7 +11,7 @@ categories = ["api-bindings", "web-programming::http-client"]
 
 [features]
 default = ["core", "webhooks", "intentions", "manage", "inquiries", "quicklinks", "splits", "saved-cards", "subscriptions", "payouts", "onboarding", "rustls-tls"]
-core = ["rustls-tls"]
+core = []
 webhooks = ["core", "dep:hmac", "dep:sha2", "dep:subtle", "dep:hex"]
 webhook-engine = ["webhooks"]
 intentions = ["core"]
@@ -30,7 +30,7 @@ partner-onboarding = ["onboarding"]
 some-payments-adapter = ["core", "webhooks", "intentions", "manage", "saved-cards", "subscriptions", "splits", "payouts"]
 some-payment-trait = ["some-payments-adapter"]
 test-utils = ["core", "webhooks", "dep:wiremock"]
-full = ["core", "webhooks", "intentions", "legacy-v2", "manage", "inquiries", "quicklinks", "splits", "transactions", "saved-cards", "subscriptions", "payouts", "onboarding", "some-payments-adapter", "test-utils"]
+full = ["core", "webhooks", "intentions", "legacy-v2", "manage", "inquiries", "quicklinks", "splits", "transactions", "saved-cards", "subscriptions", "payouts", "onboarding", "some-payments-adapter", "test-utils", "rustls-tls"]
 rustls-tls = ["reqwest/rustls-tls"]
 native-tls = ["reqwest/native-tls"]
 
@@ -40,11 +40,7 @@ base64 = "0.22"
 hex = { version = "0.4", optional = true }
 hmac = { version = "0.12", optional = true }
 rand = "0.8"
-# SEC-04 note: `rustls-tls` remains in base `reqwest` features until `src/core/http.rs`
-# gates `min_tls_version(reqwest::tls::Version::TLS_1_3)` behind
-# `#[cfg(any(feature = "rustls-tls", feature = "native-tls"))]`, so
-# `cargo check --no-default-features` continues to compile cleanly.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

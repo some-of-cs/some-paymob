@@ -222,9 +222,7 @@ impl DynPaymentCapability for PaymobClient {
     ) -> BoxFuture<'_, Result<UnifiedPaymentSession, PaymobError>> {
         let client = self.clone();
         let owned_req = req.clone();
-        Box::pin(async move {
-            PaymentProvider::create_payment_session(&client, &owned_req).await
-        })
+        Box::pin(async move { PaymentProvider::create_payment_session(&client, &owned_req).await })
     }
 
     fn capture_payment(
@@ -260,9 +258,7 @@ impl DynPaymentCapability for PaymobClient {
     ) -> BoxFuture<'_, Result<UnifiedSavedMethodChargeReceipt, PaymobError>> {
         let client = self.clone();
         let owned_req = req.clone();
-        Box::pin(async move {
-            PaymentProvider::charge_saved_method(&client, &owned_req).await
-        })
+        Box::pin(async move { PaymentProvider::charge_saved_method(&client, &owned_req).await })
     }
 }
 
@@ -282,9 +278,9 @@ impl DynSubscriptionCapability for PaymobClient {
     ) -> BoxFuture<'_, Result<UnifiedSubscriptionRefundReceipt, PaymobError>> {
         let client = self.clone();
         let owned_req = *req;
-        Box::pin(async move {
-            SubscriptionProvider::refund_last_transaction(&client, &owned_req).await
-        })
+        Box::pin(
+            async move { SubscriptionProvider::refund_last_transaction(&client, &owned_req).await },
+        )
     }
 }
 

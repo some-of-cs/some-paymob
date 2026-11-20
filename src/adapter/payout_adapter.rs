@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
-//! Expanded 7-issuer Paymob Send payouts, bulk disbursement, and status inquiry adapter (`US-9.2.0` Unit 2).
+//! Expanded 7-issuer Paymob Send payouts, bulk disbursement, and status inquiry adapter
+//! (`US-9.2.0` Unit 2).
 //!
 //! Complements [`crate::adapter::traits::PayoutProvider`] with full Paymob Send rail coverage:
 //! - All 7 issuers (`Vodafone`, `Etisalat`, `Orange`, `BankWallet`, `BankCard`, `InstantBank`,
@@ -155,7 +156,8 @@ pub async fn dispatch_expanded_payout(
     }
 }
 
-/// Dispatches a Paymob Send bulk disbursement batch (`POST /disburse/api/v1/disburse/bulk_transaction/`).
+/// Dispatches a Paymob Send bulk disbursement batch
+/// (`POST /disburse/api/v1/disburse/bulk_transaction/`).
 ///
 /// # Errors
 ///
@@ -444,7 +446,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_bulk_payout_and_inquire_status_succeed_and_validate() {
+    async fn dispatch_bulk_payout_succeeds_and_validates() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/disburse/api/v1/disburse/bulk_transaction"))
@@ -461,7 +463,32 @@ mod tests {
             })))
             .mount(&server)
             .await;
+        let client = seeded_payouts_client(&server.uri(), "adapter-jwt");
+        let bulk_params = BulkDisbursementParams::new(vec![BulkDisbursementItem {
+            issuer: DisburseIssuer::Vodafone,
+            amount: 350,
+            msisdn: Some("01023456789".to_owned()),
+            full_name: Some("Driver One".to_owned()),
+            bank_code: None,
+            client_reference_id: Some("batch_ref_1".to_owned()),
+        }]);
+        let bulk_resp = dispatch_bulk_payout(&client, bulk_params)
+            .await
+            .expect("bulk payout should succeed");
+        assert_eq!(bulk_resp.results.len(), 1);
+        assert_eq!(bulk_resp.results[0].transaction_id, "tx_bulk_1");
+        assert!(matches!(
+            dispatch_bulk_payout(&client, BulkDisbursementParams::new(vec![])).await,
+            Err(PaymobError::ValidationError {
+                field: "transactions",
+                ..
+            })
+        ));
+    }
 
+    #[tokio::test]
+    async fn inquire_payout_status_succeeds_and_validates() {
+        let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/secure/transaction/inquire/"))
             .and(header("authorization", "Bearer adapter-jwt"))
@@ -476,23 +503,7 @@ mod tests {
             })))
             .mount(&server)
             .await;
-
         let client = seeded_payouts_client(&server.uri(), "adapter-jwt");
-
-        let bulk_params = BulkDisbursementParams::new(vec![BulkDisbursementItem {
-            issuer: DisburseIssuer::Vodafone,
-            amount: 350,
-            msisdn: Some("01023456789".to_owned()),
-            full_name: Some("Driver One".to_owned()),
-            bank_code: None,
-            client_reference_id: Some("batch_ref_1".to_owned()),
-        }]);
-        let bulk_resp = dispatch_bulk_payout(&client, bulk_params)
-            .await
-            .expect("bulk payout should succeed");
-        assert_eq!(bulk_resp.results.len(), 1);
-        assert_eq!(bulk_resp.results[0].transaction_id, "tx_bulk_1");
-
         let inq_resp = inquire_payout_status(
             &client,
             TransactionInquiryParams::new(vec!["tx_bulk_1".to_owned()]),
@@ -504,14 +515,6 @@ mod tests {
             inq_resp.results[0].disbursement_status.as_deref(),
             Some("successful")
         );
-
-        assert!(matches!(
-            dispatch_bulk_payout(&client, BulkDisbursementParams::new(vec![])).await,
-            Err(PaymobError::ValidationError {
-                field: "transactions",
-                ..
-            })
-        ));
         assert!(matches!(
             inquire_payout_status(&client, TransactionInquiryParams::new(vec![])).await,
             Err(PaymobError::ValidationError {

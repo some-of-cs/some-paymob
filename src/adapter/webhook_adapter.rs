@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
-//! Protocol A–E (including Protocol B GET) webhook adapter and rich normalized event DTOs (`US-9.2.0` Unit 2).
+//! Protocol A–E (including Protocol B GET) webhook adapter and rich normalized event DTOs
+//! (`US-9.2.0` Unit 2).
 //!
 //! Extends the northbound `some-payment` adapter with:
 //! - [`UnifiedWebhookPayload`] supporting both HTTP `POST` JSON callbacks (Protocols A, C, D, E)
@@ -102,7 +103,7 @@ impl fmt::Debug for UnifiedWebhookPayload<'_> {
 /// transaction, order, monetary, status, and payout attributes.
 ///
 /// Implements a `[REDACTED]`-safe [`fmt::Debug`] formatter that redacts
-/// [`Self::order_reference`] as `"[REDACTED]"` when present.
+/// [`Self::correlation_id`] and [`Self::order_reference`] as `"[REDACTED]"`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RichWebhookEvent {
     /// High-level normalized webhook classification.
@@ -111,7 +112,7 @@ pub struct RichWebhookEvent {
     pub event_type: &'static str,
     /// Deterministic idempotency key for deduplicating webhook retries.
     pub idempotency_key: String,
-    /// Order, subscription, or payout correlation identifier.
+    /// Order, subscription, or payout correlation identifier (redacted in `Debug`).
     pub correlation_id: String,
     /// Acquiring transaction identifier, when applicable.
     pub transaction_id: Option<String>,
@@ -138,7 +139,7 @@ impl fmt::Debug for RichWebhookEvent {
             .field("kind", &self.kind)
             .field("event_type", &self.event_type)
             .field("idempotency_key", &self.idempotency_key)
-            .field("correlation_id", &self.correlation_id)
+            .field("correlation_id", &"[REDACTED]")
             .field("transaction_id", &self.transaction_id)
             .field("order_reference", &redacted_order)
             .field("amount_minor", &self.amount_minor)

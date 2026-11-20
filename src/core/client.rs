@@ -764,11 +764,31 @@ mod tests {
     #[test]
     fn tc_9_1_3_from_secret_key_infers_all_regional_prefixes() {
         let cases = [
-            ("egy_sk_test_example123", PaymobRegion::Egypt, EnvironmentMode::Test),
-            ("ksa_sk_live_example123", PaymobRegion::SaudiArabia, EnvironmentMode::Live),
-            ("uae_sk_test_example123", PaymobRegion::Uae, EnvironmentMode::Test),
-            ("omn_sk_test_example123", PaymobRegion::Oman, EnvironmentMode::Test),
-            ("pak_sk_live_example123", PaymobRegion::Pakistan, EnvironmentMode::Live),
+            (
+                "egy_sk_test_example123",
+                PaymobRegion::Egypt,
+                EnvironmentMode::Test,
+            ),
+            (
+                "ksa_sk_live_example123",
+                PaymobRegion::SaudiArabia,
+                EnvironmentMode::Live,
+            ),
+            (
+                "uae_sk_test_example123",
+                PaymobRegion::Uae,
+                EnvironmentMode::Test,
+            ),
+            (
+                "omn_sk_test_example123",
+                PaymobRegion::Oman,
+                EnvironmentMode::Test,
+            ),
+            (
+                "pak_sk_live_example123",
+                PaymobRegion::Pakistan,
+                EnvironmentMode::Live,
+            ),
         ];
 
         for (raw_key, expected_region, expected_env) in cases {

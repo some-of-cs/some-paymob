@@ -18,6 +18,7 @@
 [Quick Start](#quick-start) •
 [Webhook HMAC Security](#constant-time-hmac-webhook-verification-engine) •
 [API Coverage](#complete-paymob-services--api-coverage) •
+[Reference Servers](#reference-server-examples) •
 [some-payment Ecosystem](#cross-gateway-interoperability-with-some-payment) •
 [Sponsors](#backers--corporate-sponsors)
 
@@ -83,7 +84,7 @@ some-paymob = "0.1.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
-### Full Enterprise Configuration (With Legacy v2, `some-payments` Adapter & Offline Test Harness)
+### Full Enterprise Configuration (With Legacy v2, `some-payment` Adapter & Offline Test Harness)
 
 ```toml
 [dependencies]
@@ -230,12 +231,26 @@ fn handle_paymob_webhook(
 
 ---
 
+## Reference Server Examples
+
+Four runnable reference servers in `examples/` demonstrate all 14 `some-paymob` services and all 5 constant-time HMAC-SHA512 webhook verification protocols (Protocols A–E):
+
+| Framework | Entrypoint | Run Command |
+| :--- | :--- | :--- |
+| **Actix-Web** | [`examples/actix_server.rs`](examples/actix_server.rs) | `cargo run --example actix_server --features full` |
+| **Axum** | [`examples/axum_server.rs`](examples/axum_server.rs) | `cargo run --example axum_server --features full` |
+| **Rocket** | [`examples/rocket_server.rs`](examples/rocket_server.rs) | `cargo run --example rocket_server --features full` |
+| **Tonic (gRPC)** | [`examples/tonic_grpc_server.rs`](examples/tonic_grpc_server.rs) | `cargo run --example tonic_grpc_server --features full` |
+
+---
+
 ## Cross-Gateway Interoperability with `some-payment`
 
 `some-paymob` is built to work standalone or as a composable gateway inside **[`some-payment`](https://github.com/some-of-cs/some-payment)** alongside **[`some-stripe`](https://github.com/some-of-cs/some-stripe)** and **[`some-moyasar`](https://github.com/some-of-cs/some-moyasar)**:
 
 - **Country-Aware Payment Routing**: Automatically route `EG` customers to `some-paymob` (EGP Cards, Vodafone Cash, Fawry Kiosk, ValU BNPL), `SA` customers to [`some-moyasar`](https://github.com/some-of-cs/some-moyasar) (Mada, STC Pay, SADAD), and international customers to [`some-stripe`](https://github.com/some-of-cs/some-stripe).
 - **Composable Cross-Gateway Capabilities**: Combine [`some-stripe`](https://github.com/some-of-cs/some-stripe) Identity (`stripe.identity().verification_sessions()`) for KYC verification with `some-paymob` for localized checkout collection (`paymob.intentions()`) and instant local wallet disbursements (`paymob.payouts()`).
+- **Integration Guide**: See [`docs/SOME_PAYMENT_INTEGRATION.md`](docs/SOME_PAYMENT_INTEGRATION.md) for object-safe `Dyn*Capability` mappings, Protocol A–E webhook verification (including Protocol B GET redirects), all 7 Paymob Send payout issuers, TLS feature-flag hygiene, and `PaymobClient::from_secret_key` ergonomics.
 
 ---
 

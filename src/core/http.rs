@@ -3,6 +3,8 @@
 //!
 //! Provides [`HttpClient`], a wrapper around [`reqwest::Client`] that enforces:
 //! - TLS 1.3 minimum version (`min_tls_version(TLS_1_3)`) and HTTPS-only URLs by default
+//! - Disabled HTTP redirect following (`reqwest::redirect::Policy::none()`) to prevent silent
+//!   downgrades or cross-host redirections
 //! - Connect and total-request timeouts
 //! - Exponential backoff with full jitter on transient status codes (`429`, `502`, `503`, `504`)
 //!   and on timeouts for idempotent requests
@@ -45,8 +47,9 @@ pub const REQUEST_ID_HEADER: &str = "x-request-id";
 
 /// Errors returned by [`HttpClient`] operations.
 ///
-/// Custom [`fmt::Debug`] formatting redacts `RetriesExhausted { body }` (emitting `body_len`
-/// instead of raw bytes) and scrubs URL query strings from `Transport` errors.
+/// Both [`fmt::Display`] and [`fmt::Debug`] scrub URL query strings from `Transport` errors,
+/// and custom [`fmt::Debug`] formatting redacts `RetriesExhausted { body }` (emitting `body_len`
+/// instead of raw bytes).
 #[derive(Error)]
 pub enum HttpError {
     /// Failed to construct the underlying [`reqwest::Client`] or validate a request URL/payload.
@@ -61,7 +64,10 @@ pub enum HttpError {
     },
 
     /// Underlying transport or I/O failure.
-    #[error("HTTP transport error (request_id={request_id}): {source}")]
+    #[error(
+        "HTTP transport error (request_id={request_id}): {}",
+        scrub_transport_source(.source)
+    )]
     Transport {
         /// Correlation ID attached to the failed request.
         request_id: Uuid,
@@ -151,6 +157,10 @@ fn scrub_url_query(input: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+fn scrub_transport_source(source: &reqwest::Error) -> String {
+    scrub_url_query(&source.to_string())
 }
 
 /// Retry and exponential backoff configuration for [`HttpClient`].
@@ -491,8 +501,9 @@ struct RetryableOutcomeSpec<'a> {
 impl HttpClient {
     /// Builds a new [`HttpClient`] with the provided [`HttpClientConfig`].
     ///
-    /// Enforces TLS 1.3 minimum version unconditionally and uses `rustls` when
-    /// the `rustls-tls` feature is enabled.
+    /// Enforces TLS 1.3 minimum version unconditionally, disables automatic HTTP
+    /// redirect following (`reqwest::redirect::Policy::none()`), and uses `rustls`
+    /// when the `rustls-tls` feature is enabled.
     ///
     /// # Errors
     ///
@@ -501,7 +512,10 @@ impl HttpClient {
         let builder = reqwest::Client::builder()
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)
-            .min_tls_version(reqwest::tls::Version::TLS_1_3);
+            .redirect(reqwest::redirect::Policy::none());
+
+        #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
+        let builder = builder.min_tls_version(reqwest::tls::Version::TLS_1_3);
 
         #[cfg(feature = "rustls-tls")]
         let builder = builder.use_rustls_tls();
@@ -1289,5 +1303,78 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err_post, HttpError::Timeout { .. }));
+    }
+
+    #[tokio::test]
+    async fn tc_9_1_1_transport_error_display_scrubs_query_params() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut req_buf = [0_u8; 1024];
+                let _ = stream.read(&mut req_buf).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+
+        let client = HttpClient::new(fast_config()).expect("client builds");
+        let secret = "sk_partner_secret_987654321";
+        let req = HttpRequest::get(&format!(
+            "http://{addr}/api/auth?api_key={secret}&mode=live"
+        ))
+        .expect("valid URL");
+        let err = client.execute(&req).await.unwrap_err();
+        let _ = server_task.await;
+
+        assert!(matches!(err, HttpError::Transport { .. }));
+        assert!(std::error::Error::source(&err).is_some());
+
+        let displayed = format!("{err}");
+        assert!(
+            displayed.contains("?[REDACTED]") && !displayed.contains(secret),
+            "Display leaked query secret: {displayed}"
+        );
+
+        let debugged = format!("{err:?}");
+        assert!(
+            debugged.contains("?[REDACTED]") && !debugged.contains(secret),
+            "Debug leaked query secret: {debugged}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tc_9_1_1_does_not_follow_302_redirects() {
+        let server = MockServer::start().await;
+        let redirect_target = format!("{}/redirected", server.uri());
+
+        Mock::given(method("GET"))
+            .and(path("/start"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("Location", redirect_target.as_str())
+                    .set_body_string("redirect"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirected"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("followed"))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let resp = execute_on_server(&server, fast_config(), Method::GET, "/start")
+            .await
+            .expect("302 response returned directly");
+
+        assert_eq!(resp.status, StatusCode::FOUND);
+        let location = resp
+            .headers
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(location, Some(redirect_target.as_str()));
     }
 }

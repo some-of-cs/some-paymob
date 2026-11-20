@@ -268,15 +268,27 @@ async fn dispatch_bank_or_post_payout(
     let (issuer, fallback_amount, resp) = match dest {
         ExpandedPayoutDestination::BankCard(params) => {
             let amt = params.amount;
-            (DisburseIssuer::BankCard, amt, cashin.bank_card(params).await?)
+            (
+                DisburseIssuer::BankCard,
+                amt,
+                cashin.bank_card(params).await?,
+            )
         }
         ExpandedPayoutDestination::InstantBank(params) => {
             let amt = params.amount;
-            (DisburseIssuer::InstantBank, amt, cashin.bank_instant(params).await?)
+            (
+                DisburseIssuer::InstantBank,
+                amt,
+                cashin.bank_instant(params).await?,
+            )
         }
         ExpandedPayoutDestination::EgyptianPost(params) => {
             let amt = params.amount;
-            (DisburseIssuer::EgyptianPost, amt, cashin.egyptian_post(params).await?)
+            (
+                DisburseIssuer::EgyptianPost,
+                amt,
+                cashin.egyptian_post(params).await?,
+            )
         }
         _ => {
             return Err(PaymobError::ValidationError {
@@ -332,16 +344,10 @@ mod tests {
             .await;
     }
 
-    #[tokio::test]
-    async fn dispatch_expanded_payout_covers_all_seven_issuers() {
-        let server = MockServer::start().await;
-        let client = seeded_payouts_client(&server.uri(), "adapter-jwt");
-
-        let cases = vec![
+    fn wallet_issuer_test_cases() -> Vec<(&'static str, ExpandedPayoutDestination)> {
+        vec![
             (
                 "vodafone",
-                "tx_vf",
-                100,
                 ExpandedPayoutDestination::Vodafone(MobileWalletCashinParams::new(
                     "01023456789",
                     100,
@@ -349,8 +355,6 @@ mod tests {
             ),
             (
                 "etisalat",
-                "tx_et",
-                200,
                 ExpandedPayoutDestination::Etisalat(MobileWalletCashinParams::new(
                     "01123456789",
                     200,
@@ -358,8 +362,6 @@ mod tests {
             ),
             (
                 "orange",
-                "tx_or",
-                300,
                 ExpandedPayoutDestination::Orange(MobileWalletCashinParams::new(
                     "01223456789",
                     300,
@@ -367,17 +369,18 @@ mod tests {
             ),
             (
                 "bank_wallet",
-                "tx_bw",
-                400,
                 ExpandedPayoutDestination::BankWallet(MobileWalletCashinParams::new(
                     "01523456789",
                     400,
                 )),
             ),
+        ]
+    }
+
+    fn bank_and_post_test_cases() -> Vec<(&'static str, ExpandedPayoutDestination)> {
+        vec![
             (
                 "bank_card",
-                "tx_bc",
-                500,
                 ExpandedPayoutDestination::BankCard(BankCardCashinParams {
                     amount: 500,
                     bank_card_number: SecretString::from("4111111111111234"),
@@ -390,8 +393,6 @@ mod tests {
             ),
             (
                 "instant_bank",
-                "tx_ib",
-                600,
                 ExpandedPayoutDestination::InstantBank(InstantBankCashinParams {
                     amount: 600,
                     bank_code: "NBE".to_owned(),
@@ -403,8 +404,6 @@ mod tests {
             ),
             (
                 "egyptian_post",
-                "tx_ep",
-                700,
                 ExpandedPayoutDestination::EgyptianPost(EgyptianPostCashinParams {
                     amount: 700,
                     msisdn: "01098765432".to_owned(),
@@ -414,18 +413,32 @@ mod tests {
                     customer_bears_fees: None,
                 }),
             ),
-        ];
+        ]
+    }
 
-        for (issuer, tx_id, amount, dest) in cases {
+    fn seven_issuer_test_cases() -> Vec<(&'static str, ExpandedPayoutDestination)> {
+        let mut cases = wallet_issuer_test_cases();
+        cases.extend(bank_and_post_test_cases());
+        cases
+    }
+
+    #[tokio::test]
+    async fn dispatch_expanded_payout_covers_all_seven_issuers() {
+        let server = MockServer::start().await;
+        let client = seeded_payouts_client(&server.uri(), "adapter-jwt");
+
+        for (issuer, dest) in seven_issuer_test_cases() {
+            let expected_amount = dest.amount();
+            let amount = expected_amount.as_u64();
+            let tx_id = format!("tx_{issuer}");
             assert_eq!(dest.issuer().as_str(), issuer);
-            assert_eq!(dest.amount(), MinorUnitAmount::new(amount));
-            mount_disburse_mock(&server, issuer, tx_id, amount).await;
+            mount_disburse_mock(&server, issuer, &tx_id, amount).await;
             let receipt = dispatch_expanded_payout(&client, dest)
                 .await
                 .expect("payout should succeed");
             assert_eq!(receipt.payout_id, tx_id);
             assert_eq!(receipt.issuer, issuer);
-            assert_eq!(receipt.amount, MinorUnitAmount::new(amount));
+            assert_eq!(receipt.amount, expected_amount);
             assert_eq!(receipt.status, "successful");
         }
     }
@@ -487,7 +500,10 @@ mod tests {
         .await
         .expect("status inquiry should succeed");
         assert_eq!(inq_resp.results.len(), 1);
-        assert_eq!(inq_resp.results[0].disbursement_status.as_deref(), Some("successful"));
+        assert_eq!(
+            inq_resp.results[0].disbursement_status.as_deref(),
+            Some("successful")
+        );
 
         assert!(matches!(
             dispatch_bulk_payout(&client, BulkDisbursementParams::new(vec![])).await,

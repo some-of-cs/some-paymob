@@ -309,9 +309,8 @@ fn enrich_transaction_post(
     base.currency = Some(evt.currency().to_owned());
     base.success = Some(evt.obj.success);
     base.pending = Some(evt.obj.pending);
-    base.status = Some(
-        tx_status_label(evt.obj.success, evt.obj.pending, evt.obj.error_occured).to_owned(),
-    );
+    base.status =
+        Some(tx_status_label(evt.obj.success, evt.obj.pending, evt.obj.error_occured).to_owned());
     base
 }
 
@@ -341,7 +340,10 @@ fn enrich_subscription(
     mut base: RichWebhookEvent,
     evt: &SubscriptionWebhookEvent,
 ) -> RichWebhookEvent {
-    base.transaction_id = evt.subscription_data.initial_transaction.map(|id| id.to_string());
+    base.transaction_id = evt
+        .subscription_data
+        .initial_transaction
+        .map(|id| id.to_string());
     base.order_reference = Some(evt.subscription_data.id.to_string());
     base.amount_minor = evt.subscription_data.amount();
     base.status = evt
@@ -464,16 +466,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn verify_and_normalize_protocol_a_post_extracts_rich_fields() {
-        let client = client_with_hmac();
-        let payload =
-            UnifiedWebhookPayload::post_json(protocol_a_post_json(), Some(TEST_CANONICAL_HMAC));
-        let rich = verify_and_normalize_webhook(&client, &payload)
-            .expect("protocol A POST should verify");
-
-        assert_eq!(rich.kind, UnifiedWebhookKind::TransactionProcessed);
-        assert_eq!(rich.event_type, "transaction_processed");
+    fn assert_canonical_tx_rich_event(rich: &RichWebhookEvent, expected_kind: UnifiedWebhookKind) {
+        assert_eq!(rich.kind, expected_kind);
         assert_eq!(rich.transaction_id.as_deref(), Some("316004"));
         assert_eq!(rich.order_reference.as_deref(), Some("378804"));
         assert_eq!(rich.amount_minor, Some(MinorUnitAmount::new(50_000)));
@@ -482,6 +476,18 @@ mod tests {
         assert_eq!(rich.pending, Some(false));
         assert_eq!(rich.payout_id, None);
         assert_eq!(rich.status.as_deref(), Some("succeeded"));
+    }
+
+    #[test]
+    fn verify_and_normalize_protocol_a_post_extracts_rich_fields() {
+        let client = client_with_hmac();
+        let payload =
+            UnifiedWebhookPayload::post_json(protocol_a_post_json(), Some(TEST_CANONICAL_HMAC));
+        let rich =
+            verify_and_normalize_webhook(&client, &payload).expect("protocol A POST should verify");
+
+        assert_canonical_tx_rich_event(&rich, UnifiedWebhookKind::TransactionProcessed);
+        assert_eq!(rich.event_type, "transaction_processed");
 
         let dbg = format!("{rich:?}");
         assert!(dbg.contains("[REDACTED]"));
@@ -493,30 +499,20 @@ mod tests {
         let client = client_with_hmac();
         let query = protocol_b_redirect_query();
         let payload = UnifiedWebhookPayload::get_redirect(&query);
-        let rich = verify_and_normalize_webhook(&client, &payload)
-            .expect("protocol B GET should verify");
+        let rich =
+            verify_and_normalize_webhook(&client, &payload).expect("protocol B GET should verify");
 
-        assert_eq!(rich.kind, UnifiedWebhookKind::TransactionRedirect);
+        assert_canonical_tx_rich_event(&rich, UnifiedWebhookKind::TransactionRedirect);
         assert_eq!(rich.event_type, "transaction_redirect");
-        assert_eq!(rich.transaction_id.as_deref(), Some("316004"));
-        assert_eq!(rich.order_reference.as_deref(), Some("378804"));
-        assert_eq!(rich.amount_minor, Some(MinorUnitAmount::new(50_000)));
-        assert_eq!(rich.currency.as_deref(), Some("EGP"));
-        assert_eq!(rich.success, Some(true));
-        assert_eq!(rich.pending, Some(false));
-        assert_eq!(rich.payout_id, None);
-        assert_eq!(rich.status.as_deref(), Some("succeeded"));
     }
 
     #[test]
     fn verify_and_normalize_rejects_tampered_protocol_b_hmac_and_missing_secret() {
         let client = client_with_hmac();
         let tampered = protocol_b_redirect_query().replace("amount_cents=50000", "amount_cents=1");
-        let err = verify_and_normalize_webhook(
-            &client,
-            &UnifiedWebhookPayload::get_redirect(&tampered),
-        )
-        .expect_err("tampered query must fail");
+        let err =
+            verify_and_normalize_webhook(&client, &UnifiedWebhookPayload::get_redirect(&tampered))
+                .expect_err("tampered query must fail");
         assert!(matches!(err, PaymobError::WebhookError(_)));
 
         let unconfigured = PaymobClient::new(
@@ -541,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_rich_webhook_event_covers_token_subscription_and_payouts() {
+    fn normalize_rich_webhook_event_covers_card_token() {
         let token_evt = WebhookEvent::CardTokenSaved(CardTokenWebhookEvent {
             event_type: "TOKEN".to_owned(),
             obj: CardTokenObj {
@@ -559,7 +555,10 @@ mod tests {
         assert_eq!(rich_tok.kind, UnifiedWebhookKind::CardTokenSaved);
         assert_eq!(rich_tok.order_reference.as_deref(), Some("ORD-77"));
         assert_eq!(rich_tok.status.as_deref(), Some("token_saved"));
+    }
 
+    #[test]
+    fn normalize_rich_webhook_event_covers_subscription() {
         let sub_evt = WebhookEvent::SubscriptionLifecycle(SubscriptionWebhookEvent {
             trigger_type: SubscriptionTriggerType::Suspended,
             subscription_data: SubscriptionData {
@@ -578,7 +577,10 @@ mod tests {
         assert_eq!(rich_sub.order_reference.as_deref(), Some("1264"));
         assert_eq!(rich_sub.amount_minor, Some(MinorUnitAmount::new(3_300)));
         assert_eq!(rich_sub.status.as_deref(), Some("suspended"));
+    }
 
+    #[test]
+    fn normalize_rich_webhook_event_covers_payout_disbursement() {
         let disb_evt = WebhookEvent::PayoutDisbursement(DisbursementCallback {
             transaction_id: "disb_9001".to_owned(),
             issuer: DisbursementIssuer::BankWallet,

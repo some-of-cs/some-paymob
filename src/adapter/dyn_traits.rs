@@ -2,9 +2,9 @@
 //! Object-safe (`dyn`-compatible) capability traits and smart reversal helpers for `some-payment`
 //! (`US-9.2.0` Unit 1).
 //!
-//! Provides dynamic-dispatch equivalents of [`PaymentProvider`], [`WebhookVerifier`],
-//! [`SubscriptionProvider`], and [`PayoutProvider`], plus [`DynSplitSettlementCapability`]
-//! and [`UnifiedReversalReceipt`] so downstream orchestrators such as `some-payment`'s
+//! Provides dynamic-dispatch equivalents of `PaymentProvider`, `WebhookVerifier`,
+//! `SubscriptionProvider`, and `PayoutProvider`, plus `DynSplitSettlementCapability`
+//! and `UnifiedReversalReceipt` so downstream orchestrators such as `some-payment`'s
 //! `PaymentHub` can store heterogeneous gateway adapters behind `Arc<dyn Dyn*>`.
 //!
 //! # Examples

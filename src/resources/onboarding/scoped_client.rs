@@ -265,8 +265,10 @@ impl<'a> ScopedIntentions<'a> {
 fn validate_path_segment<'a>(field: &'static str, value: &'a str) -> Result<&'a str, PaymobError> {
     const FORBIDDEN: &[u8] = b"/\\?#%";
     let trimmed = value.trim();
-    let has_bad_byte = trimmed.bytes().any(|b| FORBIDDEN.contains(&b) || b.is_ascii_whitespace());
-    if trimmed.is_empty() || trimmed.contains("..") || has_bad_byte {
+    let has_bad_byte = trimmed
+        .bytes()
+        .any(|b| FORBIDDEN.contains(&b) || b.is_ascii_whitespace());
+    if trimmed.is_empty() || trimmed == "." || trimmed.contains("..") || has_bad_byte {
         return Err(PaymobError::ValidationError {
             field,
             reason: format!(
@@ -629,6 +631,7 @@ mod tests {
             .expect("valid update params");
 
         let invalid_secrets = [
+            ".",
             "../admin",
             "secret/../../other",
             "secret\\admin",
@@ -656,7 +659,10 @@ mod tests {
         }
 
         let received = server.received_requests().await.expect("recording enabled");
-        assert!(received.is_empty(), "rejected secret must not send an HTTP request");
+        assert!(
+            received.is_empty(),
+            "rejected secret must not send an HTTP request"
+        );
     }
 
     #[cfg(feature = "inquiries")]

@@ -3,11 +3,11 @@
 //! (`US-9.2.0` Unit 2).
 //!
 //! Extends the northbound `some-payment` adapter with:
-//! - [`UnifiedWebhookPayload`] supporting both HTTP `POST` JSON callbacks (Protocols A, C, D, E)
+//! - `UnifiedWebhookPayload` supporting both HTTP `POST` JSON callbacks (Protocols A, C, D, E)
 //!   and Protocol B HTTP `GET` redirect query strings.
-//! - [`RichWebhookEvent`] extracting strongly-typed transaction, order, monetary, status, and
-//!   payout fields with `[REDACTED]`-safe [`fmt::Debug`] formatting.
-//! - [`normalize_rich_webhook_event`] and [`verify_and_normalize_webhook`] helpers adhering to
+//! - `RichWebhookEvent` extracting strongly-typed transaction, order, monetary, status, and
+//!   payout fields with `[REDACTED]`-safe `std::fmt::Debug` formatting.
+//! - `normalize_rich_webhook_event` and `verify_and_normalize_webhook` helpers adhering to
 //!   strict cyclomatic complexity (`CC <= 6`) and nesting depth (`<= 2`) invariants.
 
 use std::fmt;

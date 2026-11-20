@@ -2,11 +2,11 @@
 //! Expanded 7-issuer Paymob Send payouts, bulk disbursement, and status inquiry adapter
 //! (`US-9.2.0` Unit 2).
 //!
-//! Complements [`crate::adapter::traits::PayoutProvider`] with full Paymob Send rail coverage:
+//! Complements `crate::adapter::traits::PayoutProvider` with full Paymob Send rail coverage:
 //! - All 7 issuers (`Vodafone`, `Etisalat`, `Orange`, `BankWallet`, `BankCard`, `InstantBank`,
-//!   `EgyptianPost`) via [`ExpandedPayoutDestination`] and [`dispatch_expanded_payout`].
-//! - Batch disbursements via [`dispatch_bulk_payout`].
-//! - Transaction status inquiries (instant & bulk) via [`inquire_payout_status`].
+//!   `EgyptianPost`) via `ExpandedPayoutDestination` and `dispatch_expanded_payout`.
+//! - Batch disbursements via `dispatch_bulk_payout`.
+//! - Transaction status inquiries (instant & bulk) via `inquire_payout_status`.
 
 use crate::adapter::traits::UnifiedPayoutReceipt;
 use crate::core::client::PaymobClient;

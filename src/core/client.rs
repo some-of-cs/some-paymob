@@ -13,9 +13,10 @@ use url::Url;
 
 use crate::core::auth::AuthManager;
 use crate::core::config::ClientConfig;
+use crate::core::credentials::SecretKey;
 use crate::core::error::PaymobError;
 use crate::core::http::{HttpClient, HttpClientConfig, HttpRequest, HttpResponse, RetryPolicy};
-use crate::core::region::RegionalEndpoints;
+use crate::core::region::{PaymobRegion, RegionalEndpoints};
 
 /// Shared microkernel state backing [`PaymobClient`].
 ///
@@ -144,6 +145,42 @@ impl PaymobClient {
         Ok(Self {
             inner: Arc::new(core),
         })
+    }
+
+    /// Constructs a new [`PaymobClient`] directly from a Paymob secret key string.
+    ///
+    /// Parses the key via [`SecretKey::new`], infers the [`PaymobRegion`] from its
+    /// regional prefix (defaulting to [`PaymobRegion::Egypt`] when no regional prefix
+    /// is present, such as generic `sk_test_*` or `sk_live_*` keys), builds a
+    /// [`ClientConfig`], and initializes the client via [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if `secret_key` is empty/whitespace or
+    /// uses a publishable public-key prefix (`pk_*`), or [`PaymobError::TransportError`]
+    /// if the underlying HTTP client fails to initialize.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use some_paymob::core::client::PaymobClient;
+    /// use some_paymob::core::region::PaymobRegion;
+    ///
+    /// # fn main() -> Result<(), some_paymob::core::error::PaymobError> {
+    /// let client = PaymobClient::from_secret_key("ksa_sk_test_example")?;
+    /// assert_eq!(client.config().region(), &PaymobRegion::SaudiArabia);
+    /// assert!(format!("{client:?}").contains("[REDACTED]"));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_secret_key(secret_key: impl Into<String>) -> Result<Self, PaymobError> {
+        let key = SecretKey::new(secret_key)?;
+        let region = key.region().cloned().unwrap_or(PaymobRegion::Egypt);
+        let config = ClientConfig::builder()
+            .region(region)
+            .secret_key(key)
+            .build()?;
+        Self::new(config)
     }
 
     /// Returns a reference to the validated [`ClientConfig`].
@@ -553,8 +590,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::core::credentials::{PublicKey, SecretKey};
-    use crate::core::region::PaymobRegion;
+    use crate::core::credentials::{EnvironmentMode, PublicKey};
 
     fn sample_client(region: PaymobRegion) -> PaymobClient {
         let prefix = match region {
@@ -723,5 +759,47 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn tc_9_1_3_from_secret_key_infers_all_regional_prefixes() {
+        let cases = [
+            ("egy_sk_test_example123", PaymobRegion::Egypt, EnvironmentMode::Test),
+            ("ksa_sk_live_example123", PaymobRegion::SaudiArabia, EnvironmentMode::Live),
+            ("uae_sk_test_example123", PaymobRegion::Uae, EnvironmentMode::Test),
+            ("omn_sk_test_example123", PaymobRegion::Oman, EnvironmentMode::Test),
+            ("pak_sk_live_example123", PaymobRegion::Pakistan, EnvironmentMode::Live),
+        ];
+
+        for (raw_key, expected_region, expected_env) in cases {
+            let client = PaymobClient::from_secret_key(raw_key).expect("valid regional key");
+            assert_eq!(client.config().region(), &expected_region);
+            assert_eq!(client.config().environment(), expected_env);
+            assert!(format!("{client:?}").contains("[REDACTED]"));
+        }
+    }
+
+    #[test]
+    fn tc_9_1_3_from_secret_key_defaults_to_egypt_for_unprefixed_key() {
+        let client = PaymobClient::from_secret_key("sk_test_generic123").expect("valid key");
+        assert_eq!(client.config().region(), &PaymobRegion::Egypt);
+        assert_eq!(client.config().environment(), EnvironmentMode::Test);
+
+        let live = PaymobClient::from_secret_key("sk_live_generic456").expect("valid key");
+        assert_eq!(live.config().region(), &PaymobRegion::Egypt);
+        assert_eq!(live.config().environment(), EnvironmentMode::Live);
+    }
+
+    #[test]
+    fn tc_9_1_3_from_secret_key_rejects_empty_and_public_keys() {
+        for invalid in ["", "   ", "egy_pk_test_123", "pk_live_456"] {
+            assert!(matches!(
+                PaymobClient::from_secret_key(invalid),
+                Err(PaymobError::ValidationError {
+                    field: "secret_key",
+                    ..
+                })
+            ));
+        }
     }
 }

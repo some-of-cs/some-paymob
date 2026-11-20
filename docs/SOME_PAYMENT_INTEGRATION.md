@@ -52,8 +52,7 @@ fn handle_post_webhook(
 
     match event {
         WebhookEvent::TransactionProcessed(tx) => {
-            let key = format!("tx:{}", tx.obj.id);
-            if dedup.check_and_record(&key) {
+            if dedup.check_and_mark(&tx) {
                 println!(
                     "Verified Protocol A tx_id={} order_id={} amount_cents={}",
                     tx.obj.id, tx.obj.order.id, tx.obj.amount_cents
@@ -125,7 +124,7 @@ Additional cashin and funding operations:
 ```rust,no_run
 use some_paymob::prelude::*;
 use some_paymob::resources::payouts::{
-    BulkDisbursementItem, BulkDisbursementParams, MobileWalletCashinParams,
+    BulkDisbursementItem, BulkDisbursementParams, DisburseIssuer, MobileWalletCashinParams,
     ReferenceInquiryParams, TransactionInquiryParams,
 };
 
@@ -137,11 +136,16 @@ async fn run_payout_pipeline(paymob: &PaymobClient) -> Result<(), PaymobError> {
     let receipt = paymob.payouts().cashin().vodafone(single).await?;
 
     // 2. Bulk disbursement batch (up to MAX_BULK_DISBURSEMENT_ITEMS = 1_000)
-    let bulk_params = BulkDisbursementParams::new(vec![
-        BulkDisbursementItem::wallet("vodafone", "01012345678", 50_000)
-            .with_client_reference_id("BATCH-001"),
-    ])
-    .with_bank_transaction(false);
+    let item = BulkDisbursementItem {
+        issuer: DisburseIssuer::Vodafone,
+        amount: 50_000,
+        msisdn: Some("01012345678".to_owned()),
+        full_name: None,
+        bank_code: None,
+        client_reference_id: Some("BATCH-001".to_owned()),
+    };
+    let bulk_params = BulkDisbursementParams::new(vec![item])
+        .with_bank_transaction(false);
     let _bulk = paymob.payouts().cashin().bulk(bulk_params).await?;
 
     // 3. Transaction ID and client-reference inquiries

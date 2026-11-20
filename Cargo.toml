@@ -3,7 +3,7 @@ name = "some-paymob"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 description = "Idiomatic, memory-safe, zero-data-race Rust microkernel SDK and constant-time webhook verification engine for Paymob across MENA & Pakistan."
 repository = "https://github.com/some-of-cs/some-paymob"
 keywords = ["paymob", "payments", "fintech", "mena", "sdk"]
@@ -40,6 +40,10 @@ base64 = "0.22"
 hex = { version = "0.4", optional = true }
 hmac = { version = "0.12", optional = true }
 rand = "0.8"
+# SEC-04 note: `rustls-tls` remains in base `reqwest` features until `src/core/http.rs`
+# gates `min_tls_version(reqwest::tls::Version::TLS_1_3)` behind
+# `#[cfg(any(feature = "rustls-tls", feature = "native-tls"))]`, so
+# `cargo check --no-default-features` continues to compile cleanly.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }

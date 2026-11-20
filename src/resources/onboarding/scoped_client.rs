@@ -240,9 +240,10 @@ impl<'a> ScopedIntentions<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `client_secret` is empty or contains
-    /// control characters, or [`PaymobError::AuthenticationError`], [`PaymobError::ApiError`],
-    /// or [`PaymobError::TransportError`] on failure.
+    /// Returns [`PaymobError::ValidationError`] if `client_secret` is empty, contains control
+    /// characters, or contains unsafe URL path-segment characters (`/`, `\`, `..`, `?`, `#`,
+    /// `%`, or ASCII whitespace), or [`PaymobError::AuthenticationError`],
+    /// [`PaymobError::ApiError`], or [`PaymobError::TransportError`] on failure.
     pub async fn update_by_client_secret(
         &self,
         client_secret: &str,
@@ -254,9 +255,26 @@ impl<'a> ScopedIntentions<'a> {
             "client_secret must not be empty",
         )?;
         crate::resources::onboarding::validate_no_control_chars("client_secret", client_secret)?;
-        let path = format!("/v1/intention/{}", client_secret.trim());
+        let safe_secret = validate_path_segment("client_secret", client_secret)?;
+        let path = format!("/v1/intention/{safe_secret}");
         self.scoped.send_put(&path, params).await
     }
+}
+
+#[cfg(feature = "intentions")]
+fn validate_path_segment<'a>(field: &'static str, value: &'a str) -> Result<&'a str, PaymobError> {
+    const FORBIDDEN: &[u8] = b"/\\?#%";
+    let trimmed = value.trim();
+    let has_bad_byte = trimmed.bytes().any(|b| FORBIDDEN.contains(&b) || b.is_ascii_whitespace());
+    if trimmed.is_empty() || trimmed.contains("..") || has_bad_byte {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!(
+                "{field} must not contain '/', '\\', '..', '?', '#', '%', or whitespace"
+            ),
+        });
+    }
+    Ok(trimmed)
 }
 
 /// Scoped Transaction & Order Inquiries operations bound to a [`MerchantScopedClient`].
@@ -594,6 +612,51 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[cfg(feature = "intentions")]
+    #[tokio::test]
+    async fn tc_9_1_2_update_by_client_secret_rejects_path_injection_without_http() {
+        use wiremock::MockServer;
+
+        use crate::resources::intentions::UpdateIntentionParams;
+
+        let server = MockServer::start().await;
+        let scoped = scoped_mock_client(&server.uri());
+        let update_params = UpdateIntentionParams::builder()
+            .amount(15_000_u64)
+            .build()
+            .expect("valid update params");
+
+        let invalid_secrets = [
+            "../admin",
+            "secret/../../other",
+            "secret\\admin",
+            "secret?foo=bar",
+            "secret#frag",
+            "secret%2Ffoo",
+            "secret with space",
+        ];
+
+        for bad_secret in invalid_secrets {
+            let result = scoped
+                .intentions()
+                .update_by_client_secret(bad_secret, &update_params)
+                .await;
+            assert!(
+                matches!(
+                    result,
+                    Err(PaymobError::ValidationError {
+                        field: "client_secret",
+                        ..
+                    })
+                ),
+                "expected ValidationError for {bad_secret:?}, got {result:?}"
+            );
+        }
+
+        let received = server.received_requests().await.expect("recording enabled");
+        assert!(received.is_empty(), "rejected secret must not send an HTTP request");
     }
 
     #[cfg(feature = "inquiries")]

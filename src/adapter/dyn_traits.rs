@@ -25,10 +25,10 @@
 //!     .build()?;
 //! let client = Arc::new(PaymobClient::new(config)?);
 //!
-//! let _payment: Arc<dyn DynPaymentCapability> = Arc::clone(&client);
-//! let _webhook: Arc<dyn DynWebhookCapability> = Arc::clone(&client);
-//! let _subs: Arc<dyn DynSubscriptionCapability> = Arc::clone(&client);
-//! let _payout: Arc<dyn DynPayoutCapability> = Arc::clone(&client);
+//! let _payment: Arc<dyn DynPaymentCapability> = Arc::<PaymobClient>::clone(&client);
+//! let _webhook: Arc<dyn DynWebhookCapability> = Arc::<PaymobClient>::clone(&client);
+//! let _subs: Arc<dyn DynSubscriptionCapability> = Arc::<PaymobClient>::clone(&client);
+//! let _payout: Arc<dyn DynPayoutCapability> = Arc::<PaymobClient>::clone(&client);
 //! let _splits: Arc<dyn DynSplitSettlementCapability> = client;
 //!
 //! let receipt = UnifiedReversalReceipt::Voided(UnifiedVoidReceipt {
@@ -215,50 +215,66 @@ pub trait DynSplitSettlementCapability: Send + Sync {
     ) -> BoxFuture<'_, Result<UnifiedPaymentSession, PaymobError>>;
 }
 
+/// Clones `client` and boxes an async provider call into a [`BoxFuture`].
+fn box_call<Req, Resp, F, Fut>(
+    client: &PaymobClient,
+    req: Req,
+    op: F,
+) -> BoxFuture<'_, Result<Resp, PaymobError>>
+where
+    Req: Send + 'static,
+    Resp: Send + 'static,
+    F: FnOnce(PaymobClient, Req) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Resp, PaymobError>> + Send + 'static,
+{
+    let client = client.clone();
+    Box::pin(async move { op(client, req).await })
+}
+
 impl DynPaymentCapability for PaymobClient {
     fn create_payment_session(
         &self,
         req: &UnifiedPaymentSessionRequest,
     ) -> BoxFuture<'_, Result<UnifiedPaymentSession, PaymobError>> {
-        let client = self.clone();
-        let owned_req = req.clone();
-        Box::pin(async move { PaymentProvider::create_payment_session(&client, &owned_req).await })
+        box_call(self, req.clone(), |client, req| async move {
+            PaymentProvider::create_payment_session(&client, &req).await
+        })
     }
 
     fn capture_payment(
         &self,
         req: &UnifiedCaptureRequest,
     ) -> BoxFuture<'_, Result<UnifiedCaptureReceipt, PaymobError>> {
-        let client = self.clone();
-        let owned_req = *req;
-        Box::pin(async move { PaymentProvider::capture_payment(&client, &owned_req).await })
+        box_call(self, *req, |client, req| async move {
+            PaymentProvider::capture_payment(&client, &req).await
+        })
     }
 
     fn refund_payment(
         &self,
         req: &UnifiedRefundRequest,
     ) -> BoxFuture<'_, Result<UnifiedRefundReceipt, PaymobError>> {
-        let client = self.clone();
-        let owned_req = *req;
-        Box::pin(async move { PaymentProvider::refund_payment(&client, &owned_req).await })
+        box_call(self, *req, |client, req| async move {
+            PaymentProvider::refund_payment(&client, &req).await
+        })
     }
 
     fn void_payment(
         &self,
         req: &UnifiedVoidRequest,
     ) -> BoxFuture<'_, Result<UnifiedVoidReceipt, PaymobError>> {
-        let client = self.clone();
-        let owned_req = *req;
-        Box::pin(async move { PaymentProvider::void_payment(&client, &owned_req).await })
+        box_call(self, *req, |client, req| async move {
+            PaymentProvider::void_payment(&client, &req).await
+        })
     }
 
     fn charge_saved_method(
         &self,
         req: &UnifiedSavedMethodChargeRequest,
     ) -> BoxFuture<'_, Result<UnifiedSavedMethodChargeReceipt, PaymobError>> {
-        let client = self.clone();
-        let owned_req = req.clone();
-        Box::pin(async move { PaymentProvider::charge_saved_method(&client, &owned_req).await })
+        box_call(self, req.clone(), |client, req| async move {
+            PaymentProvider::charge_saved_method(&client, &req).await
+        })
     }
 }
 
@@ -276,11 +292,9 @@ impl DynSubscriptionCapability for PaymobClient {
         &self,
         req: &UnifiedSubscriptionRefundRequest,
     ) -> BoxFuture<'_, Result<UnifiedSubscriptionRefundReceipt, PaymobError>> {
-        let client = self.clone();
-        let owned_req = *req;
-        Box::pin(
-            async move { SubscriptionProvider::refund_last_transaction(&client, &owned_req).await },
-        )
+        box_call(self, *req, |client, req| async move {
+            SubscriptionProvider::refund_last_transaction(&client, &req).await
+        })
     }
 }
 
@@ -289,9 +303,9 @@ impl DynPayoutCapability for PaymobClient {
         &self,
         req: &UnifiedPayoutRequest,
     ) -> BoxFuture<'_, Result<UnifiedPayoutReceipt, PaymobError>> {
-        let client = self.clone();
-        let owned_req = req.clone();
-        Box::pin(async move { PayoutProvider::execute_payout(&client, &owned_req).await })
+        box_call(self, req.clone(), |client, req| async move {
+            PayoutProvider::execute_payout(&client, &req).await
+        })
     }
 }
 
@@ -301,9 +315,8 @@ impl DynSplitSettlementCapability for PaymobClient {
         req: &UnifiedPaymentSessionRequest,
         ext: &PaymobExt,
     ) -> BoxFuture<'_, Result<UnifiedPaymentSession, PaymobError>> {
-        let client = self.clone();
         let wired = ext.apply_to_session_request(req.clone());
-        Box::pin(async move {
+        box_call(self, wired, |client, wired| async move {
             let session_req = wired?;
             PaymentProvider::create_payment_session(&client, &session_req).await
         })
@@ -408,10 +421,10 @@ mod tests {
     #[test]
     fn paymob_client_coerces_to_all_dyn_trait_objects() {
         let client = Arc::new(test_egypt_client());
-        let _payment: Arc<dyn DynPaymentCapability> = Arc::clone(&client);
-        let _webhook: Arc<dyn DynWebhookCapability> = Arc::clone(&client);
-        let _subs: Arc<dyn DynSubscriptionCapability> = Arc::clone(&client);
-        let _payout: Arc<dyn DynPayoutCapability> = Arc::clone(&client);
+        let _payment: Arc<dyn DynPaymentCapability> = Arc::<PaymobClient>::clone(&client);
+        let _webhook: Arc<dyn DynWebhookCapability> = Arc::<PaymobClient>::clone(&client);
+        let _subs: Arc<dyn DynSubscriptionCapability> = Arc::<PaymobClient>::clone(&client);
+        let _payout: Arc<dyn DynPayoutCapability> = Arc::<PaymobClient>::clone(&client);
         let _splits: Arc<dyn DynSplitSettlementCapability> = client;
 
         _assert_dyn_safe();
@@ -459,7 +472,7 @@ mod tests {
     #[tokio::test]
     async fn paymob_client_dyn_payment_and_split_validation_paths() {
         let client = Arc::new(test_egypt_client());
-        let payment: Arc<dyn DynPaymentCapability> = Arc::clone(&client);
+        let payment: Arc<dyn DynPaymentCapability> = Arc::<PaymobClient>::clone(&client);
         let splits: Arc<dyn DynSplitSettlementCapability> = client;
 
         let zero_session = UnifiedPaymentSessionRequest::new(MinorUnitAmount::ZERO, Currency::EGP)
@@ -508,8 +521,8 @@ mod tests {
     #[tokio::test]
     async fn paymob_client_dyn_webhook_subscription_and_payout_validation_paths() {
         let client = Arc::new(test_egypt_client());
-        let webhook: Arc<dyn DynWebhookCapability> = Arc::clone(&client);
-        let subs: Arc<dyn DynSubscriptionCapability> = Arc::clone(&client);
+        let webhook: Arc<dyn DynWebhookCapability> = Arc::<PaymobClient>::clone(&client);
+        let subs: Arc<dyn DynSubscriptionCapability> = Arc::<PaymobClient>::clone(&client);
         let payout: Arc<dyn DynPayoutCapability> = client;
 
         assert!(

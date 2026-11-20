@@ -346,57 +346,66 @@ mod tests {
         ));
     }
 
+    const fn sample_void_receipt(transaction_id: u64) -> UnifiedVoidReceipt {
+        UnifiedVoidReceipt {
+            transaction_id,
+            success: true,
+            is_voided: true,
+        }
+    }
+
+    const fn sample_refund_receipt(
+        refund_id: u64,
+        amount: MinorUnitAmount,
+    ) -> UnifiedRefundReceipt {
+        UnifiedRefundReceipt {
+            refund_id,
+            amount,
+            success: true,
+            pending: false,
+            is_refunded: true,
+        }
+    }
+
+    fn sample_session_request(amount: MinorUnitAmount) -> UnifiedPaymentSessionRequest {
+        UnifiedPaymentSessionRequest::new(amount, Currency::EGP)
+            .with_payment_methods(vec!["4097558".to_owned()])
+    }
+
+    macro_rules! mock_err_methods {
+        ($( $method:ident($req:ty) -> $resp:ty => $field:literal; )+) => {
+            $(
+                fn $method(&self, _req: &$req) -> BoxFuture<'_, Result<$resp, PaymobError>> {
+                    mock_err($field)
+                }
+            )+
+        };
+    }
+
     struct MockPaymentCapability;
 
     impl DynPaymentCapability for MockPaymentCapability {
-        fn create_payment_session(
-            &self,
-            _req: &UnifiedPaymentSessionRequest,
-        ) -> BoxFuture<'_, Result<UnifiedPaymentSession, PaymobError>> {
-            mock_err("session")
-        }
-
-        fn capture_payment(
-            &self,
-            req: &UnifiedCaptureRequest,
-        ) -> BoxFuture<'_, Result<UnifiedCaptureReceipt, PaymobError>> {
-            ready_ok(UnifiedCaptureReceipt {
-                transaction_id: req.transaction_id,
-                amount: req.amount,
-                success: true,
-                pending: false,
-            })
+        mock_err_methods! {
+            create_payment_session(UnifiedPaymentSessionRequest)
+                -> UnifiedPaymentSession => "session";
+            capture_payment(UnifiedCaptureRequest)
+                -> UnifiedCaptureReceipt => "capture";
+            charge_saved_method(UnifiedSavedMethodChargeRequest)
+                -> UnifiedSavedMethodChargeReceipt => "saved_method";
         }
 
         fn refund_payment(
             &self,
             req: &UnifiedRefundRequest,
         ) -> BoxFuture<'_, Result<UnifiedRefundReceipt, PaymobError>> {
-            ready_ok(UnifiedRefundReceipt {
-                refund_id: req.transaction_id,
-                amount: req.amount,
-                success: true,
-                pending: false,
-                is_refunded: true,
-            })
+            ready_ok(sample_refund_receipt(req.transaction_id, req.amount))
         }
 
         fn void_payment(
             &self,
             req: &UnifiedVoidRequest,
         ) -> BoxFuture<'_, Result<UnifiedVoidReceipt, PaymobError>> {
-            ready_ok(UnifiedVoidReceipt {
-                transaction_id: req.transaction_id,
-                success: true,
-                is_voided: true,
-            })
-        }
-
-        fn charge_saved_method(
-            &self,
-            _req: &UnifiedSavedMethodChargeRequest,
-        ) -> BoxFuture<'_, Result<UnifiedSavedMethodChargeReceipt, PaymobError>> {
-            mock_err("saved_method")
+            ready_ok(sample_void_receipt(req.transaction_id))
         }
     }
 
@@ -423,40 +432,26 @@ mod tests {
     #[tokio::test]
     async fn smart_reversal_routes_void_when_unsettled_and_refund_when_settled() {
         let cap: Arc<dyn DynPaymentCapability> = Arc::new(MockPaymentCapability);
+        let void_amt = MinorUnitAmount::new(5_000);
+        let refund_amt = MinorUnitAmount::new(7_500);
+        let void_expected = UnifiedReversalReceipt::Voided(sample_void_receipt(101));
+        let refund_expected =
+            UnifiedReversalReceipt::Refunded(sample_refund_receipt(202, refund_amt));
+        let cases = [
+            (101, void_amt, false, void_expected),
+            (202, refund_amt, true, refund_expected),
+        ];
 
-        let voided = cap
-            .refund_or_void(101, MinorUnitAmount::new(5_000), false)
-            .await
-            .expect("void reversal");
-        assert!(voided.is_voided());
-        assert!(!voided.is_refunded());
-        assert_eq!(voided.transaction_id(), 101);
-        assert!(matches!(
-            voided,
-            UnifiedReversalReceipt::Voided(UnifiedVoidReceipt {
-                transaction_id: 101,
-                success: true,
-                is_voided: true,
-            })
-        ));
-
-        let refunded = cap
-            .refund_or_void(202, MinorUnitAmount::new(7_500), true)
-            .await
-            .expect("refund reversal");
-        assert!(refunded.is_refunded());
-        assert!(!refunded.is_voided());
-        assert_eq!(refunded.transaction_id(), 202);
-        assert!(matches!(
-            refunded,
-            UnifiedReversalReceipt::Refunded(UnifiedRefundReceipt {
-                refund_id: 202,
-                amount,
-                success: true,
-                pending: false,
-                is_refunded: true,
-            }) if amount.as_u64() == 7_500
-        ));
+        for (tx_id, amount, is_settled, expected) in cases {
+            let receipt = cap
+                .refund_or_void(tx_id, amount, is_settled)
+                .await
+                .expect("smart reversal");
+            assert_eq!(receipt, expected);
+            assert_eq!(receipt.is_refunded(), is_settled);
+            assert_eq!(receipt.is_voided(), !is_settled);
+            assert_eq!(receipt.transaction_id(), tx_id);
+        }
     }
 
     #[tokio::test]
@@ -465,31 +460,27 @@ mod tests {
         let payment: Arc<dyn DynPaymentCapability> = Arc::<PaymobClient>::clone(&client);
         let splits: Arc<dyn DynSplitSettlementCapability> = client;
 
-        let zero_session = UnifiedPaymentSessionRequest::new(MinorUnitAmount::ZERO, Currency::EGP)
-            .with_payment_methods(vec!["4097558".to_owned()]);
-        assert_validation_err(payment.create_payment_session(&zero_session).await, "amount");
+        let zero_session = sample_session_request(MinorUnitAmount::ZERO);
+        assert_validation_err(
+            payment.create_payment_session(&zero_session).await,
+            "amount",
+        );
 
         let bad_capture = UnifiedCaptureRequest::new(0, MinorUnitAmount::new(1_000));
         assert!(payment.capture_payment(&bad_capture).await.is_err());
-        assert!(
-            payment
-                .refund_or_void(0, MinorUnitAmount::new(1_000), false)
-                .await
-                .is_err()
-        );
-        assert!(
-            payment
-                .refund_or_void(0, MinorUnitAmount::new(1_000), true)
-                .await
-                .is_err()
-        );
+        for is_settled in [false, true] {
+            assert!(
+                payment
+                    .refund_or_void(0, MinorUnitAmount::new(1_000), is_settled)
+                    .await
+                    .is_err()
+            );
+        }
 
         let bad_mit = UnifiedSavedMethodChargeRequest::new("", "");
         assert!(payment.charge_saved_method(&bad_mit).await.is_err());
 
-        let valid_session =
-            UnifiedPaymentSessionRequest::new(MinorUnitAmount::new(15_000), Currency::EGP)
-                .with_payment_methods(vec!["4097558".to_owned()]);
+        let valid_session = sample_session_request(MinorUnitAmount::new(15_000));
         let bad_ext = PaymobExt::new().with_pre_selected_plan(0);
         assert_validation_err(
             splits
@@ -513,28 +504,25 @@ mod tests {
         );
 
         let bad_sub = UnifiedSubscriptionRefundRequest::new(0, None);
-        assert_validation_err(subs.refund_last_transaction(&bad_sub).await, "subscription_id");
+        assert_validation_err(
+            subs.refund_last_transaction(&bad_sub).await,
+            "subscription_id",
+        );
 
         let bad_payout =
             UnifiedPayoutRequest::new("", MinorUnitAmount::new(1_000), Currency::EGP, "vodafone");
-        assert_validation_err(payout.execute_payout(&bad_payout).await, "recipient_identifier");
+        assert_validation_err(
+            payout.execute_payout(&bad_payout).await,
+            "recipient_identifier",
+        );
     }
 
     #[test]
     fn unified_reversal_receipt_serde_roundtrip() {
+        let refund_amount = MinorUnitAmount::new(2_500);
         let receipts = [
-            UnifiedReversalReceipt::Voided(UnifiedVoidReceipt {
-                transaction_id: 55,
-                success: true,
-                is_voided: true,
-            }),
-            UnifiedReversalReceipt::Refunded(UnifiedRefundReceipt {
-                refund_id: 88,
-                amount: MinorUnitAmount::new(2_500),
-                success: true,
-                pending: false,
-                is_refunded: true,
-            }),
+            UnifiedReversalReceipt::Voided(sample_void_receipt(55)),
+            UnifiedReversalReceipt::Refunded(sample_refund_receipt(88, refund_amount)),
         ];
 
         for receipt in receipts {

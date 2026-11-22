@@ -574,7 +574,9 @@ fn query_params_to_json(params: &BTreeMap<String, String>) -> Value {
     Value::Object(map)
 }
 
-fn extract_get_transaction_data(query_params: &BTreeMap<String, String>) -> TransactionCallbackData {
+fn extract_get_transaction_data(
+    query_params: &BTreeMap<String, String>,
+) -> TransactionCallbackData {
     TransactionCallbackData {
         authority: CallbackAuthority::CustomerGetReturn,
         transaction_id: query_params.get("id").cloned(),

@@ -4,13 +4,16 @@
 //!
 //! This module provides two alignment primitives for the `some-payment` orchestrator:
 //!
-//! 1. [`resolve_transaction_id`] resolves a positive numeric Paymob `transaction_id`
-//!    with zero HTTP calls when one is already present on [`TransactionLookupRef`],
+//! 1. [`resolve_transaction_id`](crate::alignment::tx_correlation::resolve_transaction_id)
+//!    resolves a positive numeric Paymob `transaction_id` with zero HTTP calls when one is
+//!    already present on
+//!    [`TransactionLookupRef`](crate::alignment::tx_correlation::TransactionLookupRef),
 //!    and otherwise falls back to `POST /api/ecommerce/orders/transaction_inquiry`.
-//! 2. [`resolve_full_refund_amount`] queries `GET /api/acceptance/transactions/{id}`
-//!    and computes the remaining refundable minor units using checked integer
-//!    subtraction ([`compute_remaining_refund_cents`]) to satisfy the TM-2 integer
-//!    underflow guard.
+//! 2. [`resolve_full_refund_amount`](crate::alignment::tx_correlation::resolve_full_refund_amount)
+//!    queries `GET /api/acceptance/transactions/{id}` and computes the remaining refundable
+//!    minor units using checked integer subtraction
+//!    ([`compute_remaining_refund_cents`](crate::alignment::tx_correlation::compute_remaining_refund_cents))
+//!    to satisfy the TM-2 integer underflow guard.
 //!
 //! # Examples
 //!

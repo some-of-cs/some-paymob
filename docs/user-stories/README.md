@@ -109,3 +109,12 @@ Generated from [`docs/Paymob Rust SDK Architecture Research.md`](../Paymob%20Rus
 | `US-8.1.0` | some-payments Unified Gateway Trait Implementations & PaymobExt Escape Hatch | `2.00` | `3` | [`us-8.1.0-some-payments-adapter.md`](./module-8-adapter-test-utils/us-8.1.0-some-payments-adapter.md) |
 | `US-8.2.0` | Official Paymob Test Vector Suite, wiremock Multi-Regime Mock Server & Sandbox Constraint Harness | `2.00` | `3` | [`us-8.2.0-test-vectors-mock-harness.md`](./module-8-adapter-test-utils/us-8.2.0-test-vectors-mock-harness.md) |
 
+## Module 9 — `some-payment` Orchestrator Alignment & Optional Adapter (9 Units)
+
+- **Module Execution Prompt:** [`module-9-some-payment-alignment/README.md`](./module-9-some-payment-alignment/README.md)
+- **Branch:** `feat/module-9-some-payment-alignment` | **Merge Order Position:** 9th (After `some-payment` Module 1 `some-payment-core` merges to `main`; prerequisite for `some-payment` Module 4)
+
+| Story ID | Title | $S_{\text{story}}$ | Parallel Units ($K$) | Specification File |
+| :--- | :--- | :---: | :---: | :--- |
+| `US-9.1.0` | Paymob Pre-Integration Hardening (`PaymobRegion`, Dual-Auth Single-Flight Manager, `auth_integration_id` Routing, `transaction_id`/Full-Refund Lookup & Status Synthesizer) | `2.85` | `5` | [`us-9.1.0-paymob-region-dual-auth-and-status-synthesizer.md`](./module-9-some-payment-alignment/us-9.1.0-paymob-region-dual-auth-and-status-synthesizer.md) |
+| `US-9.2.0` | Triple Constant-Time HMAC-SHA512 Verifiers (Transaction, `TOKEN`, Subscription) & Optional `some-payment-adapter` | `2.50` | `4` | [`us-9.2.0-paymob-triple-hmac-and-adapter.md`](./module-9-some-payment-alignment/us-9.2.0-paymob-triple-hmac-and-adapter.md) |

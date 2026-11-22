@@ -8,10 +8,10 @@
 //!
 //! # Security Controls
 //!
-//! - **TM-1 (SSRF Guard)**: [`PaymobRegion::Custom`] and any `checkout_base_url`
+//! - **TM-1 (SSRF Guard)**: `PaymobRegion::Custom` and any `checkout_base_url`
 //!   override reject non-HTTPS schemes, missing or empty hosts, embedded URL
 //!   credentials (`user:pass@`), query strings, and fragments.
-//! - **TM-4 (Secret Redaction)**: [`PixelCheckoutConfig`] implements a custom
+//! - **TM-4 (Secret Redaction)**: `PixelCheckoutConfig` implements a custom
 //!   [`std::fmt::Debug`] representation that redacts `client_secret` and
 //!   credential-bearing checkout URLs as `[REDACTED]`.
 //!

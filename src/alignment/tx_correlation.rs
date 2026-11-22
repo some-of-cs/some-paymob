@@ -496,25 +496,54 @@ async fn parse_json_response<T: DeserializeOwned>(
 mod tests {
     use super::*;
     use secrecy::SecretString;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    #[tokio::test]
-    async fn direct_numeric_transaction_id_makes_zero_http_calls() {
+    async fn start_inquiry_server(
+        expected_body: Option<Value>,
+        response: ResponseTemplate,
+        expected_calls: u64,
+    ) -> MockServer {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path(TRANSACTION_INQUIRY_PATH))
-            .respond_with(ResponseTemplate::new(500))
-            .expect(0)
+        let mut builder = Mock::given(method("POST")).and(path(TRANSACTION_INQUIRY_PATH));
+        if let Some(body) = expected_body {
+            builder = builder.and(body_json(body));
+        }
+        builder
+            .respond_with(response)
+            .expect(expected_calls)
             .mount(&server)
             .await;
+        server
+    }
 
-        let client = reqwest::Client::new();
+    async fn start_tx_details_server(
+        tx_id: u64,
+        bearer_token: Option<&str>,
+        response: ResponseTemplate,
+    ) -> MockServer {
+        let server = MockServer::start().await;
+        let endpoint = format!("{TRANSACTION_DETAILS_PREFIX}{tx_id}");
+        let mut builder = Mock::given(method("GET")).and(path(endpoint));
+        if let Some(token) = bearer_token {
+            builder = builder.and(header("authorization", format!("Bearer {token}")));
+        }
+        builder
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn direct_numeric_transaction_id_makes_zero_http_calls() {
+        let server = start_inquiry_server(None, ResponseTemplate::new(500), 0).await;
         let token = SecretString::from("jwt-secret-never-sent");
         let lookup = TransactionLookupRef::from_transaction_id(987_654);
 
-        let tx_id = resolve_transaction_id(&client, &server.uri(), &token, &lookup)
+        let tx_id = resolve_transaction_id(&reqwest::Client::new(), &server.uri(), &token, &lookup)
             .await
             .expect("direct transaction_id should resolve without HTTP");
         assert_eq!(tx_id, 987_654);
@@ -522,19 +551,11 @@ mod tests {
 
     #[tokio::test]
     async fn numeric_payment_id_string_makes_zero_http_calls() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path(TRANSACTION_INQUIRY_PATH))
-            .respond_with(ResponseTemplate::new(500))
-            .expect(0)
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
+        let server = start_inquiry_server(None, ResponseTemplate::new(500), 0).await;
         let token = SecretString::from("jwt-secret-never-sent");
         let lookup = TransactionLookupRef::from_payment_id(" 424242 ");
 
-        let tx_id = resolve_transaction_id(&client, &server.uri(), &token, &lookup)
+        let tx_id = resolve_transaction_id(&reqwest::Client::new(), &server.uri(), &token, &lookup)
             .await
             .expect("numeric payment_id should resolve without HTTP");
         assert_eq!(tx_id, 424_242);
@@ -542,28 +563,20 @@ mod tests {
 
     #[tokio::test]
     async fn transaction_inquiry_fallback_via_order_id() {
-        let server = MockServer::start().await;
-        let expected_body = json!({
+        let expected = json!({
             "auth_token": "jwt-order-lookup-token",
             "order_id": "ord-1001"
         });
-        Mock::given(method("POST"))
-            .and(path(TRANSACTION_INQUIRY_PATH))
-            .and(body_json(&expected_body))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "id": 555_001,
-                "amount_cents": 10_000,
-                "refunded_amount_cents": 0
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
+        let resp = ResponseTemplate::new(200).set_body_json(json!({
+            "id": 555_001,
+            "amount_cents": 10_000,
+            "refunded_amount_cents": 0
+        }));
+        let server = start_inquiry_server(Some(expected), resp, 1).await;
         let token = SecretString::from("jwt-order-lookup-token");
         let lookup = TransactionLookupRef::from_order_id("ord-1001");
 
-        let tx_id = resolve_transaction_id(&client, &server.uri(), &token, &lookup)
+        let tx_id = resolve_transaction_id(&reqwest::Client::new(), &server.uri(), &token, &lookup)
             .await
             .expect("order_id fallback should resolve transaction_id");
         assert_eq!(tx_id, 555_001);
@@ -571,26 +584,16 @@ mod tests {
 
     #[tokio::test]
     async fn transaction_inquiry_fallback_via_merchant_order_id() {
-        let server = MockServer::start().await;
-        let expected_body = json!({
+        let expected = json!({
             "auth_token": "jwt-merchant-lookup-token",
             "merchant_order_id": "merch-ref-99"
         });
-        Mock::given(method("POST"))
-            .and(path(TRANSACTION_INQUIRY_PATH))
-            .and(body_json(&expected_body))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "id": 555_002
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
+        let resp = ResponseTemplate::new(200).set_body_json(json!({ "id": 555_002 }));
+        let server = start_inquiry_server(Some(expected), resp, 1).await;
         let token = SecretString::from("jwt-merchant-lookup-token");
         let lookup = TransactionLookupRef::from_merchant_order_id("merch-ref-99");
 
-        let tx_id = resolve_transaction_id(&client, &server.uri(), &token, &lookup)
+        let tx_id = resolve_transaction_id(&reqwest::Client::new(), &server.uri(), &token, &lookup)
             .await
             .expect("merchant_order_id fallback should resolve transaction_id");
         assert_eq!(tx_id, 555_002);
@@ -598,26 +601,16 @@ mod tests {
 
     #[tokio::test]
     async fn transaction_inquiry_fallback_via_special_reference() {
-        let server = MockServer::start().await;
-        let expected_body = json!({
+        let expected = json!({
             "auth_token": "jwt-special-ref-token",
             "merchant_order_id": "spec-ref-77"
         });
-        Mock::given(method("POST"))
-            .and(path(TRANSACTION_INQUIRY_PATH))
-            .and(body_json(&expected_body))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "id": 555_003
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
+        let resp = ResponseTemplate::new(200).set_body_json(json!({ "id": 555_003 }));
+        let server = start_inquiry_server(Some(expected), resp, 1).await;
         let token = SecretString::from("jwt-special-ref-token");
         let lookup = TransactionLookupRef::from_special_reference("spec-ref-77");
 
-        let tx_id = resolve_transaction_id(&client, &server.uri(), &token, &lookup)
+        let tx_id = resolve_transaction_id(&reqwest::Client::new(), &server.uri(), &token, &lookup)
             .await
             .expect("special_reference fallback should resolve transaction_id");
         assert_eq!(tx_id, 555_003);
@@ -625,7 +618,6 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_transaction_id_missing_reference_fails_closed() {
-        let client = reqwest::Client::new();
         let token = SecretString::from("jwt-token");
         let lookup = TransactionLookupRef {
             transaction_id: Some(0),
@@ -633,29 +625,25 @@ mod tests {
             ..TransactionLookupRef::default()
         };
 
-        let err = resolve_transaction_id(&client, "https://accept.paymob.com", &token, &lookup)
-            .await
-            .expect_err("missing reference must fail closed");
+        let err = resolve_transaction_id(
+            &reqwest::Client::new(),
+            "https://accept.paymob.com",
+            &token,
+            &lookup,
+        )
+        .await
+        .expect_err("missing reference must fail closed");
         assert_eq!(err, TxCorrelationError::MissingLookupReference);
     }
 
     #[tokio::test]
     async fn resolve_transaction_id_rejects_zero_id_from_gateway() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path(TRANSACTION_INQUIRY_PATH))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "id": 0
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
+        let resp = ResponseTemplate::new(200).set_body_json(json!({ "id": 0 }));
+        let server = start_inquiry_server(None, resp, 1).await;
         let token = SecretString::from("jwt-token");
         let lookup = TransactionLookupRef::from_order_id("ord-zero");
 
-        let err = resolve_transaction_id(&client, &server.uri(), &token, &lookup)
+        let err = resolve_transaction_id(&reqwest::Client::new(), &server.uri(), &token, &lookup)
             .await
             .expect_err("zero transaction id from gateway must fail");
         assert_eq!(err, TxCorrelationError::InvalidTransactionId(0));
@@ -663,71 +651,51 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_full_refund_amount_when_refunded_field_omitted() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/acceptance/transactions/777001"))
-            .and(header("authorization", "Bearer jwt-refund-token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "id": 777_001,
-                "amount_cents": 25_000
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
+        let resp = ResponseTemplate::new(200).set_body_json(json!({
+            "id": 777_001,
+            "amount_cents": 25_000
+        }));
+        let server = start_tx_details_server(777_001, Some("jwt-refund-token"), resp).await;
         let token = SecretString::from("jwt-refund-token");
 
-        let remaining = resolve_full_refund_amount(&client, &server.uri(), &token, 777_001)
-            .await
-            .expect("omitted refunded_amount_cents should default to 0");
+        let remaining =
+            resolve_full_refund_amount(&reqwest::Client::new(), &server.uri(), &token, 777_001)
+                .await
+                .expect("omitted refunded_amount_cents should default to 0");
         assert_eq!(remaining, 25_000);
     }
 
     #[tokio::test]
     async fn resolve_full_refund_amount_with_partial_prior_refund() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/acceptance/transactions/777002"))
-            .and(header("authorization", "Bearer jwt-refund-token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "id": 777_002,
-                "amount_cents": 25_000,
-                "refunded_amount_cents": 7_500
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
+        let resp = ResponseTemplate::new(200).set_body_json(json!({
+            "id": 777_002,
+            "amount_cents": 25_000,
+            "refunded_amount_cents": 7_500
+        }));
+        let server = start_tx_details_server(777_002, Some("jwt-refund-token"), resp).await;
         let token = SecretString::from("jwt-refund-token");
 
-        let remaining = resolve_full_refund_amount(&client, &server.uri(), &token, 777_002)
-            .await
-            .expect("partial prior refund should return exact remainder");
+        let remaining =
+            resolve_full_refund_amount(&reqwest::Client::new(), &server.uri(), &token, 777_002)
+                .await
+                .expect("partial prior refund should return exact remainder");
         assert_eq!(remaining, 17_500);
     }
 
     #[tokio::test]
     async fn resolve_full_refund_amount_rejects_zero_remaining_balance() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/acceptance/transactions/777003"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "id": 777_003,
-                "amount_cents": 25_000,
-                "refunded_amount_cents": 25_000
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
+        let resp = ResponseTemplate::new(200).set_body_json(json!({
+            "id": 777_003,
+            "amount_cents": 25_000,
+            "refunded_amount_cents": 25_000
+        }));
+        let server = start_tx_details_server(777_003, None, resp).await;
         let token = SecretString::from("jwt-refund-token");
 
-        let err = resolve_full_refund_amount(&client, &server.uri(), &token, 777_003)
-            .await
-            .expect_err("already fully refunded transaction must fail closed");
+        let err =
+            resolve_full_refund_amount(&reqwest::Client::new(), &server.uri(), &token, 777_003)
+                .await
+                .expect_err("already fully refunded transaction must fail closed");
         assert_eq!(
             err,
             TxCorrelationError::NothingRemainingToRefund {
@@ -739,24 +707,18 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_full_refund_amount_rejects_integer_underflow() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/acceptance/transactions/777004"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "id": 777_004,
-                "amount_cents": 10_000,
-                "refunded_amount_cents": 15_000
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
+        let resp = ResponseTemplate::new(200).set_body_json(json!({
+            "id": 777_004,
+            "amount_cents": 10_000,
+            "refunded_amount_cents": 15_000
+        }));
+        let server = start_tx_details_server(777_004, None, resp).await;
         let token = SecretString::from("jwt-refund-token");
 
-        let err = resolve_full_refund_amount(&client, &server.uri(), &token, 777_004)
-            .await
-            .expect_err("refunded > amount must fail closed with underflow");
+        let err =
+            resolve_full_refund_amount(&reqwest::Client::new(), &server.uri(), &token, 777_004)
+                .await
+                .expect_err("refunded > amount must fail closed with underflow");
         assert_eq!(
             err,
             TxCorrelationError::ArithmeticUnderflow {
@@ -768,21 +730,15 @@ mod tests {
 
     #[tokio::test]
     async fn http_error_never_exposes_auth_token() {
-        let server = MockServer::start().await;
         let secret = "super-sensitive-jwt-token-999";
-        Mock::given(method("GET"))
-            .and(path("/api/acceptance/transactions/777005"))
-            .respond_with(ResponseTemplate::new(401).set_body_string(secret))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
+        let resp = ResponseTemplate::new(401).set_body_string(secret);
+        let server = start_tx_details_server(777_005, None, resp).await;
         let token = SecretString::from(secret);
 
-        let err = resolve_full_refund_amount(&client, &server.uri(), &token, 777_005)
-            .await
-            .expect_err("401 must return HttpStatus error");
+        let err =
+            resolve_full_refund_amount(&reqwest::Client::new(), &server.uri(), &token, 777_005)
+                .await
+                .expect_err("401 must return HttpStatus error");
         assert_eq!(
             err,
             TxCorrelationError::HttpStatus {

@@ -2,17 +2,19 @@
 //! US-9.1.0 Unit 2: Single-flight `AuthTokenManager` and Paymob dual-auth scheme router.
 //!
 //! Paymob endpoints use two distinct authentication schemes:
-//! - [`PaymobAuthScheme::SecretKeyToken`] (`Authorization: Token <sk>`) for Intention,
-//!   Void, and Refund operations.
-//! - [`PaymobAuthScheme::BearerAuthToken`] (`Authorization: Bearer <auth_token>` or a
-//!   cached 60-minute `auth_token`) for Inquiry, Capture, and Card-Token-Inquiry operations.
+//! - [`crate::alignment::dual_auth::PaymobAuthScheme::SecretKeyToken`]
+//!   (`Authorization: Token <sk>`) for Intention, Void, and Refund operations.
+//! - [`crate::alignment::dual_auth::PaymobAuthScheme::BearerAuthToken`]
+//!   (`Authorization: Bearer <auth_token>` or a cached 60-minute `auth_token`) for Inquiry,
+//!   Capture, and Card-Token-Inquiry operations.
 //!
-//! [`AuthTokenManager`] caches the 60-minute `auth_token` ([`TOKEN_TTL`]), triggers
-//! proactive refresh at 50 minutes ([`PROACTIVE_REFRESH_AT`]), serializes refreshes
-//! behind a single-flight [`tokio::sync::Mutex`] with double-checked locking to prevent
+//! [`crate::alignment::dual_auth::AuthTokenManager`] caches the 60-minute `auth_token`
+//! ([`crate::alignment::dual_auth::TOKEN_TTL`]), triggers proactive refresh at 50 minutes
+//! ([`crate::alignment::dual_auth::PROACTIVE_REFRESH_AT`]), serializes refreshes behind a
+//! single-flight [`tokio::sync::Mutex`] with double-checked locking to prevent
 //! thundering-herd refresh storms (`TM-5`), and retries once automatically on HTTP 401.
 //! All credentials (`api_key`, `secret_key`, and cached `auth_token`) are held in
-//! [`secrecy::SecretString`] and formatted as `[REDACTED]` in [`fmt::Debug`] (`TM-4`).
+//! [`secrecy::SecretString`] and formatted as `[REDACTED]` in [`std::fmt::Debug`] (`TM-4`).
 
 use std::fmt;
 use std::future::Future;
@@ -236,7 +238,7 @@ pub enum DualAuthError {
 /// Configuration for [`AuthTokenManager`].
 ///
 /// Stores `api_key` and `secret_key` inside [`SecretString`] and implements custom
-/// [`fmt::Debug`] that emits `[REDACTED]` for all secret fields (`TM-4`).
+/// [`std::fmt::Debug`] that emits `[REDACTED]` for all secret fields (`TM-4`).
 ///
 /// # Examples
 ///

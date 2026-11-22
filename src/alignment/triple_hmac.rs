@@ -336,10 +336,7 @@ pub fn verify_token_hmac(
 /// });
 /// assert!(verify_subscription_hmac(&payload, "secret-key").is_ok());
 /// ```
-pub fn verify_subscription_hmac(
-    payload: &Value,
-    hmac_secret: &str,
-) -> Result<(), TripleHmacError> {
+pub fn verify_subscription_hmac(payload: &Value, hmac_secret: &str) -> Result<(), TripleHmacError> {
     let body_hmac = payload
         .get("hmac")
         .and_then(Value::as_str)

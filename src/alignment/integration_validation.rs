@@ -5,16 +5,16 @@
 //! This module enforces local fail-closed invariants before any Paymob Unified Intention
 //! request is transmitted over the network:
 //!
-//! - **TM-6 Manual-capture guard**: [`AlignmentCaptureMode::Manual`] requires an explicit,
-//!   non-zero `auth_integration_id` in [`IntegrationRoutingConfig`]. Missing or zero IDs
-//!   fail closed with [`IntegrationValidationError::ConfigurationError`] and never silently
+//! - **TM-6 Manual-capture guard**: `AlignmentCaptureMode::Manual` requires an explicit,
+//!   non-zero `auth_integration_id` in `IntegrationRoutingConfig`. Missing or zero IDs
+//!   fail closed with `IntegrationValidationError::ConfigurationError` and never silently
 //!   fall back to auto-capture integration IDs.
 //! - **Named alias resolution**: Resolves aliases such as `"card"`, `"wallet"`, `"valu"`,
 //!   and `"apple_pay"` to validated non-zero Paymob integration IDs.
 //! - **Conditional pre-flight checks**: Validates `billing_data.phone_number`, integer
 //!   minor-unit `items` (with overflow-checked summation), and non-empty `order_id` ->
 //!   `special_reference` mapping.
-//! - **PII hygiene**: [`IntentionBillingData`] implements a custom [`fmt::Debug`] that
+//! - **PII hygiene**: `IntentionBillingData` implements a custom `std::fmt::Debug` that
 //!   redacts `phone_number` and `email` as `[REDACTED]`.
 //!
 //! # Example

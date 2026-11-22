@@ -1,6 +1,6 @@
 [package]
 name = "some-paymob"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
@@ -29,6 +29,7 @@ onboarding = ["core"]
 partner-onboarding = ["onboarding"]
 some-payments-adapter = ["core", "webhooks", "intentions", "manage", "saved-cards", "subscriptions", "splits", "payouts"]
 some-payment-trait = ["some-payments-adapter"]
+some-payment-adapter = ["dep:some-payment-core", "dep:async-trait", "some-payments-adapter", "inquiries"]
 test-utils = ["core", "webhooks", "dep:wiremock"]
 full = ["core", "webhooks", "intentions", "legacy-v2", "manage", "inquiries", "quicklinks", "splits", "transactions", "saved-cards", "subscriptions", "payouts", "onboarding", "some-payments-adapter", "test-utils", "rustls-tls"]
 rustls-tls = ["reqwest/rustls-tls"]
@@ -36,6 +37,7 @@ native-tls = ["reqwest/native-tls"]
 
 [dependencies]
 arc-swap = "1.7"
+async-trait = { version = "0.1", optional = true }
 base64 = "0.22"
 hex = { version = "0.4", optional = true }
 hmac = { version = "0.12", optional = true }
@@ -45,6 +47,7 @@ secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = { version = "0.10", optional = true }
+some-payment-core = { git = "https://github.com/some-of-cs/some-payment", package = "some-payment-core", optional = true }
 subtle = { version = "2.6", optional = true }
 thiserror = "2.0"
 tokio = { version = "1.40", features = ["sync", "time", "macros", "rt"] }

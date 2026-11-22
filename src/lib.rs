@@ -8,6 +8,9 @@
 //! This crate enforces `#![forbid(unsafe_code)]`, secret redaction (`[REDACTED]`),
 //! integer minor-unit monetary values, and constant-time HMAC-SHA512 webhook verification.
 
+/// `some-payment` orchestrator alignment primitives: regional routing, single-flight dual-auth,
+/// integration validation, transaction correlation, deterministic status synthesis, and triple HMAC-SHA512.
+pub mod alignment;
 pub mod core;
 pub mod prelude;
 

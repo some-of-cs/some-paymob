@@ -5,12 +5,18 @@
 //! Each submodule is owned by an independent implementation unit, with flat
 //! re-exports provided at the `adapter` module root for ergonomic imports.
 
+/// US-9.2.0 Unit 4: Offline `wiremock` conformance suite for `PaymobProvider`.
+#[cfg(all(test, feature = "some-payment-adapter"))]
+mod conformance_tests;
 /// Unit 9.2.1: Object-safe (`dyn`-compatible) capability traits and smart reversal helpers for `some-payment`.
 pub mod dyn_traits;
 /// Unit 8.1.3: `PaymobExt` and `ProviderExt::Paymob(PaymobExt)` escape hatch.
 pub mod ext;
 /// Unit 9.2.2: Expanded 7-issuer Paymob Send payout, bulk disbursement, and inquiry adapter.
 pub mod payout_adapter;
+/// US-9.2.0 Unit 3: Optional `some_payment_core::PaymentProvider` adapter for Paymob.
+#[cfg(feature = "some-payment-adapter")]
+pub mod paymob_provider;
 /// Unit 8.1.2: `PaymobClient` implementations of `PaymentProvider`, `WebhookVerifier`, `SubscriptionProvider`, and `PayoutProvider`.
 pub mod some_payments;
 /// Unit 8.1.1: Unified gateway trait definitions and normalized request/response DTOs.

@@ -8,11 +8,14 @@
 //! `refunded_amount_cents`, `captured_amount`).
 //!
 //! This module provides:
-//! - [`synthesize_paymob_status`]: collapses [`PaymobTransactionFlags`] into a single
-//!   [`SynthesizedPaymentStatus`] using a deterministic 9-step precedence order.
-//! - [`extract_parent_correlation`]: separates child action callbacks (`is_void`, `is_refund`,
-//!   `is_capture`) from parent state updates (`is_voided`, `is_refunded`, `is_captured`) so
-//!   child callbacks never overwrite the canonical parent payment identifier.
+//! - [`synthesize_paymob_status`](crate::alignment::status_synthesizer::synthesize_paymob_status)
+//!   — collapses [`PaymobTransactionFlags`](crate::alignment::status_synthesizer::PaymobTransactionFlags)
+//!   into a single [`SynthesizedPaymentStatus`](crate::alignment::status_synthesizer::SynthesizedPaymentStatus)
+//!   using a deterministic 9-step precedence order.
+//! - [`extract_parent_correlation`](crate::alignment::status_synthesizer::extract_parent_correlation)
+//!   — separates child action callbacks (`is_void`, `is_refund`, `is_capture`) from parent
+//!   state updates (`is_voided`, `is_refunded`, `is_captured`) so child callbacks never
+//!   overwrite the canonical parent payment identifier.
 //!
 //! # Example
 //!

@@ -3,17 +3,23 @@
 //!
 //! Covers all three Paymob webhook verification protocols required by `US-9.2.0`:
 //!
-//! 1. **Transaction callback (20-key POST JSON & GET query)** — [`verify_tx_hmac`] and
-//!    [`verify_tx_get_hmac`] over [`TX_HMAC_KEYS`].
-//! 2. **Card `TOKEN` callback (8-key POST JSON)** — [`verify_token_hmac`] over
-//!    [`TOKEN_HMAC_KEYS`].
-//! 3. **Subscription callback (body `hmac` field)** — [`verify_subscription_hmac`] over
-//!    `"{trigger_type}for{subscription_id}"`, verified strictly against the JSON body
+//! 1. **Transaction callback (20-key POST JSON & GET query)** —
+//!    [`verify_tx_hmac`](crate::alignment::triple_hmac::verify_tx_hmac) and
+//!    [`verify_tx_get_hmac`](crate::alignment::triple_hmac::verify_tx_get_hmac) over
+//!    [`TX_HMAC_KEYS`](crate::alignment::triple_hmac::TX_HMAC_KEYS).
+//! 2. **Card `TOKEN` callback (8-key POST JSON)** —
+//!    [`verify_token_hmac`](crate::alignment::triple_hmac::verify_token_hmac) over
+//!    [`TOKEN_HMAC_KEYS`](crate::alignment::triple_hmac::TOKEN_HMAC_KEYS).
+//! 3. **Subscription callback (body `hmac` field)** —
+//!    [`verify_subscription_hmac`](crate::alignment::triple_hmac::verify_subscription_hmac)
+//!    over `"{trigger_type}for{subscription_id}"`, verified strictly against the JSON body
 //!    `hmac` field (never `?hmac=`).
 //!
 //! All comparisons decode the hex digest into bytes without panicking and compare the
 //! 64-byte `SHA-512` MAC using [`subtle::ConstantTimeEq::ct_eq`]. Secrets and expected
-//! digests are never included in [`TripleHmacError`] messages or `Debug` output.
+//! digests are never included in
+//! [`TripleHmacError`](crate::alignment::triple_hmac::TripleHmacError) messages or `Debug`
+//! output.
 
 use std::collections::BTreeMap;
 

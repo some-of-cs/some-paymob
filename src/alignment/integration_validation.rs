@@ -508,7 +508,10 @@ mod tests {
 
         let err = validate_intention_preflight(&config, &input)
             .expect_err("Manual capture without auth_integration_id must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ConfigurationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ConfigurationError(_)
+        ));
     }
 
     #[test]
@@ -519,7 +522,10 @@ mod tests {
 
         let err = validate_intention_preflight(&config, &input)
             .expect_err("auth_integration_id == 0 must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ConfigurationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ConfigurationError(_)
+        ));
     }
 
     #[test]
@@ -568,29 +574,44 @@ mod tests {
         let empty_config = IntegrationRoutingConfig::new(Vec::new());
         let err = validate_intention_preflight(&empty_config, &base_input())
             .expect_err("empty default_integration_ids without alias must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ConfigurationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ConfigurationError(_)
+        ));
 
         let zero_default = IntegrationRoutingConfig::new(vec![100_001, 0]);
         let err = validate_intention_preflight(&zero_default, &base_input())
             .expect_err("default_integration_ids containing 0 must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ConfigurationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ConfigurationError(_)
+        ));
 
         let zero_alias = IntegrationRoutingConfig::new(vec![100_001]).with_alias("card", 0);
         let mut alias_input = base_input();
         alias_input.payment_method_alias = Some("card".to_owned());
         let err = validate_intention_preflight(&zero_alias, &alias_input)
             .expect_err("alias mapped to 0 must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ConfigurationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ConfigurationError(_)
+        ));
 
         alias_input.payment_method_alias = Some("unknown_rail".to_owned());
         let err = validate_intention_preflight(&sample_config(), &alias_input)
             .expect_err("unknown alias must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ConfigurationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ConfigurationError(_)
+        ));
 
         alias_input.payment_method_alias = Some("   ".to_owned());
         let err = validate_intention_preflight(&sample_config(), &alias_input)
             .expect_err("blank alias must fail with ValidationError");
-        assert!(matches!(err, IntegrationValidationError::ValidationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ValidationError(_)
+        ));
     }
 
     #[test]
@@ -601,13 +622,19 @@ mod tests {
         empty_name_input.items = vec![IntentionLineItem::new("   ", 500)];
         let err = validate_intention_preflight(&config, &empty_name_input)
             .expect_err("item with blank name must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ValidationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ValidationError(_)
+        ));
 
         let mut zero_amount_input = base_input();
         zero_amount_input.items = vec![IntentionLineItem::new("Subscription", 0)];
         let err = validate_intention_preflight(&config, &zero_amount_input)
             .expect_err("item with amount == 0 must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ValidationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ValidationError(_)
+        ));
 
         let mut zero_qty_input = base_input();
         let mut item = IntentionLineItem::new("Subscription", 500);
@@ -615,7 +642,10 @@ mod tests {
         zero_qty_input.items = vec![item];
         let err = validate_intention_preflight(&config, &zero_qty_input)
             .expect_err("item with quantity == Some(0) must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ValidationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ValidationError(_)
+        ));
 
         let mut overflow_input = base_input();
         overflow_input.items = vec![
@@ -624,7 +654,10 @@ mod tests {
         ];
         let err = validate_intention_preflight(&config, &overflow_input)
             .expect_err("overflowing item sum must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ValidationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ValidationError(_)
+        ));
 
         let mut valid_items_input = base_input();
         valid_items_input.items = vec![
@@ -645,7 +678,10 @@ mod tests {
             Some(IntentionBillingData::new("   ").with_email("user@example.com"));
         let err = validate_intention_preflight(&config, &missing_phone)
             .expect_err("billing_data without phone_number must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ValidationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ValidationError(_)
+        ));
 
         let mut valid_phone = base_input();
         valid_phone.billing_data = Some(
@@ -672,7 +708,10 @@ mod tests {
         blank_order.order_id = "   ".to_owned();
         let err = validate_intention_preflight(&config, &blank_order)
             .expect_err("blank order_id must fail closed");
-        assert!(matches!(err, IntegrationValidationError::ValidationError(_)));
+        assert!(matches!(
+            err,
+            IntegrationValidationError::ValidationError(_)
+        ));
     }
 
     #[test]

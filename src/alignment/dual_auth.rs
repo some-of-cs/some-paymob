@@ -318,9 +318,7 @@ impl AuthTokenConfig {
         token_ttl: Duration,
         proactive_refresh_at: Duration,
     ) -> Result<Self, DualAuthError> {
-        if token_ttl.is_zero()
-            || proactive_refresh_at.is_zero()
-            || proactive_refresh_at > token_ttl
+        if token_ttl.is_zero() || proactive_refresh_at.is_zero() || proactive_refresh_at > token_ttl
         {
             return Err(DualAuthError::InvalidTimingConfig {
                 ttl: token_ttl,

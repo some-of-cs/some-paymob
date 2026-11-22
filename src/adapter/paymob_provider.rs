@@ -686,12 +686,16 @@ impl PaymentProvider for PaymobProvider {
                 tx,
                 parsed_post_body.as_ref(),
             )),
-            DispatchedPaymobCallback::CardToken(token) => {
-                Ok(map_card_token_webhook(&self.id, self.config.livemode, token))
-            }
-            DispatchedPaymobCallback::Subscription(sub) => {
-                Ok(map_subscription_webhook(&self.id, self.config.livemode, sub))
-            }
+            DispatchedPaymobCallback::CardToken(token) => Ok(map_card_token_webhook(
+                &self.id,
+                self.config.livemode,
+                token,
+            )),
+            DispatchedPaymobCallback::Subscription(sub) => Ok(map_subscription_webhook(
+                &self.id,
+                self.config.livemode,
+                sub,
+            )),
         }
     }
 }

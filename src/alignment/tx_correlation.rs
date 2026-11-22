@@ -77,7 +77,9 @@ pub enum TxCorrelationError {
         detail: String,
     },
     /// Checked integer subtraction detected `refunded_amount_cents > amount_cents` (TM-2).
-    #[error("refunded_amount_cents ({refunded_amount_cents}) exceeds amount_cents ({amount_cents})")]
+    #[error(
+        "refunded_amount_cents ({refunded_amount_cents}) exceeds amount_cents ({amount_cents})"
+    )]
     ArithmeticUnderflow {
         /// Original transaction amount in minor units.
         amount_cents: u64,

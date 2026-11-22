@@ -60,7 +60,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use url::Url;
+use url::{ParseError, Url};
 
 /// Canonical Egypt Accept API & default checkout host.
 const EGYPT_BASE_URL: &str = "https://accept.paymob.com";
@@ -556,10 +556,13 @@ pub fn build_unified_checkout_url(
     client_secret: &str,
     checkout_base_url_override: Option<&str>,
 ) -> Result<String, RegionCheckoutError> {
-    let checkout_base = resolve_checkout_base(region, checkout_base_url_override)?;
-    let pk = validate_non_empty(public_key, "public_key")?;
-    let cs = validate_non_empty(client_secret, "client_secret")?;
-    build_checkout_query_url(&checkout_base, "unifiedcheckout", pk, cs)
+    build_checkout_endpoint_url(
+        region,
+        "unifiedcheckout",
+        public_key,
+        client_secret,
+        checkout_base_url_override,
+    )
 }
 
 /// Builds a regional Paymob Pixel checkout URL with URL-encoded query parameters:
@@ -596,10 +599,27 @@ pub fn build_pixel_checkout_url(
     client_secret: &str,
     checkout_base_url_override: Option<&str>,
 ) -> Result<String, RegionCheckoutError> {
+    build_checkout_endpoint_url(
+        region,
+        "pixel",
+        public_key,
+        client_secret,
+        checkout_base_url_override,
+    )
+}
+
+/// Resolves the checkout base URL, validates keys, and builds `{base}/{segment}/?...`.
+fn build_checkout_endpoint_url(
+    region: &PaymobRegion,
+    segment: &str,
+    public_key: &str,
+    client_secret: &str,
+    checkout_base_url_override: Option<&str>,
+) -> Result<String, RegionCheckoutError> {
     let checkout_base = resolve_checkout_base(region, checkout_base_url_override)?;
     let pk = validate_non_empty(public_key, "public_key")?;
     let cs = validate_non_empty(client_secret, "client_secret")?;
-    build_checkout_query_url(&checkout_base, "pixel", pk, cs)
+    build_checkout_query_url(&checkout_base, segment, pk, cs)
 }
 
 /// Resolves the active checkout base URL from either an explicit override or the region.
@@ -653,10 +673,11 @@ fn normalize_https_base_url(raw: &str, field: &'static str) -> Result<String, Re
 
 /// Parses a URL and enforces HTTPS scheme plus a non-empty host.
 fn parse_https_url(raw: &str, field: &'static str) -> Result<Url, RegionCheckoutError> {
-    let parsed = Url::parse(raw.trim()).map_err(|err| RegionCheckoutError::InvalidUrl {
-        field,
-        reason: err.to_string(),
-    })?;
+    let trimmed = raw.trim();
+    if has_empty_https_authority(trimmed) {
+        return Err(RegionCheckoutError::MissingHost { field });
+    }
+    let parsed = Url::parse(trimmed).map_err(|err| map_url_parse_error(err, field))?;
     if parsed.scheme() != "https" {
         return Err(RegionCheckoutError::InsecureScheme {
             field,
@@ -667,6 +688,27 @@ fn parse_https_url(raw: &str, field: &'static str) -> Result<Url, RegionCheckout
         return Err(RegionCheckoutError::MissingHost { field });
     }
     Ok(parsed)
+}
+
+/// Returns `true` when an HTTPS URL has an extra leading slash or backslash after `://`
+/// (such as `https:///no-host`), preventing WHATWG slash-collapsing from promoting a path
+/// segment into a host.
+fn has_empty_https_authority(trimmed: &str) -> bool {
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return false;
+    };
+    scheme.eq_ignore_ascii_case("https") && rest.starts_with(['/', '\\'])
+}
+
+/// Maps a [`ParseError`] into [`RegionCheckoutError`], preserving [`RegionCheckoutError::MissingHost`].
+fn map_url_parse_error(err: ParseError, field: &'static str) -> RegionCheckoutError {
+    if err == ParseError::EmptyHost {
+        return RegionCheckoutError::MissingHost { field };
+    }
+    RegionCheckoutError::InvalidUrl {
+        field,
+        reason: err.to_string(),
+    }
 }
 
 /// Rejects embedded usernames or passwords in a base URL.
@@ -866,10 +908,19 @@ mod tests {
         ));
         assert!(matches!(
             PaymobRegion::custom("https:///no-host"),
-            Err(RegionCheckoutError::InvalidUrl {
-                field: "base_url",
-                ..
-            })
+            Err(RegionCheckoutError::MissingHost { field: "base_url" })
+        ));
+        assert!(matches!(
+            PaymobRegion::custom("HTTPS:///no-host"),
+            Err(RegionCheckoutError::MissingHost { field: "base_url" })
+        ));
+        assert!(matches!(
+            PaymobRegion::custom("https://"),
+            Err(RegionCheckoutError::MissingHost { field: "base_url" })
+        ));
+        assert!(matches!(
+            PaymobRegion::custom("https://\\no-host"),
+            Err(RegionCheckoutError::MissingHost { field: "base_url" })
         ));
         assert!(matches!(
             PaymobRegion::custom("https://user:pass@accept.paymob.com"),

@@ -78,8 +78,8 @@ let session = client.create_payment_session(&unified_req).await?; // `some-payme
 ```rust
 use some_paymob::webhooks::{InMemoryWebhookDeduplicator, PaymobWebhookEngine, WebhookIdempotencyStore};
 
-let engine = PaymobWebhookEngine::new("$PAYMOB_HMAC_SECRET")?
-    .with_payouts_hmac_secret("$PAYMOB_PAYOUTS_HMAC_SECRET")?; // required (fail-closed) for Protocol E
+let engine = PaymobWebhookEngine::from_hmac_secret(&HmacSecret::new("$PAYMOB_HMAC_SECRET")?)
+    .with_payouts_hmac_secret(&HmacSecret::new("$PAYMOB_PAYOUTS_HMAC_SECRET")?); // required (fail-closed) for Protocol E
 let dedup = InMemoryWebhookDeduplicator::new();
 
 // Protocols A, C, D, E (POST): auto-dispatch & constant-time verify

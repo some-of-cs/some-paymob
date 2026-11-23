@@ -3,14 +3,15 @@ use std::time::Duration;
 
 use reqwest::Client;
 use secrecy::{ExposeSecret, SecretString};
-use some_payment_core::{PaymentCapabilities, PaymentError};
+use some_payment_core::{PaymentCapabilities, PaymentError, ProviderReference};
 use url::Url;
 
 use crate::alignment::dual_auth::{AuthTokenConfig, AuthTokenManager};
 use crate::alignment::integration_validation::IntegrationRoutingConfig;
-use crate::alignment::region_checkout::PaymobRegion;
+use crate::alignment::region_checkout::{PaymobRegion, build_unified_checkout_url};
 
 use super::errors::{map_dual_auth_config_error, map_region_error};
+use super::wire::TxResultContext;
 
 const REDACTED: &str = "[REDACTED]";
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -215,6 +216,28 @@ impl PaymobProviderConfig {
 
     pub(super) fn redirection_url(&self) -> Option<&str> {
         self.redirection_url.as_deref()
+    }
+
+    pub(super) const fn tx_result_ctx<'a>(
+        &self,
+        fallback_ref: Option<&'a ProviderReference>,
+        fallback_currency: Option<&'a str>,
+    ) -> TxResultContext<'a> {
+        TxResultContext {
+            default_livemode: self.livemode,
+            fallback_ref,
+            fallback_currency,
+        }
+    }
+
+    pub(super) fn build_checkout_url(&self, client_secret: &str) -> Result<String, PaymentError> {
+        build_unified_checkout_url(
+            &self.region,
+            self.credentials.public_key().expose_secret(),
+            client_secret,
+            self.checkout_base_url_override.as_deref(),
+        )
+        .map_err(map_region_error)
     }
 }
 

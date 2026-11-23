@@ -15,7 +15,6 @@ use some_payment_core::{
 
 use crate::alignment::dual_auth::AuthTokenManager;
 use crate::alignment::integration_validation::validate_intention_preflight;
-use crate::alignment::region_checkout::build_unified_checkout_url;
 use crate::alignment::tx_correlation::{
     TxCorrelationError, resolve_full_refund_amount, resolve_transaction_id,
 };
@@ -25,13 +24,13 @@ use super::config::{
     resolve_http_client, validate_required_secrets,
 };
 use super::errors::{
-    map_dual_auth_error, map_integration_error, map_region_error, map_transport_error,
-    map_tx_correlation_error, parse_api_response,
+    map_dual_auth_error, map_integration_error, map_transport_error, map_tx_correlation_error,
+    parse_api_response,
 };
 use super::webhook::parse_and_verify_paymob_webhook;
 use super::wire::{
     CaptureApiRequest, IntentionApiResponse, IntentionExecutionSpec, PaymobTransactionPayload,
-    RefundApiRequest, RefundExecutionContext, TxResultContext, VoidApiRequest,
+    RefundApiRequest, RefundExecutionContext, VoidApiRequest,
     build_intention_payload, build_intention_reference, build_lookup_ref, build_preflight_input,
     build_refund_result, build_tx_payment_result,
 };
@@ -167,13 +166,7 @@ impl PaymobProvider {
         let body: IntentionApiResponse = self
             .post_with_secret_key(INTENTION_PATH, "create_intention", &payload)
             .await?;
-        let checkout_url = build_unified_checkout_url(
-            self.config.region(),
-            self.config.credentials().public_key().expose_secret(),
-            &body.client_secret,
-            self.config.checkout_base_url_override(),
-        )
-        .map_err(map_region_error)?;
+        let checkout_url = self.config.build_checkout_url(&body.client_secret)?;
         let reference = build_intention_reference(&self.id, &spec, &body)?;
         Ok(PaymentResult {
             reference,
@@ -181,7 +174,9 @@ impl PaymobProvider {
             money: spec.money.clone(),
             captured_amount: None,
             refunded_amount: None,
-            next_action: Some(NextAction::Redirect { url: checkout_url.clone() }),
+            next_action: Some(NextAction::Redirect {
+                url: checkout_url.clone(),
+            }),
             checkout_url: Some(checkout_url),
             livemode: self.config.livemode(),
         })
@@ -220,7 +215,13 @@ impl PaymobProvider {
             .auth_manager
             .execute_with_auth_retry(move |token| {
                 let (client, target) = (http.clone(), url.clone());
-                async move { client.get(&target).bearer_auth(token.expose_secret()).send().await }
+                async move {
+                    client
+                        .get(&target)
+                        .bearer_auth(token.expose_secret())
+                        .send()
+                        .await
+                }
             })
             .await
             .map_err(|err| map_dual_auth_error(&self.id, err))?;
@@ -244,19 +245,6 @@ impl PaymobProvider {
         Ok(tx.flags.amount_cents)
     }
 
-    fn tx_result(
-        &self,
-        payload: &PaymobTransactionPayload,
-        fallback_ref: Option<&ProviderReference>,
-        fallback_currency: Option<&str>,
-    ) -> Result<PaymentResult, PaymentError> {
-        let ctx = TxResultContext {
-            default_livemode: self.config.livemode(),
-            fallback_ref,
-            fallback_currency,
-        };
-        build_tx_payment_result(&self.id, payload, &ctx)
-    }
 }
 
 #[async_trait]
@@ -298,7 +286,8 @@ impl PaymentProvider for PaymobProvider {
     ) -> Result<PaymentResult, PaymentError> {
         let tx_id = self.resolve_numeric_tx_id(reference).await?;
         let payload = self.fetch_transaction(tx_id).await?;
-        self.tx_result(&payload, Some(reference), None)
+        let ctx = self.config.tx_result_ctx(Some(reference), None);
+        build_tx_payment_result(&self.id, &payload, &ctx)
     }
 
     async fn create_checkout(
@@ -323,7 +312,9 @@ impl PaymentProvider for PaymobProvider {
     async fn capture(&self, req: &CaptureRequest) -> Result<PaymentResult, PaymentError> {
         req.validate()?;
         let tx_id = self.resolve_numeric_tx_id(&req.reference).await?;
-        let amount_cents = self.resolve_capture_amount_cents(tx_id, req.amount.as_ref()).await?;
+        let amount_cents = self
+            .resolve_capture_amount_cents(tx_id, req.amount.as_ref())
+            .await?;
         let url = format!("{}{CAPTURE_PATH}", self.api_base_url);
         let http = self.http.clone();
         let response = self
@@ -336,23 +327,34 @@ impl PaymentProvider for PaymobProvider {
                         transaction_id: tx_id,
                         amount_cents,
                     };
-                    client.post(&target).bearer_auth(token.expose_secret()).json(&body).send().await
+                    client
+                        .post(&target)
+                        .bearer_auth(token.expose_secret())
+                        .json(&body)
+                        .send()
+                        .await
                 }
             })
             .await
             .map_err(|err| map_dual_auth_error(&self.id, err))?;
-        let payload: PaymobTransactionPayload = parse_api_response(&self.id, "capture", response).await?;
+        let payload: PaymobTransactionPayload =
+            parse_api_response(&self.id, "capture", response).await?;
         let fallback_currency = req.amount.as_ref().map(|m| m.currency().as_str());
-        self.tx_result(&payload, Some(&req.reference), fallback_currency)
+        let ctx = self.config.tx_result_ctx(Some(&req.reference), fallback_currency);
+        build_tx_payment_result(&self.id, &payload, &ctx)
     }
 
     async fn void_payment(&self, req: &VoidRequest) -> Result<PaymentResult, PaymentError> {
         req.validate()?;
         let tx_id = self.resolve_numeric_tx_id(&req.reference).await?;
-        let body = VoidApiRequest { transaction_id: tx_id };
-        let payload: PaymobTransactionPayload =
-            self.post_with_secret_key(VOID_PATH, "void_payment", &body).await?;
-        self.tx_result(&payload, Some(&req.reference), None)
+        let body = VoidApiRequest {
+            transaction_id: tx_id,
+        };
+        let payload: PaymobTransactionPayload = self
+            .post_with_secret_key(VOID_PATH, "void_payment", &body)
+            .await?;
+        let ctx = self.config.tx_result_ctx(Some(&req.reference), None);
+        build_tx_payment_result(&self.id, &payload, &ctx)
     }
 
     async fn refund(&self, req: &RefundRequest) -> Result<RefundResult, PaymentError> {
@@ -362,10 +364,17 @@ impl PaymentProvider for PaymobProvider {
             Some(money) => money.amount(),
             None => self.resolve_remaining_refund_cents(tx_id).await?,
         };
-        let body = RefundApiRequest { transaction_id: tx_id, amount_cents };
-        let payload: PaymobTransactionPayload =
-            self.post_with_secret_key(REFUND_PATH, "refund", &body).await?;
-        let ctx = RefundExecutionContext { tx_id, amount_cents };
+        let body = RefundApiRequest {
+            transaction_id: tx_id,
+            amount_cents,
+        };
+        let payload: PaymobTransactionPayload = self
+            .post_with_secret_key(REFUND_PATH, "refund", &body)
+            .await?;
+        let ctx = RefundExecutionContext {
+            tx_id,
+            amount_cents,
+        };
         build_refund_result(&self.id, ctx, req, &payload)
     }
 

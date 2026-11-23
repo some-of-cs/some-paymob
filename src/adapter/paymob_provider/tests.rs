@@ -31,6 +31,39 @@ fn sample_config(with_auth_id: bool) -> PaymobProviderConfig {
     PaymobProviderConfig::new(PaymobRegion::Egypt, routing, credentials)
 }
 
+fn sample_get_return_query() -> BTreeMap<String, String> {
+    let entries = [
+        ("amount_cents", "10000"),
+        ("created_at", "2026-01-01T00:00:00"),
+        ("currency", "EGP"),
+        ("error_occured", "false"),
+        ("has_parent_transaction", "false"),
+        ("id", "998877"),
+        ("integration_id", "1001"),
+        ("is_3d_secure", "true"),
+        ("is_auth", "false"),
+        ("is_capture", "false"),
+        ("is_refunded", "false"),
+        ("is_standalone_payment", "true"),
+        ("is_voided", "false"),
+        ("order", "445566"),
+        ("owner", "77"),
+        ("pending", "false"),
+        ("source_data.pan", "2346"),
+        ("source_data.sub_type", "MasterCard"),
+        ("source_data.type", "card"),
+        ("success", "true"),
+    ];
+    let concat: String = entries.iter().map(|(_, v)| *v).collect();
+    let mut query: BTreeMap<String, String> = entries
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+    let hmac = compute_hmac_sha512_hex(&concat, "SUPER_SECRET_HMAC_KEY");
+    query.insert("hmac".to_owned(), hmac);
+    query
+}
+
 #[test]
 fn provider_id_is_paymob() {
     let provider = PaymobProvider::new(sample_config(false)).expect("provider");
@@ -144,60 +177,10 @@ async fn webhook_rejects_tampered_hmac() {
 #[tokio::test]
 async fn webhook_distinguishes_get_return_authority_and_redacts_payload() {
     let provider = PaymobProvider::new(sample_config(false)).expect("provider");
-    let params: BTreeMap<String, String> = [
-        ("amount_cents", "10000"),
-        ("created_at", "2026-01-01T00:00:00"),
-        ("currency", "EGP"),
-        ("error_occured", "false"),
-        ("has_parent_transaction", "false"),
-        ("id", "998877"),
-        ("integration_id", "1001"),
-        ("is_3d_secure", "true"),
-        ("is_auth", "false"),
-        ("is_capture", "false"),
-        ("is_refunded", "false"),
-        ("is_standalone_payment", "true"),
-        ("is_voided", "false"),
-        ("order", "445566"),
-        ("owner", "77"),
-        ("pending", "false"),
-        ("source_data.pan", "2346"),
-        ("source_data.sub_type", "MasterCard"),
-        ("source_data.type", "card"),
-        ("success", "true"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_owned(), v.to_owned()))
-    .collect();
-    let concat = concat!(
-        "10000",
-        "2026-01-01T00:00:00",
-        "EGP",
-        "false",
-        "false",
-        "998877",
-        "1001",
-        "true",
-        "false",
-        "false",
-        "false",
-        "true",
-        "false",
-        "445566",
-        "77",
-        "false",
-        "2346",
-        "MasterCard",
-        "card",
-        "true"
-    );
-    let hmac = compute_hmac_sha512_hex(concat, "SUPER_SECRET_HMAC_KEY");
-    let mut query = params;
-    query.insert("hmac".to_owned(), hmac);
     let raw = RawWebhookRequest {
         raw_body: Vec::new(),
         headers: BTreeMap::new(),
-        query_params: query,
+        query_params: sample_get_return_query(),
         method: HttpMethod::Get,
     };
     let event = provider

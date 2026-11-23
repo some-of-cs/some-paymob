@@ -381,19 +381,6 @@ fn build_transaction_post_body(request: &SignedTransactionRequest<'_>) -> String
 ///     .expect("verifies cleanly");
 /// assert_eq!(event.obj.id, 990011);
 /// ```
-fn validate_signed_tx_request(request: &SignedTransactionRequest<'_>) -> WebhookResult<()> {
-    let invalid = [
-        (request.transaction_id == 0, "transaction_id"),
-        (request.order_id == 0, "order_id"),
-        (request.amount.is_zero(), "amount"),
-        (request.currency.trim().is_empty(), "currency"),
-    ];
-    if let Some((_, field)) = invalid.into_iter().find(|(bad, _)| *bad) {
-        return Err(WebhookError::MissingRequiredField(field.to_owned()));
-    }
-    Ok(())
-}
-
 pub fn generate_signed_transaction_post(
     hmac_secret: &SecretString,
     request: &SignedTransactionRequest<'_>,
@@ -448,21 +435,6 @@ pub fn generate_signed_transaction_post(
 /// let event = engine.verify_subscription(&signed.json_body).expect("verifies cleanly");
 /// assert_eq!(event.subscription_data.id, 1264);
 /// ```
-fn validate_signed_sub_request(request: &SignedSubscriptionRequest<'_>) -> WebhookResult<()> {
-    let invalid = [
-        (request.subscription_id == 0, "subscription_id"),
-        (
-            request.paymob_request_id.trim().is_empty(),
-            "paymob_request_id",
-        ),
-        (request.amount.is_zero(), "amount"),
-    ];
-    if let Some((_, field)) = invalid.into_iter().find(|(bad, _)| *bad) {
-        return Err(WebhookError::MissingRequiredField(field.to_owned()));
-    }
-    Ok(())
-}
-
 pub fn generate_signed_subscription_post(
     hmac_secret: &SecretString,
     request: &SignedSubscriptionRequest<'_>,
@@ -487,6 +459,34 @@ pub fn generate_signed_subscription_post(
         json_body,
         hmac_hex,
     })
+}
+
+fn validate_signed_tx_request(request: &SignedTransactionRequest<'_>) -> WebhookResult<()> {
+    let invalid = [
+        (request.transaction_id == 0, "transaction_id"),
+        (request.order_id == 0, "order_id"),
+        (request.amount.is_zero(), "amount"),
+        (request.currency.trim().is_empty(), "currency"),
+    ];
+    if let Some((_, field)) = invalid.into_iter().find(|(bad, _)| *bad) {
+        return Err(WebhookError::MissingRequiredField(field.to_owned()));
+    }
+    Ok(())
+}
+
+fn validate_signed_sub_request(request: &SignedSubscriptionRequest<'_>) -> WebhookResult<()> {
+    let invalid = [
+        (request.subscription_id == 0, "subscription_id"),
+        (
+            request.paymob_request_id.trim().is_empty(),
+            "paymob_request_id",
+        ),
+        (request.amount.is_zero(), "amount"),
+    ];
+    if let Some((_, field)) = invalid.into_iter().find(|(bad, _)| *bad) {
+        return Err(WebhookError::MissingRequiredField(field.to_owned()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

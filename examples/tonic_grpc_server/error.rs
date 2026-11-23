@@ -55,10 +55,14 @@ pub fn map_error_to_grpc_status(err: PaymobError) -> Status {
 #[must_use]
 pub fn map_webhook_error_to_grpc_status(err: WebhookError) -> Status {
     let message = err.to_string();
-    let code = match err {
-        WebhookError::SignatureMismatch => Code::Unauthenticated,
-        WebhookError::DuplicateWebhookDelivery { .. } => Code::AlreadyExists,
-        _ => Code::InvalidArgument,
+    let code = if err.is_signature_error() {
+        Code::Unauthenticated
+    } else if err.is_replay_or_duplicate() {
+        Code::AlreadyExists
+    } else if err.is_configuration_error() {
+        Code::Internal
+    } else {
+        Code::InvalidArgument
     };
     Status::new(code, message)
 }

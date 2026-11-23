@@ -49,7 +49,7 @@ fn bad_request(message: impl Into<String>) -> ApiServerError {
 // Service 9: Saved Cards & Headless Payments
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct MitPayRequest {
     payment_token: String,
     saved_token: String,
@@ -57,6 +57,12 @@ struct MitPayRequest {
     cvn: Option<String>,
     #[serde(default)]
     use_cvc_with_moto: Option<bool>,
+}
+
+impl std::fmt::Debug for MitPayRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MitPayRequest").finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -653,13 +659,19 @@ async fn refund_last_transaction(
 // Service 12: Paymob Send (Payouts)
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct PayoutsTokenResponseDto {
     access_token: String,
     refresh_token: String,
     expires_in: u64,
     scope: String,
     token_type: String,
+}
+
+impl std::fmt::Debug for PayoutsTokenResponseDto {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PayoutsTokenResponseDto").finish_non_exhaustive()
+    }
 }
 
 impl From<PayoutsTokenResponse> for PayoutsTokenResponseDto {
@@ -674,9 +686,15 @@ impl From<PayoutsTokenResponse> for PayoutsTokenResponseDto {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct RefreshTokenRequest {
     refresh_token: String,
+}
+
+impl std::fmt::Debug for RefreshTokenRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RefreshTokenRequest").finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -295,10 +295,6 @@ async fn test_webhooks_all_5_protocols_and_replay_conflict() {
             pc.payload_or_query,
         ),
         ("/webhooks/paymob".to_owned(), pd.payload_or_query),
-        (
-            "/webhooks/paymob".to_owned(),
-            r#"{"topup_id":"top_1","amount_cents":1000,"currency":"EGP","status":"Approved"}"#,
-        ),
     ] {
         let req = test::TestRequest::post()
             .uri(&uri)
@@ -306,6 +302,18 @@ async fn test_webhooks_all_5_protocols_and_replay_conflict() {
             .to_request();
         assert_eq!(test::call_service(&app, req).await.status(), StatusCode::OK);
     }
+
+    // WHK-01: Unsigned Protocol E fails closed (500) when no payouts HMAC secret is configured.
+    let proto_e_req = test::TestRequest::post()
+        .uri("/webhooks/paymob")
+        .set_payload(
+            r#"{"topup_id":"top_1","amount_cents":1000,"currency":"EGP","status":"Approved"}"#,
+        )
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, proto_e_req).await.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
 
     let pb = transaction_response_316004();
     let uri = format!("/webhooks/paymob/redirect?{}", pb.payload_or_query);

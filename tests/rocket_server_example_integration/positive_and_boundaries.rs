@@ -1168,6 +1168,7 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
     let redir = transaction_response_316004();
     let redir_uri = format!("/webhooks/paymob/redirect?{}", redir.payload_or_query);
     assert_get_ok(&rocket, &redir_uri).await;
+    // WHK-01: Unsigned Protocol E fails closed when no payouts HMAC secret is configured.
     let proto_e = json!({
         "transaction_id": "tx_e1",
         "issuer": "bank_card",
@@ -1175,7 +1176,10 @@ async fn e2e_webhooks_protocols_a_through_e_return_200() {
         "currency": "EGP",
         "status": "successful"
     });
-    assert_post_ok(&rocket, "/webhooks/paymob", &proto_e).await;
+    assert_eq!(
+        post_raw(&rocket, "/webhooks/paymob", &proto_e.to_string()).await,
+        Status::InternalServerError
+    );
 }
 
 // ---------------------------------------------------------------------------

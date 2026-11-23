@@ -435,5 +435,8 @@ async fn e2e_webhooks_protocols_a_through_e_return_ok() {
         "status": "successful"
     });
     let proto_e_req = json!({ "raw_body": proto_e.to_string() });
-    assert_rpc_ok(&service, "VerifyWebhookEvent", &proto_e_req).await;
+    let proto_e_err = grpc_unary(&service, "VerifyWebhookEvent", &proto_e_req)
+        .await
+        .expect_err("unsigned Protocol E without payouts secret must fail closed");
+    assert_eq!(proto_e_err.code(), tonic::Code::Internal);
 }

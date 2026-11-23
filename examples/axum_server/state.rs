@@ -227,26 +227,18 @@ fn map_paymob_upstream_error(err: &PaymobError) -> (StatusCode, Option<u64>, &'s
 }
 
 fn map_webhook_error(err: &WebhookError) -> (StatusCode, Option<u64>, &'static str, String) {
-    match err {
-        WebhookError::SignatureMismatch => (
-            StatusCode::UNAUTHORIZED,
-            None,
-            "webhook_signature_mismatch",
-            err.to_string(),
-        ),
-        WebhookError::DuplicateWebhookDelivery { .. } => (
-            StatusCode::CONFLICT,
-            None,
-            "webhook_duplicate_delivery",
-            err.to_string(),
-        ),
-        _ => (
-            StatusCode::BAD_REQUEST,
-            None,
-            "webhook_verification_error",
-            err.to_string(),
-        ),
-    }
+    let status = StatusCode::from_u16(err.suggested_http_status_code())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let code = if err.is_signature_error() {
+        "webhook_signature_error"
+    } else if err.is_replay_or_duplicate() {
+        "webhook_duplicate_delivery"
+    } else if err.is_configuration_error() {
+        "webhook_configuration_error"
+    } else {
+        "webhook_verification_error"
+    };
+    (status, None, code, err.to_string())
 }
 
 fn build_retry_headers(retry_after: Option<u64>) -> HeaderMap {

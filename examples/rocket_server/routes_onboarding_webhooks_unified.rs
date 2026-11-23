@@ -39,10 +39,16 @@ impl<'r> FromRequest<'r> for RawQuery {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct PartnerLoginInput {
     username: String,
     password: String,
+}
+
+impl std::fmt::Debug for PartnerLoginInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PartnerLoginInput").finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -134,12 +140,18 @@ struct UnifiedSessionDto {
     confirmed: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct UnifiedSavedChargeInput {
     payment_token: String,
     saved_method_token: String,
     #[serde(default)]
     cvn: Option<String>,
+}
+
+impl std::fmt::Debug for UnifiedSavedChargeInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnifiedSavedChargeInput").finish_non_exhaustive()
+    }
 }
 
 fn intention_summary(resp: IntentionResponse) -> IntentionSummaryDto {

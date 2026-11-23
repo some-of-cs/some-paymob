@@ -630,6 +630,7 @@ async fn e2e_webhooks_protocols_a_b_c_d_e_ok() {
     assert_post_ok(&router, &pc_uri, tok_val).await;
     let pd_uri = format!("/webhooks/paymob?hmac={SAMPLE_SUBSCRIPTION_1264_HMAC}");
     assert_post_ok(&router, &pd_uri, sub_val).await;
+    // WHK-01: Unsigned Protocol E fails closed when no payouts HMAC secret is configured.
     let payout_body = json!({
         "transaction_id": "tx_e_1",
         "issuer": "bank_wallet",
@@ -637,12 +638,6 @@ async fn e2e_webhooks_protocols_a_b_c_d_e_ok() {
         "amount_cents": 15000,
         "currency": "EGP"
     });
-    assert_post_ok(&router, "/webhooks/paymob", payout_body).await;
-    let topup_body = json!({
-        "topup_id": "topup_e_1",
-        "amount_cents": 100000,
-        "currency": "EGP",
-        "status": "Approved"
-    });
-    assert_post_ok(&router, "/webhooks/paymob", topup_body).await;
+    let (status, _) = super::common::post_json(&router, "/webhooks/paymob", payout_body).await;
+    assert_eq!(status, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
 }

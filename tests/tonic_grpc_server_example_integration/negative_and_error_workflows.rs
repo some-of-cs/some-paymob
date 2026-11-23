@@ -246,7 +246,8 @@ async fn security_tampered_hmac_and_malformed_hex_rejected() {
     assert_eq!(s1.code(), Code::Unauthenticated);
     let s2 = grpc_err(svc.clone(), "UnifiedVerifyWebhook", &bad_wh).await;
     assert_eq!(s2.code(), Code::Unauthenticated);
-    assert_invalid(&svc, "VerifyWebhookEvent", &bad_hex).await;
+    let s3 = grpc_err(svc, "VerifyWebhookEvent", &bad_hex).await;
+    assert_eq!(s3.code(), Code::Unauthenticated);
 }
 
 #[tokio::test]

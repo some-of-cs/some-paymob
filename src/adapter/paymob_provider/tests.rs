@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde_json::json;
 use some_payment_core::{
     CaptureMode, CreatePaymentRequest, ErrorKind, HttpMethod, Money, PaymentCapabilities,
-    PaymentProvider, PaymentStatus, ProviderId, ProviderReference, RawWebhookRequest,
-    RefundRequest,
+    PaymentError, PaymentProvider, PaymentStatus, ProviderId, ProviderReference,
+    RawWebhookRequest, RefundRequest,
 };
 
 use crate::alignment::integration_validation::IntegrationRoutingConfig;
@@ -251,18 +251,23 @@ fn sec03_missing_currency_fails_closed() {
 
     let tx_err = extract_payload_money(&payload, None, &provider_id)
         .expect_err("missing tx currency must fail closed");
-    assert_eq!(tx_err.kind(), ErrorKind::ProviderError);
+    assert!(matches!(tx_err, PaymentError::ProviderError { .. }));
 
     let reference = ProviderReference::builder(provider_id.clone())
         .transaction_id("555")
         .build()
         .expect("ref");
-    let refund_req = RefundRequest::new(reference);
+    let refund_req = RefundRequest {
+        reference,
+        amount: None,
+        reason: None,
+        idempotency_key: None,
+    };
     let ctx = RefundExecutionContext {
         tx_id: 555,
         amount_cents: 10_000,
     };
     let refund_err = build_refund_result(&provider_id, ctx, &refund_req, &payload)
         .expect_err("missing refund currency must fail closed");
-    assert_eq!(refund_err.kind(), ErrorKind::ProviderError);
+    assert!(matches!(refund_err, PaymentError::ProviderError { .. }));
 }

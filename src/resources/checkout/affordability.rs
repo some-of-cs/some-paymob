@@ -544,7 +544,8 @@ mod tests {
 
     #[test]
     fn res1_05_affordability_rejects_bad_pk_prefix_and_control_chars() {
-        let bad_prefix = r#"{"public_key":"invalid_key_123","amount_cents":10000,"currency":"EGP"}"#;
+        let bad_prefix =
+            r#"{"public_key":"invalid_key_123","amount_cents":10000,"currency":"EGP"}"#;
         assert!(serde_json::from_str::<AffordabilityWidgetConfig>(bad_prefix).is_err());
 
         let ctrl_pk = r#"{"public_key":"egy_pk_test_

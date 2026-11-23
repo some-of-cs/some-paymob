@@ -219,7 +219,6 @@ pub struct TransactionSourceData {
     pub source_type: String,
 }
 
-
 fn deserialize_null_as_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,

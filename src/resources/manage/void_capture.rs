@@ -7,13 +7,11 @@
 //! legacy-v2 Regime 2 (`Bearer <auth_token>`) authentication via
 //! [`ClientConfig::use_legacy_v2_bearer_for_capture`](crate::core::config::ClientConfig::use_legacy_v2_bearer_for_capture).
 
-use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 
 use crate::core::error::PaymobError;
-use crate::core::http::HttpRequest;
+use crate::resources::manage::ManageService;
 use crate::resources::manage::models::Transaction;
-use crate::resources::manage::{ManageService, execute_manage_request, map_http_error};
 
 const VOID_PATH: &str = "/api/acceptance/void_refund/void";
 const CAPTURE_PATH: &str = "/api/acceptance/capture";
@@ -225,28 +223,19 @@ impl<'a> ManageService<'a> {
         path: &str,
         payload: &T,
     ) -> Result<Transaction, PaymobError> {
-        let auth_header = self
-            .resolve_auth_header("secret_key is required for Regime 1 manage requests")
+        let response = self
+            .execute_post_json(
+                path,
+                payload,
+                "secret_key is required for Regime 1 manage requests",
+            )
             .await?;
-        let url = self.client().accept_url(path)?;
-        let request = HttpRequest::post(url.as_str())
-            .map_err(map_http_error)?
-            .with_header(AUTHORIZATION, auth_header)
-            .with_json(payload)
-            .map_err(|err| PaymobError::ValidationError {
-                field: "params",
-                reason: err.to_string(),
-            })?;
-
-        let response = execute_manage_request(self.client(), &request).await?;
 
         if !response.status.is_success() {
             return Err(PaymobError::from_http_response(&response));
         }
 
-        response
-            .json::<Transaction>()
-            .map_err(|err| PaymobError::TransportError(err.to_string()))
+        response.json::<Transaction>().map_err(PaymobError::from)
     }
 }
 

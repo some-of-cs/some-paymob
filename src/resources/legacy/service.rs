@@ -172,7 +172,10 @@ impl LegacyCheckoutParams {
 }
 
 /// Result of a complete 3-step Legacy Accept v2 checkout orchestration.
-#[derive(Debug, Clone)]
+///
+/// Redacts the `iframe_url` query string (containing `payment_token`) as
+/// `"[REDACTED]"` in [`fmt::Debug`] output.
+#[derive(Clone)]
 pub struct LegacyCheckoutSession {
     /// Registered Paymob order.
     pub order: LegacyOrder,
@@ -180,6 +183,27 @@ pub struct LegacyCheckoutSession {
     pub payment_key: PaymentKeyResponse,
     /// Ready-to-render iframe URL with percent-encoded `payment_token`.
     pub iframe_url: Url,
+}
+
+impl fmt::Debug for LegacyCheckoutSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted_iframe = redact_url_query(&self.iframe_url);
+        f.debug_struct("LegacyCheckoutSession")
+            .field("order", &self.order)
+            .field("payment_key", &self.payment_key)
+            .field("iframe_url", &redacted_iframe)
+            .finish()
+    }
+}
+
+fn redact_url_query(url: &Url) -> String {
+    let mut sanitized = url.clone();
+    sanitized.set_query(None);
+    if url.query().is_some() {
+        format!("{sanitized}?[REDACTED]")
+    } else {
+        sanitized.to_string()
+    }
 }
 
 /// Facade for Paymob's Legacy Accept v2 3-step checkout flow.
@@ -324,18 +348,10 @@ impl LegacyV2Service {
         payment_token: &SecretString,
     ) -> Result<Url, PaymobError> {
         require_nonzero("iframe_id", iframe_id)?;
-        let resolved_token = if payment_token.expose_secret().trim().starts_with('$') {
-            crate::core::credentials::resolve_secret_or_env(
-                "payment_token",
-                payment_token.expose_secret(),
-            )?
-        } else {
-            payment_token.clone()
-        };
-        validate_payment_token(&resolved_token)?;
+        validate_payment_token(payment_token)?;
         let mut url = self.endpoint_url(&format!("/api/acceptance/iframes/{iframe_id}"))?;
         url.query_pairs_mut()
-            .append_pair("payment_token", resolved_token.expose_secret());
+            .append_pair("payment_token", payment_token.expose_secret());
         Ok(url)
     }
 
@@ -743,5 +759,51 @@ mod tests {
 
         assert_eq!(order.id, 777_001);
         assert_eq!(auth_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn res1_01_iframe_url_does_not_expand_env_vars() {
+        let client = mock_client("https://accept.paymob.com", true);
+        let svc = client.legacy_v2().expect("legacy service");
+        let literal = SecretString::from("$PAYMOB_HMAC_SECRET".to_owned());
+        let url = svc
+            .iframe_url(812_345, &literal)
+            .expect("literal $-prefixed token must not expand env vars");
+        let pairs: Vec<(String, String)> = url
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        assert!(
+            pairs
+                .iter()
+                .any(|(k, v)| k == "payment_token" && v == "$PAYMOB_HMAC_SECRET"),
+            "payment_token must be treated literally"
+        );
+    }
+
+    #[test]
+    fn res1_02_legacy_checkout_session_debug_redacts_iframe_url_token() {
+        let raw_token = "super_secret_payment_token_xyz";
+        let order: LegacyOrder = serde_json::from_value(serde_json::json!({
+            "id": 9001,
+            "amount_cents": 50000,
+            "currency": "EGP"
+        }))
+        .expect("valid legacy order");
+        let payment_key: PaymentKeyResponse =
+            serde_json::from_value(serde_json::json!({ "token": raw_token }))
+                .expect("valid payment key");
+        let iframe_url = Url::parse(&format!(
+            "https://accept.paymob.com/api/acceptance/iframes/812345?payment_token={raw_token}"
+        ))
+        .expect("valid iframe url");
+        let session = LegacyCheckoutSession {
+            order,
+            payment_key,
+            iframe_url,
+        };
+        let dbg = format!("{session:?}");
+        assert!(dbg.contains("[REDACTED]"));
+        assert!(!dbg.contains(raw_token));
     }
 }

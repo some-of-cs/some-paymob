@@ -348,7 +348,7 @@ impl fmt::Debug for IntentionResponse {
             .field("intention_detail", &self.intention_detail)
             .field("payment_methods", &self.payment_methods)
             .field("special_reference", &self.special_reference)
-            .field("extras", &self.extras)
+            .field("extras", &self.extras.as_ref().map(|_| REDACTED))
             .field("confirmed", &self.confirmed)
             .field("status", &self.status)
             .field("created", &self.created)
@@ -475,5 +475,21 @@ mod tests {
         .expect("valid live secret response");
         assert!(live_secret_resp.has_mode_mismatch(EnvironmentMode::Test));
         assert!(!live_secret_resp.has_mode_mismatch(EnvironmentMode::Live));
+    }
+
+    #[test]
+    fn res1_03_intention_response_debug_redacts_extras() {
+        let payload = serde_json::json!({
+            "id": "pi_test_redaction_extras",
+            "intention_order_id": 123456,
+            "client_secret": "egy_csk_test_secret_123",
+            "extras": { "customer_secret_note": "top-secret-pii-value" },
+            "status": "intended"
+        });
+        let resp: IntentionResponse =
+            serde_json::from_value(payload).expect("valid IntentionResponse");
+        let dbg = format!("{resp:?}");
+        assert!(dbg.contains("[REDACTED]"));
+        assert!(!dbg.contains("top-secret-pii-value"));
     }
 }

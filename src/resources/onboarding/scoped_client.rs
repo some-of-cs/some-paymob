@@ -219,6 +219,7 @@ impl<'a> ScopedIntentions<'a> {
         &self,
         params: &crate::resources::intentions::CreateIntentionParams,
     ) -> Result<crate::resources::intentions::IntentionResponse, PaymobError> {
+        params.validate()?;
         self.scoped.send_post("/v1/intention/", params).await
     }
 
@@ -232,6 +233,7 @@ impl<'a> ScopedIntentions<'a> {
         &self,
         params: &crate::resources::intentions::UpdateIntentionParams,
     ) -> Result<crate::resources::intentions::IntentionResponse, PaymobError> {
+        params.validate()?;
         self.scoped.send_put("/v1/intention/", params).await
     }
 
@@ -256,6 +258,7 @@ impl<'a> ScopedIntentions<'a> {
         )?;
         crate::resources::onboarding::validate_no_control_chars("client_secret", client_secret)?;
         let safe_secret = validate_path_segment("client_secret", client_secret)?;
+        params.validate()?;
         let path = format!("/v1/intention/{safe_secret}");
         self.scoped.send_put(&path, params).await
     }
@@ -292,12 +295,6 @@ impl<'a> ScopedInquiries<'a> {
     #[must_use]
     pub const fn merchant_id(&self) -> u64 {
         self.scoped.merchant_id()
-    }
-
-    /// Returns the underlying [`InquiriesService`](crate::resources::inquiries::InquiriesService).
-    #[must_use]
-    pub const fn service(&self) -> crate::resources::inquiries::InquiriesService<'a> {
-        self.scoped.client().inquiries()
     }
 
     /// Queries a transaction by ID on behalf of the scoped sub-merchant as raw JSON
@@ -372,12 +369,6 @@ impl<'a> ScopedManage<'a> {
     #[must_use]
     pub const fn merchant_id(&self) -> u64 {
         self.scoped.merchant_id()
-    }
-
-    /// Returns the underlying [`ManageService`](crate::resources::manage::ManageService).
-    #[must_use]
-    pub const fn service(&self) -> crate::resources::manage::ManageService<'a> {
-        self.scoped.client().manage()
     }
 
     /// Voids a transaction on behalf of the scoped sub-merchant as raw JSON

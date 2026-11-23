@@ -4,10 +4,12 @@
 use reqwest::Method;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use url::Url;
 
 use crate::core::client::{PaymobClient, build_bearer_json_request};
 use crate::core::error::PaymobError;
 use crate::core::http::HttpResponse;
+use crate::core::region::is_strict_loopback_http_url;
 use crate::core::types::validate_non_zero_u64;
 
 /// Unit 4.3.3: Subscription card vault management (`list`, `add_secondary`, `change_primary`, `delete_secondary`).
@@ -67,9 +69,10 @@ where
     let url = client.accept_url(path)?;
     let response = client
         .execute_regime2_with_retry(
-            || PaymobError::ValidationError {
-                field: "api_key",
-                reason: "Paymob API key is required for Regime 2 authentication".to_owned(),
+            || {
+                PaymobError::AuthenticationError(String::from(
+                    "Paymob API key is required for Regime 2 authentication",
+                ))
             },
             |token| build_bearer_json_request(method.clone(), url.as_str(), token, body),
         )
@@ -90,4 +93,39 @@ pub(crate) fn decode_subscription_response<Resp: DeserializeOwned>(
 
 pub(crate) fn validate_positive_id(field: &'static str, id: u64) -> Result<(), PaymobError> {
     validate_non_zero_u64(field, id, "identifier must be greater than zero")
+}
+
+fn is_control_or_whitespace(b: u8) -> bool {
+    b.is_ascii_control() || b.is_ascii_whitespace()
+}
+
+fn has_invalid_url_chars(s: &str) -> bool {
+    s.is_empty() || s.bytes().any(is_control_or_whitespace)
+}
+
+fn has_allowed_scheme_and_host(parsed: &Url) -> bool {
+    parsed.has_host() && (parsed.scheme() == "https" || is_strict_loopback_http_url(parsed))
+}
+
+pub(crate) fn validate_webhook_url(field: &'static str, raw: &str) -> Result<String, PaymobError> {
+    let trimmed = raw.trim();
+    if has_invalid_url_chars(trimmed) {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!(
+                "{field} must be non-empty without whitespace or control characters"
+            ),
+        });
+    }
+    let parsed = Url::parse(trimmed).map_err(|err| PaymobError::ValidationError {
+        field,
+        reason: format!("invalid {field}: {err}"),
+    })?;
+    if !has_allowed_scheme_and_host(&parsed) {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} must use https scheme (or loopback http) with a valid host"),
+        });
+    }
+    Ok(trimmed.to_owned())
 }

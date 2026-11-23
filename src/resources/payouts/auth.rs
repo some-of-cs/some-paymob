@@ -157,7 +157,7 @@ impl<'a> PayoutsAuthService<'a> {
                 .append_pair("password", creds.password())
                 .finish(),
         );
-        self.dispatch_token_request(form.as_bytes().to_vec()).await
+        self.dispatch_token_request(Zeroizing::new(form.as_bytes().to_vec())).await
     }
 
     /// Renews a Payouts OAuth 2.0 token pair via `grant_type=refresh_token`.
@@ -178,7 +178,7 @@ impl<'a> PayoutsAuthService<'a> {
                 .append_pair("refresh_token", trimmed)
                 .finish(),
         );
-        self.dispatch_token_request(form.as_bytes().to_vec()).await
+        self.dispatch_token_request(Zeroizing::new(form.as_bytes().to_vec())).await
     }
 
     fn require_credentials(
@@ -193,7 +193,7 @@ impl<'a> PayoutsAuthService<'a> {
 
     async fn dispatch_token_request(
         &self,
-        form_body: Vec<u8>,
+        form_body: Zeroizing<Vec<u8>>,
     ) -> Result<PayoutsTokenResponse, PaymobError> {
         let creds = self.require_credentials()?;
         let basic = format_basic_auth_header(
@@ -209,7 +209,7 @@ impl<'a> PayoutsAuthService<'a> {
                 CONTENT_TYPE,
                 HeaderValue::from_static("application/x-www-form-urlencoded"),
             )
-            .with_body(form_body);
+            .with_body(form_body.to_vec());
 
         let response = execute_payouts_request(self.client, &request).await?;
         if !response.status.is_success() {

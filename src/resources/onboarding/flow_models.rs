@@ -80,7 +80,7 @@ fn zeroize_json_value(value: &mut Value) {
             *num = serde_json::Number::from(0_u8);
             *value = Value::Null;
         }
-        Value::Null => {}
+        _ => {}
     }
 }
 
@@ -286,7 +286,7 @@ impl RegisterMerchantParams {
 /// assert_eq!(resp.status.as_deref(), Some("pending_kyc"));
 /// # Ok::<(), serde_json::Error>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegisteredMerchantResponse {
     /// Assigned Paymob Merchant ID (`paymob_mid`, validated non-zero).
     #[serde(
@@ -307,6 +307,18 @@ pub struct RegisteredMerchantResponse {
     /// Additional response fields returned by Paymob.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl fmt::Debug for RegisteredMerchantResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RegisteredMerchantResponse")
+            .field("paymob_mid", &self.paymob_mid)
+            .field("partner", &self.partner)
+            .field("status", &self.status)
+            .field("onboarding_url", &self.onboarding_url)
+            .field("extra_keys", &self.extra.len())
+            .finish()
+    }
 }
 
 /// Query parameters for `GET /api/onboarding/flow/schema`.
@@ -623,7 +635,7 @@ impl SubmitOnboardingStepParams {
 /// assert!(inquiry.has_live_integrations());
 /// # Ok::<(), serde_json::Error>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PartnerMerchantInquiryResponse {
     /// Sub-merchant Paymob MID (validated non-zero).
     #[serde(
@@ -650,6 +662,20 @@ pub struct PartnerMerchantInquiryResponse {
     /// Additional inquiry fields returned by Paymob.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl fmt::Debug for PartnerMerchantInquiryResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PartnerMerchantInquiryResponse")
+            .field("paymob_mid", &self.paymob_mid)
+            .field("status", &self.status)
+            .field("is_live", &self.is_live)
+            .field("live_integration_ids", &self.live_integration_ids)
+            .field("test_integration_ids", &self.test_integration_ids)
+            .field("pending_steps", &self.pending_steps)
+            .field("extra_keys", &self.extra.len())
+            .finish()
+    }
 }
 
 impl PartnerMerchantInquiryResponse {

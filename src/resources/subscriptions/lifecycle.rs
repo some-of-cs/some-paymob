@@ -13,7 +13,8 @@ use reqwest::header::AUTHORIZATION;
 use secrecy::SecretString;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub use super::models::{
     KNOWN_SUBSCRIPTION_STATES, Subscription, SubscriptionListFilter, SubscriptionState,
@@ -49,7 +50,7 @@ const INTENTION_CREATE_PATH: &str = "/v1/intention/";
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct CreateSubscriptionParams {
     /// Subscription plan identifier to enroll the customer into.
     pub subscription_plan_id: u64,
@@ -74,6 +75,25 @@ pub struct CreateSubscriptionParams {
     /// Optional extra JSON metadata forwarded with the intention.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extras: Option<Value>,
+}
+
+impl fmt::Debug for CreateSubscriptionParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateSubscriptionParams")
+            .field("subscription_plan_id", &self.subscription_plan_id)
+            .field("amount", &self.amount)
+            .field("currency", &self.currency)
+            .field("payment_methods", &self.payment_methods)
+            .field(
+                "billing_data",
+                &self.billing_data.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("special_reference", &self.special_reference)
+            .field("notification_url", &self.notification_url)
+            .field("redirection_url", &self.redirection_url)
+            .field("extras", &self.extras.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 impl CreateSubscriptionParams {
@@ -148,10 +168,16 @@ impl CreateSubscriptionParams {
                 reason: "enrollment amount must be greater than zero".to_owned(),
             });
         }
-        if self.payment_methods.is_empty() {
+        if self.currency.as_str().trim().is_empty() {
+            return Err(PaymobError::ValidationError {
+                field: "currency",
+                reason: "currency must not be empty".to_owned(),
+            });
+        }
+        if self.payment_methods.is_empty() || !self.payment_methods.iter().all(|&id| id > 0) {
             return Err(PaymobError::ValidationError {
                 field: "payment_methods",
-                reason: "at least one payment_method integration ID is required".to_owned(),
+                reason: "payment_methods must contain only non-zero integration IDs".to_owned(),
             });
         }
         validate_optional_http_url("notification_url", self.notification_url.as_deref())?;
@@ -202,6 +228,42 @@ pub struct SubscriptionEnrollmentResponse {
     /// Raw payment keys returned by the Intention API.
     #[serde(default)]
     pub payment_keys: Vec<Value>,
+}
+
+impl Drop for SubscriptionEnrollmentResponse {
+    fn drop(&mut self) {
+        for key in &mut self.payment_keys {
+            zeroize_json_value(key);
+        }
+        self.payment_keys.clear();
+    }
+}
+
+impl ZeroizeOnDrop for SubscriptionEnrollmentResponse {}
+
+fn zeroize_json_value(value: &mut Value) {
+    match value {
+        Value::String(s) => s.zeroize(),
+        Value::Array(items) => {
+            items.iter_mut().for_each(zeroize_json_value);
+            items.clear();
+        }
+        Value::Object(map) => zeroize_json_map(map),
+        Value::Bool(flag) => flag.zeroize(),
+        Value::Number(num) => {
+            *num = serde_json::Number::from(0_u8);
+            *value = Value::Null;
+        }
+        _ => {}
+    }
+}
+
+fn zeroize_json_map(map: &mut Map<String, Value>) {
+    let entries = std::mem::take(map);
+    for (mut key, mut val) in entries {
+        key.zeroize();
+        zeroize_json_value(&mut val);
+    }
 }
 
 impl fmt::Debug for SubscriptionEnrollmentResponse {
@@ -632,21 +694,7 @@ fn validate_optional_http_url(field: &'static str, raw: Option<&str>) -> Result<
     let Some(raw_url) = raw else {
         return Ok(());
     };
-    let trimmed = raw_url.trim();
-    let has_control =
-        trimmed.chars().any(char::is_control) || trimmed.chars().any(char::is_whitespace);
-    let parsed = url::Url::parse(trimmed).ok();
-    let valid = !has_control
-        && parsed
-            .as_ref()
-            .is_some_and(|u| matches!(u.scheme(), "http" | "https") && u.has_host());
-    if !valid {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must be a valid http:// or https:// URL"),
-        });
-    }
-    Ok(())
+    super::validate_webhook_url(field, raw_url).map(|_| ())
 }
 
 #[cfg(test)]

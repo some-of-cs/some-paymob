@@ -143,6 +143,46 @@ impl CancelAmanParams {
     }
 }
 
+#[derive(Serialize)]
+struct NormalizedBankCardWire<'a> {
+    amount: u64,
+    #[serde(serialize_with = "serialize_secret_string")]
+    bank_card_number: &'a SecretString,
+    bank_code: &'a str,
+    bank_transaction_type: BankTransactionType,
+    full_name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_reference_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    customer_bears_fees: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct NormalizedInstantBankWire<'a> {
+    amount: u64,
+    bank_code: &'a str,
+    #[serde(serialize_with = "serialize_secret_string")]
+    bank_account_number: &'a SecretString,
+    full_name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_reference_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    customer_bears_fees: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct NormalizedEgyptianPostWire<'a> {
+    amount: u64,
+    msisdn: &'a str,
+    full_name: &'a str,
+    #[serde(serialize_with = "serialize_secret_string")]
+    national_id: &'a SecretString,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_reference_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    customer_bears_fees: Option<bool>,
+}
+
 fn validate_pan(raw: &str) -> Result<(), PaymobError> {
     let trimmed = validate_clean_field("bank_card_number", raw)?;
     if !(12..=19).contains(&trimmed.len()) || !trimmed.bytes().all(|b| b.is_ascii_digit()) {
@@ -178,13 +218,22 @@ impl<'a> PayoutsCashinService<'a> {
     ) -> Result<DisbursementResponse, PaymobError> {
         validate_positive_amount(params.amount)?;
         validate_pan(params.bank_card_number.expose_secret())?;
-        validate_clean_field("bank_code", &params.bank_code)?;
-        validate_clean_field("full_name", &params.full_name)?;
-        validate_optional_clean_field(
+        let bank_code = validate_clean_field("bank_code", &params.bank_code)?;
+        let full_name = validate_clean_field("full_name", &params.full_name)?;
+        let client_reference_id = validate_optional_clean_field(
             "client_reference_id",
             params.client_reference_id.as_deref(),
         )?;
-        post_tagged_disburse(self.client(), DisburseIssuer::BankCard, &params).await
+        let wire = NormalizedBankCardWire {
+            amount: params.amount,
+            bank_card_number: &params.bank_card_number,
+            bank_code,
+            bank_transaction_type: params.bank_transaction_type,
+            full_name,
+            client_reference_id,
+            customer_bears_fees: params.customer_bears_fees,
+        };
+        post_tagged_disburse(self.client(), DisburseIssuer::BankCard, &wire).await
     }
 
     /// Executes an Instant Bank transfer disbursement (`issuer: "instant_bank"`).
@@ -202,13 +251,21 @@ impl<'a> PayoutsCashinService<'a> {
             "bank_account_number",
             params.bank_account_number.expose_secret(),
         )?;
-        validate_clean_field("bank_code", &params.bank_code)?;
-        validate_clean_field("full_name", &params.full_name)?;
-        validate_optional_clean_field(
+        let bank_code = validate_clean_field("bank_code", &params.bank_code)?;
+        let full_name = validate_clean_field("full_name", &params.full_name)?;
+        let client_reference_id = validate_optional_clean_field(
             "client_reference_id",
             params.client_reference_id.as_deref(),
         )?;
-        post_tagged_disburse(self.client(), DisburseIssuer::InstantBank, &params).await
+        let wire = NormalizedInstantBankWire {
+            amount: params.amount,
+            bank_code,
+            bank_account_number: &params.bank_account_number,
+            full_name,
+            client_reference_id,
+            customer_bears_fees: params.customer_bears_fees,
+        };
+        post_tagged_disburse(self.client(), DisburseIssuer::InstantBank, &wire).await
     }
 
     /// Executes an Egyptian Post cash disbursement (`issuer: "egyptian_post"`).
@@ -222,14 +279,22 @@ impl<'a> PayoutsCashinService<'a> {
         params: EgyptianPostCashinParams,
     ) -> Result<DisbursementResponse, PaymobError> {
         validate_positive_amount(params.amount)?;
-        validate_msisdn(&params.msisdn)?;
+        let msisdn = validate_msisdn(&params.msisdn)?;
         validate_national_id(params.national_id.expose_secret())?;
-        validate_clean_field("full_name", &params.full_name)?;
-        validate_optional_clean_field(
+        let full_name = validate_clean_field("full_name", &params.full_name)?;
+        let client_reference_id = validate_optional_clean_field(
             "client_reference_id",
             params.client_reference_id.as_deref(),
         )?;
-        post_tagged_disburse(self.client(), DisburseIssuer::EgyptianPost, &params).await
+        let wire = NormalizedEgyptianPostWire {
+            amount: params.amount,
+            msisdn,
+            full_name,
+            national_id: &params.national_id,
+            client_reference_id,
+            customer_bears_fees: params.customer_bears_fees,
+        };
+        post_tagged_disburse(self.client(), DisburseIssuer::EgyptianPost, &wire).await
     }
 
     /// Cancels an Aman cash disbursement via `POST /api/secure/transaction/aman/cancel/`.

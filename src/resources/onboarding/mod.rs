@@ -5,12 +5,19 @@
 //! - [`PartnerAuthService`] (`paymob.onboarding().auth()`): Partner login, API key provisioning, and HMAC secret retrieval (`US-6.1.0`).
 //! - [`PartnerFlowService`] (`paymob.onboarding().flow()`): Sub-merchant registration, onboarding flow schema, step submission, and merchant inquiry (`US-6.2.0`).
 
+/// Partner authentication request and response models (`US-6.1.0`).
 pub mod auth_models;
+/// Sub-merchant registration, flow schema, step submission, and inquiry models (`US-6.2.0`).
 pub mod flow_models;
+/// Partner HMAC secret retrieval endpoint (`US-6.1.0`).
 pub mod hmac_secret;
+/// Partner login and API key provisioning endpoints (`US-6.1.0`).
 pub mod login_apikey;
+/// Onboarding flow schema retrieval and sub-merchant registration endpoints (`US-6.2.0`).
 pub mod schema_register;
+/// Multi-tenant sub-merchant client scoping (`MerchantScopedClient`).
 pub mod scoped_client;
+/// Onboarding KYC step submission and sub-merchant status inquiry endpoints (`US-6.2.0`).
 pub mod step_inquiry;
 
 use reqwest::header::HeaderMap;

@@ -5,13 +5,21 @@
 //! Transaction/Reference/Budget/Topup Inquiries (`inquiries()`), and Topup
 //! Requests (`topups()`).
 
+/// Regime 3 OAuth 2.0 token acquisition and refresh (`POST /api/secure/o/token/`).
 pub mod auth;
+/// Bank card, instant bank, Egypt Post cashin, and Aman cancellation operations.
 pub mod bank_cashin;
+/// User budget and topup history inquiry operations.
 pub mod budget;
+/// Bulk disbursement batch submission (`POST /disburse/api/v1/disburse/bulk_transaction/`).
 pub mod bulk;
+/// Single transaction, bulk transaction, and client reference inquiry operations.
 pub mod inquiries;
+/// Shared Payouts disbursement domain models, issuers, and input validators.
 pub mod models;
+/// Payouts balance topup requests (Bank Transfer and Accept Balance).
 pub mod topups;
+/// Instant mobile wallet cashin disbursements (Vodafone, Etisalat, Orange, Bank Wallet).
 pub mod wallet_cashin;
 
 pub use auth::{PayoutsAuthService, PayoutsTokenResponse};
@@ -157,6 +165,35 @@ struct TaggedDisburseWire<'a, T: Serialize> {
     inner: &'a T,
 }
 
+async fn execute_payouts_with_retry<F>(
+    client: &PaymobClient,
+    build_request: F,
+) -> Result<HttpResponse, PaymobError>
+where
+    F: Fn(HeaderValue) -> Result<HttpRequest, PaymobError>,
+{
+    let cached = client
+        .auth()
+        .payouts_cache()
+        .get_or_refresh(|| auth::acquire_or_refresh_cached_token(client))
+        .await?;
+    let bearer = format_bearer_header(&cached.access_token)
+        .map_err(|err| PaymobError::AuthenticationError(err.to_string()))?;
+    let request = build_request(bearer)?;
+    let response = execute_payouts_request(client, &request).await?;
+    if response.status != reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(response);
+    }
+    client
+        .auth()
+        .payouts_cache()
+        .evict_if_matches(&cached.access_token)
+        .await;
+    let fresh_bearer = resolve_payouts_bearer_header(client).await?;
+    let retry_request = build_request(fresh_bearer)?;
+    execute_payouts_request(client, &retry_request).await
+}
+
 /// Shared Regime 3 authenticated JSON `POST` transport helper across all Payouts endpoints.
 pub(crate) async fn post_payouts_json<P, R>(
     client: &PaymobClient,
@@ -167,14 +204,15 @@ where
     P: Serialize,
     R: DeserializeOwned,
 {
-    let bearer = resolve_payouts_bearer_header(client).await?;
     let url = client.payouts_url(endpoint_path)?;
-    let request = HttpRequest::post(url.as_str())
-        .map_err(map_http_error)?
-        .with_header(AUTHORIZATION, bearer)
-        .with_json(payload)
-        .map_err(map_http_error)?;
-    let response = execute_payouts_request(client, &request).await?;
+    let response = execute_payouts_with_retry(client, |bearer| {
+        HttpRequest::post(url.as_str())
+            .map_err(map_http_error)?
+            .with_header(AUTHORIZATION, bearer)
+            .with_json(payload)
+            .map_err(map_http_error)
+    })
+    .await?;
     parse_payouts_response(&response)
 }
 
@@ -196,11 +234,12 @@ pub(crate) async fn get_payouts_raw(
     client: &PaymobClient,
     url: &url::Url,
 ) -> Result<HttpResponse, PaymobError> {
-    let bearer = resolve_payouts_bearer_header(client).await?;
-    let request = HttpRequest::get(url.as_str())
-        .map_err(map_http_error)?
-        .with_header(AUTHORIZATION, bearer);
-    execute_payouts_request(client, &request).await
+    execute_payouts_with_retry(client, |bearer| {
+        Ok(HttpRequest::get(url.as_str())
+            .map_err(map_http_error)?
+            .with_header(AUTHORIZATION, bearer))
+    })
+    .await
 }
 
 pub(crate) async fn execute_payouts_request(

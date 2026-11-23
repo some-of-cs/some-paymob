@@ -15,7 +15,6 @@
 //!   with zero floating-point types.
 
 use serde::Serialize;
-use url::Url;
 
 use crate::core::error::PaymobError;
 
@@ -517,23 +516,7 @@ fn validate_optional_webhook_url(webhook_url: Option<&str>) -> Result<(), Paymob
     let Some(raw) = webhook_url else {
         return Ok(());
     };
-    if raw.trim().is_empty() {
-        return Err(PaymobError::ValidationError {
-            field: "webhook_url",
-            reason: "webhook_url must not be empty when provided".to_owned(),
-        });
-    }
-    let parsed = Url::parse(raw).map_err(|err| PaymobError::ValidationError {
-        field: "webhook_url",
-        reason: format!("invalid webhook_url: {err}"),
-    })?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(PaymobError::ValidationError {
-            field: "webhook_url",
-            reason: "webhook_url must use http or https scheme".to_owned(),
-        });
-    }
-    Ok(())
+    super::validate_webhook_url("webhook_url", raw).map(|_| ())
 }
 
 fn validate_optional_plan_type(plan_type: Option<&str>) -> Result<(), PaymobError> {

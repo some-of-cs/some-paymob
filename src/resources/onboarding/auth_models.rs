@@ -4,7 +4,7 @@
 //! Provides strongly-typed request and response models for Paymob Partner Onboarding
 //! authentication (`login`), Partner API Key provisioning (`create_api_key`), and
 //! Partner HMAC secret retrieval (`GET /api/auth/hmac_secret/get_hmac`), with
-//! automatic [`ZeroizeOnDrop`] memory scrubbing and `[REDACTED]` [`fmt::Debug`] formatting.
+//! automatic [`zeroize::ZeroizeOnDrop`] memory scrubbing and `[REDACTED]` [`std::fmt::Debug`] formatting.
 
 use std::fmt;
 

@@ -3,7 +3,7 @@
 //!
 //! Wraps `POST /api/secure/o/token/` using HTTP Basic Auth (`{client_id}:{client_secret}`)
 //! and `application/x-www-form-urlencoded` `password` and `refresh_token` grants, with
-//! [`Zeroizing`] form buffers, response bounds validation, and single-flight cache integration.
+//! [`zeroize::Zeroizing`] form buffers, response bounds validation, and single-flight cache integration.
 
 use std::fmt;
 use std::time::Duration;

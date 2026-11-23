@@ -68,7 +68,9 @@ impl<'a> ManageService<'a> {
                             "api_key is required when use_legacy_v2_bearer_for_capture is enabled",
                         ))
                     },
-                    |token| build_bearer_json_request(Method::POST, url.as_str(), token, Some(payload)),
+                    |token| {
+                        build_bearer_json_request(Method::POST, url.as_str(), token, Some(payload))
+                    },
                 )
                 .await;
         }

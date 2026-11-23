@@ -680,8 +680,7 @@ mod tests {
         let bad_prefix = r#"{"public_key":"invalid_key_123","client_secret":"csk_1","payment_methods":["card"],"show_save_card":false,"force_save_card":false}"#;
         assert!(serde_json::from_str::<PixelConfig>(bad_prefix).is_err());
 
-        let ctrl_secret = PixelConfig::builder(&pk, SecretString::from("csk_1
-bad".to_owned()))
+        let ctrl_secret = PixelConfig::builder(&pk, SecretString::from("csk_1\nbad".to_owned()))
             .add_payment_method(PixelPaymentMethod::Card)
             .build();
         assert!(ctrl_secret.is_err());

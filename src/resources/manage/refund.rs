@@ -416,7 +416,8 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/auth/tokens"))
             .respond_with(
-                ResponseTemplate::new(201).set_body_json(serde_json::json!({ "token": "fresh_jwt" })),
+                ResponseTemplate::new(201)
+                    .set_body_json(serde_json::json!({ "token": "fresh_jwt" })),
             )
             .expect(1)
             .mount(&server)

@@ -501,8 +501,6 @@ impl SubscriptionsService {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;

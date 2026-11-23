@@ -1272,9 +1272,13 @@ mod tests {
     #[test]
     fn res1_06_validate_http_url_rejects_control_chars_missing_host_and_userinfo() {
         assert!(validate_http_url("https://example.com/hook\n", "notification_url").is_err());
-        assert!(validate_http_url("https://user:pass@example.com/hook", "redirection_url").is_err());
+        assert!(
+            validate_http_url("https://user:pass@example.com/hook", "redirection_url").is_err()
+        );
         assert!(validate_http_url("https://user@example.com/hook", "notification_url").is_err());
         assert!(validate_http_url("http:///no-host", "redirection_url").is_err());
-        assert!(validate_http_url("https://merchant.example.com/callback", "notification_url").is_ok());
+        assert!(
+            validate_http_url("https://merchant.example.com/callback", "notification_url").is_ok()
+        );
     }
 }

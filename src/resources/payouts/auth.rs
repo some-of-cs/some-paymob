@@ -157,7 +157,8 @@ impl<'a> PayoutsAuthService<'a> {
                 .append_pair("password", creds.password())
                 .finish(),
         );
-        self.dispatch_token_request(Zeroizing::new(form.as_bytes().to_vec())).await
+        self.dispatch_token_request(Zeroizing::new(form.as_bytes().to_vec()))
+            .await
     }
 
     /// Renews a Payouts OAuth 2.0 token pair via `grant_type=refresh_token`.
@@ -178,7 +179,8 @@ impl<'a> PayoutsAuthService<'a> {
                 .append_pair("refresh_token", trimmed)
                 .finish(),
         );
-        self.dispatch_token_request(Zeroizing::new(form.as_bytes().to_vec())).await
+        self.dispatch_token_request(Zeroizing::new(form.as_bytes().to_vec()))
+            .await
     }
 
     fn require_credentials(

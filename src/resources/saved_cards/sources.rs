@@ -188,7 +188,9 @@ impl PaymentSource {
                 }
                 Ok(())
             }
-            Self::MobileWallet { identifier } => super::validate_wallet_msisdn("identifier", identifier),
+            Self::MobileWallet { identifier } => {
+                super::validate_wallet_msisdn("identifier", identifier)
+            }
             Self::KioskAggregator { identifier } => validate_kiosk_identifier(identifier),
         }
     }

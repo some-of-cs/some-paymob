@@ -112,9 +112,7 @@ pub(crate) fn validate_webhook_url(field: &'static str, raw: &str) -> Result<Str
     if has_invalid_url_chars(trimmed) {
         return Err(PaymobError::ValidationError {
             field,
-            reason: format!(
-                "{field} must be non-empty without whitespace or control characters"
-            ),
+            reason: format!("{field} must be non-empty without whitespace or control characters"),
         });
     }
     let parsed = Url::parse(trimmed).map_err(|err| PaymobError::ValidationError {

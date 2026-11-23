@@ -638,6 +638,8 @@ async fn e2e_webhooks_protocols_a_b_c_d_e_ok() {
         "amount_cents": 15000,
         "currency": "EGP"
     });
-    let (status, _) = super::common::post_json(&router, "/webhooks/paymob", payout_body).await;
-    assert_eq!(status, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        super::common::post_status(&router, "/webhooks/paymob", payout_body).await,
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    );
 }

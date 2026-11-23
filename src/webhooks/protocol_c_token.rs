@@ -21,7 +21,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::canonical_tx::CanonicalTransactionConcatenator;
 use super::verifier::{PaymobWebhookEngine, WebhookError, WebhookResult};
@@ -138,8 +138,26 @@ pub struct CardTokenObj {
     pub created_at: String,
     /// Cardholder email address (redacted in `Debug` output).
     pub email: String,
-    /// Associated Paymob order identifier string.
+    /// Associated Paymob order identifier string (accepts JSON string or unsigned integer).
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
     pub order_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StringOrU64 {
+    Str(String),
+    Num(u64),
+}
+
+fn deserialize_string_or_u64<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match StringOrU64::deserialize(deserializer)? {
+        StringOrU64::Str(s) => Ok(s),
+        StringOrU64::Num(n) => Ok(n.to_string()),
+    }
 }
 
 impl fmt::Debug for CardTokenObj {
@@ -259,7 +277,7 @@ impl PaymobWebhookEngine {
                 "expected webhook type 'TOKEN'".into(),
             ));
         }
-        let canonical = build_protocol_c_canonical_string(&event.obj);
+        let canonical = Zeroizing::new(build_protocol_c_canonical_string(&event.obj));
         self.verify_concatenated_str(&canonical, hmac)?;
         Ok(event)
     }
@@ -461,5 +479,21 @@ mod tests {
         assert!(!rendered.contains("customer@example.com"));
         assert!(!rendered.contains("xxxx-xxxx-xxxx-2346"));
         assert!(rendered.contains("15978654") && rendered.contains("MasterCard"));
+    }
+
+    #[test]
+    fn whk_07_card_token_accepts_numeric_order_id() {
+        let json = r#"{
+            "id": 15978654,
+            "token": "tok_num",
+            "masked_pan": "xxxx-2346",
+            "merchant_id": 302852,
+            "card_subtype": "Visa",
+            "created_at": "2024-06-13T11:33:44.592345",
+            "email": "a@b.com",
+            "order_id": 593881581
+        }"#;
+        let obj: CardTokenObj = serde_json::from_str(json).expect("numeric order_id");
+        assert_eq!(obj.order_id, "593881581");
     }
 }

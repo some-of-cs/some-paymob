@@ -381,15 +381,24 @@ fn build_transaction_post_body(request: &SignedTransactionRequest<'_>) -> String
 ///     .expect("verifies cleanly");
 /// assert_eq!(event.obj.id, 990011);
 /// ```
+fn validate_signed_tx_request(request: &SignedTransactionRequest<'_>) -> WebhookResult<()> {
+    let invalid = [
+        (request.transaction_id == 0, "transaction_id"),
+        (request.order_id == 0, "order_id"),
+        (request.amount.is_zero(), "amount"),
+        (request.currency.trim().is_empty(), "currency"),
+    ];
+    if let Some((_, field)) = invalid.into_iter().find(|(bad, _)| *bad) {
+        return Err(WebhookError::MissingRequiredField(field.to_owned()));
+    }
+    Ok(())
+}
+
 pub fn generate_signed_transaction_post(
     hmac_secret: &SecretString,
     request: &SignedTransactionRequest<'_>,
 ) -> WebhookResult<SignedWebhookToolPayload> {
-    if request.transaction_id == 0 {
-        return Err(WebhookError::MissingRequiredField(
-            "transaction_id".to_owned(),
-        ));
-    }
+    validate_signed_tx_request(request)?;
     let json_body = build_transaction_post_body(request);
     let parsed: TransactionProcessedEvent = serde_json::from_str(&json_body)?;
     let canonical = build_protocol_a_canonical_string(&parsed.obj);
@@ -439,15 +448,26 @@ pub fn generate_signed_transaction_post(
 /// let event = engine.verify_subscription(&signed.json_body).expect("verifies cleanly");
 /// assert_eq!(event.subscription_data.id, 1264);
 /// ```
+fn validate_signed_sub_request(request: &SignedSubscriptionRequest<'_>) -> WebhookResult<()> {
+    let invalid = [
+        (request.subscription_id == 0, "subscription_id"),
+        (
+            request.paymob_request_id.trim().is_empty(),
+            "paymob_request_id",
+        ),
+        (request.amount.is_zero(), "amount"),
+    ];
+    if let Some((_, field)) = invalid.into_iter().find(|(bad, _)| *bad) {
+        return Err(WebhookError::MissingRequiredField(field.to_owned()));
+    }
+    Ok(())
+}
+
 pub fn generate_signed_subscription_post(
     hmac_secret: &SecretString,
     request: &SignedSubscriptionRequest<'_>,
 ) -> WebhookResult<SignedWebhookToolPayload> {
-    if request.subscription_id == 0 {
-        return Err(WebhookError::MissingRequiredField(
-            "subscription_id".to_owned(),
-        ));
-    }
+    validate_signed_sub_request(request)?;
     let trigger = SubscriptionTriggerType::from_wire(request.trigger_type.trim());
     let canonical = canonical_subscription_message(&trigger, request.subscription_id);
     let hmac_hex = sign_hmac_sha512(hmac_secret, &canonical)?;
@@ -583,5 +603,50 @@ mod tests {
         assert!(rendered.contains("[REDACTED]"));
         assert!(!rendered.contains(&tx.hmac_hex));
         assert!(!rendered.contains("15000"));
+    }
+
+    #[test]
+    fn whk_11_sandbox_generators_enforce_guard_clauses() {
+        let secret = SecretString::from("sandbox_secret");
+        assert_eq!(
+            generate_signed_transaction_post(
+                &secret,
+                &SignedTransactionRequest {
+                    transaction_id: 1,
+                    order_id: 0,
+                    amount: MinorUnitAmount::new(100),
+                    currency: "EGP",
+                    success: true,
+                },
+            ),
+            Err(WebhookError::MissingRequiredField("order_id".to_owned()))
+        );
+        assert_eq!(
+            generate_signed_transaction_post(
+                &secret,
+                &SignedTransactionRequest {
+                    transaction_id: 1,
+                    order_id: 2,
+                    amount: MinorUnitAmount::new(0),
+                    currency: "EGP",
+                    success: true,
+                },
+            ),
+            Err(WebhookError::MissingRequiredField("amount".to_owned()))
+        );
+        assert_eq!(
+            generate_signed_subscription_post(
+                &secret,
+                &SignedSubscriptionRequest {
+                    paymob_request_id: "   ",
+                    subscription_id: 10,
+                    trigger_type: "suspended",
+                    amount: MinorUnitAmount::new(100),
+                },
+            ),
+            Err(WebhookError::MissingRequiredField(
+                "paymob_request_id".to_owned()
+            ))
+        );
     }
 }

@@ -31,6 +31,8 @@
 //! 19. `source_data.type`
 //! 20. `success`
 
+use zeroize::Zeroizing;
+
 use super::canonical_tx::CanonicalTransactionConcatenator;
 use super::tx_models::{TransactionProcessedEvent, TransactionWebhookObj};
 use super::verifier::{PaymobWebhookEngine, WebhookError, WebhookResult};
@@ -177,7 +179,7 @@ impl PaymobWebhookEngine {
                 "expected webhook type 'TRANSACTION'".into(),
             ));
         }
-        let canonical = build_protocol_a_canonical_string(&event.obj);
+        let canonical = Zeroizing::new(build_protocol_a_canonical_string(&event.obj));
         self.verify_concatenated_str(&canonical, hmac)?;
         Ok(event)
     }

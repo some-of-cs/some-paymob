@@ -72,10 +72,13 @@ impl IdempotentWebhookGuard for super::protocol_b_get::TransactionRedirectParams
     }
 }
 
+/// Uses the HMAC-authenticated canonical `(trigger_type, subscription_data.id)` message
+/// as the primary idempotency key so callers cannot have replay protection bypassed by
+/// mutating the unsigned `paymob_request_id` field.
 impl IdempotentWebhookGuard for super::protocol_d_subscription::SubscriptionWebhookEvent {
     fn idempotency_tuple(&self) -> (String, String) {
         (
-            self.paymob_request_id.clone(),
+            self.canonical_message(),
             self.subscription_data.id.to_string(),
         )
     }

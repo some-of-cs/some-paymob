@@ -24,13 +24,19 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::canonical_tx::{CanonicalTransactionConcatenator, TX_HMAC_KEYS};
 use super::verifier::{PaymobWebhookEngine, WebhookError, WebhookResult};
 
 /// Abstraction over key-value query parameter maps and slices for Paymob Protocol B
 /// (Transaction Response GET redirect) verification.
+///
+/// # Security Note
+///
+/// Callers passing pre-parsed maps to [`PaymobWebhookEngine::verify_transaction_get`] must
+/// reject duplicate query keys before constructing the map to prevent HTTP Parameter Pollution
+/// (HPP), or prefer [`PaymobWebhookEngine::verify_transaction_get_query_str`].
 pub trait QueryParams {
     /// Returns the parameter value associated with `key`, if present.
     fn get_param(&self, key: &str) -> Option<&str>;
@@ -355,6 +361,7 @@ impl PaymobWebhookEngine {
         let raw_hmac = params.get_param("hmac");
         let received_hmac = super::verifier::require_non_empty_query_hmac(raw_hmac)?;
         let (concatenated, values) = collect_canonical_redirect_values(params)?;
+        let concatenated = Zeroizing::new(concatenated);
         self.verify_concatenated_str(&concatenated, received_hmac)?;
         Ok(build_redirect_params(values))
     }

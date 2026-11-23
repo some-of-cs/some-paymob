@@ -207,10 +207,19 @@ pub struct TransactionOrderRef {
 /// on drop, and a custom [`fmt::Debug`] that redacts [`Self::pan`] as `"[REDACTED]"`
 /// to prevent masked or partial card numbers from leaking into logs.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+fn deserialize_null_as_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 pub struct TransactionSourceData {
     /// Card PAN suffix or masked instrument identifier (redacted in `Debug` output).
+    #[serde(default, deserialize_with = "deserialize_null_as_empty_string")]
     pub pan: String,
     /// Payment instrument sub-type (for example, `"MasterCard"` or `"Visa"`).
+    #[serde(default, deserialize_with = "deserialize_null_as_empty_string")]
     pub sub_type: String,
     /// Payment instrument type (for example, `"card"` or `"wallet"`), mapped from JSON `"type"`.
     #[serde(rename = "type")]
@@ -677,5 +686,14 @@ mod tests {
         assert!(event.is_voided() && event.is_refunded());
         assert!(event.is_declined_or_failed());
         assert_eq!(event.net_settled_cents(), 0);
+    }
+
+    #[test]
+    fn whk_07_source_data_accepts_null_pan_and_sub_type() {
+        let json = r#"{"pan":null,"sub_type":null,"type":"wallet"}"#;
+        let parsed: TransactionSourceData = serde_json::from_str(json).expect("nulls accepted");
+        assert_eq!(parsed.pan, "");
+        assert_eq!(parsed.sub_type, "");
+        assert_eq!(parsed.source_type, "wallet");
     }
 }

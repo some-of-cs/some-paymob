@@ -42,11 +42,17 @@ fn build_mock_client(base_url: &str) -> PaymobClient {
     PaymobClient::new(config).expect("valid client")
 }
 
-fn assert_https_required<T: std::fmt::Debug>(res: Result<T, PaymobError>) {
+fn assert_non_loopback_http_rejected(base_url: &str) {
+    let region = PaymobRegion::Custom {
+        accept_base_url: base_url.to_owned(),
+        checkout_base_url: format!("{base_url}/unifiedcheckout"),
+        payouts_base_url: base_url.to_owned(),
+        payouts_staging_base_url: base_url.to_owned(),
+    };
     assert!(matches!(
-        res,
+        region.endpoints(),
         Err(PaymobError::ValidationError {
-            field: "http_config",
+            field: "accept_base_url",
             ..
         })
     ));
@@ -99,8 +105,7 @@ async fn ac1_and_ac3_paymob_ext_wires_into_intention_params_and_redacts_session(
     assert!(params.customer().is_some());
     assert!(wired_req.extras.is_some());
 
-    let client = build_mock_client("http://untrusted-gateway.local");
-    assert_https_required(client.create_payment_session(&wired_req).await);
+    assert_non_loopback_http_rejected("http://untrusted-gateway.local");
 
     let session = UnifiedPaymentSession {
         session_id: "pi_us810_001".to_owned(),
@@ -173,11 +178,6 @@ async fn ac1_capture_refund_and_void_delegate_to_manage_service() {
 
 #[tokio::test]
 async fn ac2_charge_saved_method_redacts_secrets_and_enforces_https() {
-    let client = build_mock_client("http://untrusted-gateway.local");
-    client
-        .auth()
-        .accept_cache()
-        .store(CachedToken::with_default_ttl("seeded-accept-jwt", None));
     let req = UnifiedSavedMethodChargeRequest::new(
         SecretString::from("payment_key_test_810"),
         SecretString::from("saved_card_token_810"),
@@ -189,7 +189,7 @@ async fn ac2_charge_saved_method_redacts_secrets_and_enforces_https() {
     assert!(!dbg.contains("999"));
     assert!(dbg.contains("[REDACTED]"));
 
-    assert_https_required(client.charge_saved_method(&req).await);
+    assert_non_loopback_http_rejected("http://untrusted-gateway.local");
 }
 
 #[tokio::test]
@@ -301,4 +301,27 @@ async fn ac2_and_ac3_webhook_verifier_subscription_refund_and_headless_options()
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn whk_06_wallet_cashin_rejects_non_egp_currency() {
+    let server = MockServer::start().await;
+    let client = build_mock_client(&server.uri());
+    let req = UnifiedPayoutRequest::new(
+        "01012345678",
+        MinorUnitAmount::new(5_000),
+        Currency::SAR,
+        "vodafone",
+    );
+    let err = client
+        .execute_payout(&req)
+        .await
+        .expect_err("non-EGP wallet cash-in must fail validation");
+    assert!(matches!(
+        err,
+        PaymobError::ValidationError {
+            field: "currency",
+            ..
+        }
+    ));
 }

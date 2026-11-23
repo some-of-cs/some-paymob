@@ -293,6 +293,12 @@ fn build_wallet_cashin_params(
     req: &UnifiedPayoutRequest,
 ) -> Result<(DisburseIssuer, MobileWalletCashinParams), PaymobError> {
     req.validate()?;
+    if req.currency != Currency::EGP {
+        return Err(PaymobError::ValidationError {
+            field: "currency",
+            reason: "mobile wallet cash-in payouts require EGP currency".to_owned(),
+        });
+    }
     let issuer =
         DisburseIssuer::from_wire(&req.issuer).ok_or_else(|| PaymobError::ValidationError {
             field: "issuer",

@@ -124,7 +124,7 @@ fn construct_event_dispatches_protocols_a_c_d_and_e() -> WebhookResult<()> {
 
 #[test]
 fn idempotency_tuples_work_across_all_six_webhook_event_variants() -> WebhookResult<()> {
-    let engine = PaymobWebhookEngine::new(TEST_SECRET)?;
+    let engine = PaymobWebhookEngine::new(TEST_SECRET)?.with_payouts_secret(PAYOUT_SECRET)?;
     let tx_evt = engine.construct_event(TX_VECTOR_JSON, Some(TX_VECTOR_HMAC))?;
     let redir_evt = WebhookEvent::TransactionResponseRedirect(sample_redirect_params(&engine));
     let tok_evt = engine.construct_event(TOKEN_VECTOR_JSON, Some(TOKEN_VECTOR_HMAC))?;
@@ -137,10 +137,12 @@ fn idempotency_tuples_work_across_all_six_webhook_event_variants() -> WebhookRes
     let sub_evt = engine.construct_event(&sub_body, None)?;
     let disb_body = "{\"transaction_id\":\"d_9\",\"issuer\":\"instant_bank\",\
         \"amount_cents\":100,\"currency\":\"EGP\",\"status\":\"ok\"}";
-    let disb_evt = engine.construct_event(disb_body, None)?;
+    let disb_sig = sign_hex(PAYOUT_SECRET, disb_body);
+    let disb_evt = engine.construct_event(disb_body, Some(&disb_sig))?;
     let top_body = "{\"topup_id\":\"t_9\",\"amount_cents\":100,\
         \"currency\":\"EGP\",\"status\":\"Approved\"}";
-    let top_evt = engine.construct_event(top_body, None)?;
+    let top_sig = sign_hex(PAYOUT_SECRET, top_body);
+    let top_evt = engine.construct_event(top_body, Some(&top_sig))?;
 
     assert_eq!(
         tx_evt.idempotency_tuple(),
@@ -154,7 +156,23 @@ fn idempotency_tuples_work_across_all_six_webhook_event_variants() -> WebhookRes
         tok_evt.idempotency_tuple(),
         ("15978654".into(), "593881581".into())
     );
-    assert_eq!(sub_evt.idempotency_tuple(), ("req-77".into(), "77".into()));
+    assert_eq!(
+        sub_evt.idempotency_tuple(),
+        ("resumedfor77".into(), "77".into())
+    );
+
+    // WHK-02 regression: mutating unsigned paymob_request_id cannot bypass replay protection.
+    let dedup = InMemoryWebhookIdempotencyStore::new();
+    dedup.claim_or_reject(&sub_evt)?;
+    let mutated_sub_body = format!(
+        "{{\"paymob_request_id\":\"attacker-mutated-id\",\"subscription_data\":{{\"id\":77}},\
+         \"trigger_type\":\"resumed\",\"hmac\":\"{sub_sig}\"}}"
+    );
+    let mutated_sub_evt = engine.construct_event(&mutated_sub_body, None)?;
+    assert!(matches!(
+        dedup.claim_or_reject(&mutated_sub_evt),
+        Err(WebhookError::DuplicateWebhookDelivery { .. })
+    ));
     assert_eq!(disb_evt.idempotency_tuple(), ("d_9".into(), "d_9".into()));
     assert_eq!(top_evt.idempotency_tuple(), ("t_9".into(), "t_9".into()));
     Ok(())

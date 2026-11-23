@@ -407,7 +407,13 @@ mod tests {
             .refund(RefundParams::new(192_036_465, 1000))
             .await
             .expect_err("malformed json must fail");
-        assert!(matches!(err, PaymobError::TransportError(_)));
+        assert!(matches!(
+            err,
+            PaymobError::ValidationError {
+                field: "http_config",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]

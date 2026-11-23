@@ -1276,7 +1276,7 @@ mod tests {
             validate_http_url("https://user:pass@example.com/hook", "redirection_url").is_err()
         );
         assert!(validate_http_url("https://user@example.com/hook", "notification_url").is_err());
-        assert!(validate_http_url("http:///no-host", "redirection_url").is_err());
+        assert!(validate_http_url("http://:8080/no-host", "redirection_url").is_err());
         assert!(
             validate_http_url("https://merchant.example.com/callback", "notification_url").is_ok()
         );

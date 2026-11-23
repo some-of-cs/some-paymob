@@ -341,12 +341,12 @@ struct SubscriptionEnrollmentResponseDto {
 impl From<SubscriptionEnrollmentResponse> for SubscriptionEnrollmentResponseDto {
     fn from(resp: SubscriptionEnrollmentResponse) -> Self {
         Self {
-            id: resp.id,
+            id: resp.id.clone(),
             client_secret: resp.client_secret.expose_secret().to_owned(),
             intention_order_id: resp.intention_order_id,
-            status: resp.status,
+            status: resp.status.clone(),
             subscription_plan_id: resp.subscription_plan_id,
-            payment_keys: resp.payment_keys,
+            payment_keys: resp.payment_keys.clone(),
         }
     }
 }

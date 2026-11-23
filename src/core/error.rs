@@ -608,7 +608,7 @@ fn fallback_error(status: u16, body: &str, retry_after_secs: Option<u64>) -> Pay
     classify_message_error(status, message, None, retry_after_secs)
 }
 
-fn redact_sensitive(input: &str) -> String {
+pub(crate) fn redact_sensitive(input: &str) -> String {
     let kv_scrubbed = redact_kv_patterns(input);
     let pre_scrubbed = redact_spaced_digit_runs(&kv_scrubbed);
     let mut out = String::with_capacity(pre_scrubbed.len());

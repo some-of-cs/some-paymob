@@ -207,13 +207,6 @@ pub struct TransactionOrderRef {
 /// on drop, and a custom [`fmt::Debug`] that redacts [`Self::pan`] as `"[REDACTED]"`
 /// to prevent masked or partial card numbers from leaking into logs.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
-fn deserialize_null_as_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
-}
-
 pub struct TransactionSourceData {
     /// Card PAN suffix or masked instrument identifier (redacted in `Debug` output).
     #[serde(default, deserialize_with = "deserialize_null_as_empty_string")]
@@ -224,6 +217,14 @@ pub struct TransactionSourceData {
     /// Payment instrument type (for example, `"card"` or `"wallet"`), mapped from JSON `"type"`.
     #[serde(rename = "type")]
     pub source_type: String,
+}
+
+
+fn deserialize_null_as_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 impl fmt::Debug for TransactionSourceData {

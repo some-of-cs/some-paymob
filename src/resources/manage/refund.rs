@@ -138,7 +138,9 @@ impl<'a> ManageService<'a> {
             return Err(parse_refund_error(&response));
         }
 
-        response.json::<Transaction>().map_err(PaymobError::from)
+        response
+            .json::<Transaction>()
+            .map_err(|err| PaymobError::TransportError(format!("invalid JSON response: {err}")))
     }
 }
 
@@ -407,13 +409,7 @@ mod tests {
             .refund(RefundParams::new(192_036_465, 1000))
             .await
             .expect_err("malformed json must fail");
-        assert!(matches!(
-            err,
-            PaymobError::ValidationError {
-                field: "http_config",
-                ..
-            }
-        ));
+        assert!(matches!(err, PaymobError::TransportError(_)));
     }
 
     #[tokio::test]

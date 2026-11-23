@@ -108,6 +108,12 @@ fn has_allowed_scheme_and_host(parsed: &Url) -> bool {
 }
 
 pub(crate) fn validate_webhook_url(field: &'static str, raw: &str) -> Result<String, PaymobError> {
+    if raw.chars().any(char::is_control) {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
     let trimmed = raw.trim();
     if has_invalid_url_chars(trimmed) {
         return Err(PaymobError::ValidationError {

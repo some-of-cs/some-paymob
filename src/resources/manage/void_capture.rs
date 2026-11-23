@@ -235,7 +235,9 @@ impl<'a> ManageService<'a> {
             return Err(PaymobError::from_http_response(&response));
         }
 
-        response.json::<Transaction>().map_err(PaymobError::from)
+        response
+            .json::<Transaction>()
+            .map_err(|err| PaymobError::TransportError(format!("invalid JSON response: {err}")))
     }
 }
 

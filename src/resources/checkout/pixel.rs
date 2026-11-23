@@ -684,5 +684,10 @@ mod tests {
             .add_payment_method(PixelPaymentMethod::Card)
             .build();
         assert!(ctrl_secret.is_err());
+
+        let trailing_nl = PixelConfig::builder(&pk, SecretString::from("csk_1\n".to_owned()))
+            .add_payment_method(PixelPaymentMethod::Card)
+            .build();
+        assert!(trailing_nl.is_err());
     }
 }

@@ -247,17 +247,17 @@ pub(super) fn validate_non_empty_no_control<'a>(
     field: &'static str,
     value: &'a str,
 ) -> Result<&'a str, PaymobError> {
+    if value.chars().any(char::is_control) {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
     let raw = value.trim();
     if raw.is_empty() {
         return Err(PaymobError::ValidationError {
             field,
             reason: format!("{field} must not be empty"),
-        });
-    }
-    if raw.chars().any(|ch| ch.is_ascii_control()) {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must not contain control characters"),
         });
     }
     Ok(raw)

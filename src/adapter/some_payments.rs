@@ -293,7 +293,7 @@ fn build_wallet_cashin_params(
     req: &UnifiedPayoutRequest,
 ) -> Result<(DisburseIssuer, MobileWalletCashinParams), PaymobError> {
     req.validate()?;
-    if req.currency != Currency::EGP {
+    if req.currency != crate::core::types::Currency::EGP {
         return Err(PaymobError::ValidationError {
             field: "currency",
             reason: "mobile wallet cash-in payouts require EGP currency".to_owned(),

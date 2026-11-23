@@ -581,11 +581,16 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = setup_provider(&server, Duration::from_secs(3600));
+        let provider = setup_provider(&server, Duration::from_secs(60));
         assert_eq!(
             provider.access_token().await.unwrap().expose_secret(),
             "acc-1"
         );
+        provider.cache().store(CachedToken::with_expires_at(
+            "acc-1",
+            Some(SecretString::from("ref-1")),
+            std::time::Instant::now() + Duration::from_secs(5),
+        ));
         assert_eq!(
             provider.access_token().await.unwrap().expose_secret(),
             "acc-2"
@@ -614,11 +619,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = setup_provider(&server, Duration::from_secs(3600));
-        provider.cache().store(CachedToken::new(
+        let provider = setup_provider(&server, Duration::from_secs(60));
+        provider.cache().store(CachedToken::with_expires_at(
             "stale",
             Some(SecretString::from("expired-ref")),
-            Duration::from_secs(5),
+            std::time::Instant::now() + Duration::from_secs(5),
         ));
         let tok = provider.access_token().await.unwrap();
         assert_eq!(tok.expose_secret(), "acc-fallback");
@@ -721,11 +726,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = setup_provider(&server, Duration::from_secs(3600));
-        provider.cache().store(CachedToken::new(
+        let provider = setup_provider(&server, Duration::from_secs(60));
+        provider.cache().store(CachedToken::with_expires_at(
             "stale",
             Some(SecretString::from("bad-ref")),
-            Duration::from_secs(5),
+            std::time::Instant::now() + Duration::from_secs(5),
         ));
         let tok = provider.access_token().await.expect("fallback succeeds");
         assert_eq!(tok.expose_secret(), "acc-400-fb");

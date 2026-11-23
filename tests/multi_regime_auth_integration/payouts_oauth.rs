@@ -133,7 +133,7 @@ async fn tc_1_2_4_payouts_refresh_token_renewal() {
     )
     .await;
 
-    let cache = Arc::new(TokenCache::with_refresh_margin(Duration::from_secs(3600)));
+    let cache = Arc::new(TokenCache::with_refresh_margin(Duration::from_secs(60)));
     let provider = provider_with_cache(&server, cache);
 
     assert_eq!(
@@ -144,6 +144,15 @@ async fn tc_1_2_4_payouts_refresh_token_renewal() {
             .expose_secret(),
         "po-acc-1"
     );
+    let rt = provider
+        .cache()
+        .peek()
+        .and_then(|t| t.refresh_token.clone());
+    provider.cache().store(CachedToken::with_expires_at(
+        "po-acc-1",
+        rt,
+        std::time::Instant::now() + Duration::from_secs(5),
+    ));
     assert_eq!(
         provider
             .access_token()
@@ -180,11 +189,11 @@ async fn tc_1_2_4_payouts_401_refresh_fallback_to_password() {
     )
     .await;
 
-    let fb_cache = Arc::new(TokenCache::with_refresh_margin(Duration::from_secs(3600)));
-    fb_cache.store(CachedToken::new(
+    let fb_cache = Arc::new(TokenCache::with_refresh_margin(Duration::from_secs(60)));
+    fb_cache.store(CachedToken::with_expires_at(
         "stale-acc",
         Some(SecretString::from("stale-ref")),
-        Duration::from_secs(5),
+        std::time::Instant::now() + Duration::from_secs(5),
     ));
     let fb_provider = provider_with_cache(&fallback_server, fb_cache);
     assert_eq!(

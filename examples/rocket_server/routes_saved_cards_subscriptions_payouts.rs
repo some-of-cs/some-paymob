@@ -670,7 +670,8 @@ struct PayoutsTokenResponseDto {
 
 impl std::fmt::Debug for PayoutsTokenResponseDto {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PayoutsTokenResponseDto").finish_non_exhaustive()
+        f.debug_struct("PayoutsTokenResponseDto")
+            .finish_non_exhaustive()
     }
 }
 
@@ -693,7 +694,8 @@ struct RefreshTokenRequest {
 
 impl std::fmt::Debug for RefreshTokenRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RefreshTokenRequest").finish_non_exhaustive()
+        f.debug_struct("RefreshTokenRequest")
+            .finish_non_exhaustive()
     }
 }
 

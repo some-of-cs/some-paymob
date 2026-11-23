@@ -16,7 +16,8 @@ pub struct RefreshTokenPayload {
 
 impl std::fmt::Debug for RefreshTokenPayload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RefreshTokenPayload").finish_non_exhaustive()
+        f.debug_struct("RefreshTokenPayload")
+            .finish_non_exhaustive()
     }
 }
 

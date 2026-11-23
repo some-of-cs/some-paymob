@@ -7,8 +7,8 @@ use serde::Deserialize;
 use serde_json::json;
 use some_paymob::prelude::*;
 
-use some_paymob::adapter::normalize_webhook_event;
 use super::{ApiServerError, AppState, parse_currency};
+use some_paymob::adapter::normalize_webhook_event;
 
 #[derive(Debug, Deserialize)]
 pub struct UnifiedSessionPayload {
@@ -120,7 +120,8 @@ pub struct UnifiedChargeSavedPayload {
 
 impl std::fmt::Debug for UnifiedChargeSavedPayload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("UnifiedChargeSavedPayload").finish_non_exhaustive()
+        f.debug_struct("UnifiedChargeSavedPayload")
+            .finish_non_exhaustive()
     }
 }
 

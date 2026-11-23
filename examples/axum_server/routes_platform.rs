@@ -21,8 +21,7 @@ use some_paymob::prelude::{
     RegisterMerchantParams, SplitRecipientRule, SubmitOnboardingStepParams, SubscriptionProvider,
     UnifiedCaptureRequest, UnifiedPaymentSessionRequest, UnifiedPayoutRequest,
     UnifiedRefundRequest, UnifiedSavedMethodChargeRequest, UnifiedSubscriptionRefundRequest,
-    UnifiedVoidRequest, UpdateIntentionParams, VoidParams, WebhookEvent,
-    normalize_webhook_event,
+    UnifiedVoidRequest, UpdateIntentionParams, VoidParams, WebhookEvent, normalize_webhook_event,
 };
 
 use super::state::{ApiServerError, AppState};
@@ -135,7 +134,8 @@ pub struct OnboardingLoginPayload {
 
 impl std::fmt::Debug for OnboardingLoginPayload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OnboardingLoginPayload").finish_non_exhaustive()
+        f.debug_struct("OnboardingLoginPayload")
+            .finish_non_exhaustive()
     }
 }
 
@@ -976,7 +976,8 @@ pub struct UnifiedChargeSavedPayload {
 
 impl std::fmt::Debug for UnifiedChargeSavedPayload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("UnifiedChargeSavedPayload").finish_non_exhaustive()
+        f.debug_struct("UnifiedChargeSavedPayload")
+            .finish_non_exhaustive()
     }
 }
 

@@ -619,8 +619,11 @@ mod tests {
 
     #[test]
     fn whk_09_redact_quoted_literals_handles_escaped_quotes() {
-        let raw = r#"invalid value: string "foo "bar" baz", expected integer"#;
+        let raw = r#"invalid value: string "foo \"bar\" baz", expected integer"#;
         let redacted = redact_quoted_literals(raw);
-        assert_eq!(redacted, r#"invalid value: string "[REDACTED]", expected integer"#);
+        assert_eq!(
+            redacted,
+            r#"invalid value: string "[REDACTED]", expected integer"#
+        );
     }
 }

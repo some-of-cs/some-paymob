@@ -16,7 +16,8 @@ pub struct PartnerLoginPayload {
 
 impl std::fmt::Debug for PartnerLoginPayload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PartnerLoginPayload").finish_non_exhaustive()
+        f.debug_struct("PartnerLoginPayload")
+            .finish_non_exhaustive()
     }
 }
 

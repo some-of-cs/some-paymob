@@ -323,7 +323,7 @@ async fn recovery_regime3_oauth2_refresh_token_and_password_fallback() {
     cache.store(CachedToken::new(
         "stale-acc",
         Some(SecretString::from("stale-ref")),
-        Duration::from_secs(5),
+        Duration::from_secs(0),
     ));
     let provider = PayoutsOAuthProvider::with_client_and_cache(
         &server.uri(),

@@ -458,7 +458,7 @@ async fn regime3_oauth2_refresh_token_and_password_fallback() {
     provider.cache().store(CachedToken::new(
         "stale",
         Some(SecretString::from("expired-ref")),
-        Duration::from_secs(5),
+        Duration::from_secs(0),
     ));
     let token = provider
         .access_token()

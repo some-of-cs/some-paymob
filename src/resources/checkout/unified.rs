@@ -467,7 +467,12 @@ mod tests {
 
     #[test]
     fn res1_01_unified_url_does_not_expand_env_vars() {
-        let client = test_client(PaymobRegion::Egypt, Some("egy_pk_test_ENVTEST"));
+        let cfg = ClientConfig::builder()
+            .region(PaymobRegion::Egypt)
+            .public_key(PublicKey::new("egy_pk_test_ENVTEST").expect("valid pk"))
+            .build()
+            .expect("valid config");
+        let client = PaymobClient::new(cfg).expect("valid client");
         let literal_ref = SecretString::from("$PAYMOB_HMAC_SECRET".to_owned());
         let url = client
             .checkout()

@@ -763,7 +763,7 @@ mod tests {
 
     #[test]
     fn res1_01_iframe_url_does_not_expand_env_vars() {
-        let client = mock_client("https://accept.paymob.com", true);
+        let client = test_client();
         let svc = client.legacy_v2().expect("legacy service");
         let literal = SecretString::from("$PAYMOB_HMAC_SECRET".to_owned());
         let url = svc

@@ -8,7 +8,8 @@ use some_paymob::test_utils::{
 };
 
 use super::positive_helpers::{
-    assert_non_wallet_cashin_rpcs, assert_rpc_ok, build_grpc_service, mount_accept,
+    assert_non_wallet_cashin_rpcs, assert_rpc_code, assert_rpc_ok, build_grpc_service,
+    mount_accept,
     sample_billing_json, topup_b64_json,
 };
 use super::positive_mocks_core::{
@@ -435,8 +436,11 @@ async fn e2e_webhooks_protocols_a_through_e_return_ok() {
         "status": "successful"
     });
     let proto_e_req = json!({ "raw_body": proto_e.to_string() });
-    let proto_e_err = grpc_unary(&service, "VerifyWebhookEvent", &proto_e_req)
-        .await
-        .expect_err("unsigned Protocol E without payouts secret must fail closed");
-    assert_eq!(proto_e_err.code(), tonic::Code::Internal);
+    assert_rpc_code(
+        &service,
+        "VerifyWebhookEvent",
+        &proto_e_req,
+        tonic::Code::Internal,
+    )
+    .await;
 }

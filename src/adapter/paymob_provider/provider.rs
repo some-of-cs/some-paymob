@@ -30,9 +30,9 @@ use super::errors::{
 use super::webhook::parse_and_verify_paymob_webhook;
 use super::wire::{
     CaptureApiRequest, IntentionApiResponse, IntentionExecutionSpec, PaymobTransactionPayload,
-    RefundApiRequest, RefundExecutionContext, VoidApiRequest,
-    build_intention_payload, build_intention_reference, build_lookup_ref, build_preflight_input,
-    build_refund_result, build_tx_payment_result,
+    RefundApiRequest, RefundExecutionContext, VoidApiRequest, build_intention_payload,
+    build_intention_reference, build_lookup_ref, build_preflight_input, build_refund_result,
+    build_tx_payment_result,
 };
 
 const PROVIDER_SLUG: &str = "paymob";
@@ -244,7 +244,6 @@ impl PaymobProvider {
         }
         Ok(tx.flags.amount_cents)
     }
-
 }
 
 #[async_trait]
@@ -340,7 +339,9 @@ impl PaymentProvider for PaymobProvider {
         let payload: PaymobTransactionPayload =
             parse_api_response(&self.id, "capture", response).await?;
         let fallback_currency = req.amount.as_ref().map(|m| m.currency().as_str());
-        let ctx = self.config.tx_result_ctx(Some(&req.reference), fallback_currency);
+        let ctx = self
+            .config
+            .tx_result_ctx(Some(&req.reference), fallback_currency);
         build_tx_payment_result(&self.id, &payload, &ctx)
     }
 

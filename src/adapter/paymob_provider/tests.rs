@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde_json::json;
 use some_payment_core::{
     CaptureMode, CreatePaymentRequest, ErrorKind, HttpMethod, Money, PaymentCapabilities,
-    PaymentError, PaymentProvider, PaymentStatus, ProviderId, ProviderReference,
-    RawWebhookRequest, RefundRequest,
+    PaymentError, PaymentProvider, PaymentStatus, ProviderId, ProviderReference, RawWebhookRequest,
+    RefundRequest,
 };
 
 use crate::alignment::integration_validation::IntegrationRoutingConfig;

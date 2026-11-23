@@ -454,8 +454,7 @@ pub(crate) fn deserialize_secret_string<'de, D>(
 where
     D: Deserializer<'de>,
 {
-    let raw = String::deserialize(deserializer)?;
-    Ok(secrecy::SecretString::from(raw))
+    secrecy::SecretString::deserialize(deserializer)
 }
 
 /// Deserializes a [`secrecy::SecretString`] while rejecting empty or control-character strings.
@@ -550,20 +549,22 @@ enum FlexibleOptU64 {
 
 /// Deserializes an `Option<u64>` from a JSON integer, numeric string, `{ "id": u64 }`, or null.
 #[allow(dead_code)]
+fn parse_flexible_opt_u64(val: FlexibleOptU64) -> Result<Option<u64>, String> {
+    match val {
+        FlexibleOptU64::Int(id) | FlexibleOptU64::Obj { id } => Ok(Some(id)),
+        FlexibleOptU64::Str(raw) if raw.trim().is_empty() => Ok(None),
+        FlexibleOptU64::Str(raw) => parse_u64_str(&raw).map(Some),
+    }
+}
+
 pub(crate) fn deserialize_opt_u64_flexible<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let opt = Option::<FlexibleOptU64>::deserialize(deserializer)?;
-    match opt {
-        None => Ok(None),
-        Some(FlexibleOptU64::Int(val)) => Ok(Some(val)),
-        Some(FlexibleOptU64::Obj { id }) => Ok(Some(id)),
-        Some(FlexibleOptU64::Str(raw)) if raw.trim().is_empty() => Ok(None),
-        Some(FlexibleOptU64::Str(raw)) => parse_u64_str(&raw)
-            .map(Some)
-            .map_err(serde::de::Error::custom),
-    }
+    let Some(val) = Option::<FlexibleOptU64>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    parse_flexible_opt_u64(val).map_err(serde::de::Error::custom)
 }
 
 #[cfg(test)]

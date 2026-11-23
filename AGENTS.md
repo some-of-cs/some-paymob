@@ -1,125 +1,92 @@
-# Divide-and-Conquer Development Plugin — Workspace Agent Rules (`AGENTS.md`)
+# `some-paymob` — AI Agent Usage Guide
 
-Welcome to the **`some-divide-and-conquer`** governance engine for **Google Antigravity**, **Claude Code**, and **OpenAI Codex**. Every AI agent, subagent, leader, implementer, and reviewing council operating in a workspace powered by this plugin MUST strictly obey these invariants.
+Rust microkernel SDK and constant-time HMAC-SHA512 webhook engine for Paymob (Egypt, KSA, UAE, Oman, Pakistan).
 
-> [!IMPORTANT]
-> **Model & Token Profile**: This plugin is engineered to produce **zero-debt, production-grade software and domain deliverables** through massive parallelism, multi-council review, and automated self-correction loops. Because this architecture spawns concurrent subagents and iterative review councils, it **consumes a high volume of tokens** and is **primarily designed and optimized for the Gemini Flash family** (e.g., `gemini-2.5-flash` / `gemini-3-flash`). It operates on a **single profile at a time** protected by an autonomous `quota-sentinel`.
+## Hard Invariants
+- **Toolchain**: Rust edition `2024`, MSRV `1.85`, `#![forbid(unsafe_code)]`, `Send + Sync` (`Arc`-backed `PaymobClient`).
+- **Money**: Integer minor units only via `MinorUnitAmount` (`u64`) — **never** `f32`/`f64`. `EGP`/`SAR`/`AED`/`PKR` = 2 decimals; `OMR` = 3 decimals (baisa).
+- **Secrets**: `SecretKey`, `PublicKey`, `ApiKey`, `HmacSecret`, and `SecretString` redact to `[REDACTED]` in `Debug`/`Display` and zeroize on drop. Values starting with `$VAR` or `${VAR}` resolve from env/`.env`; prefix literal `$` secrets with `$$`.
+- **Transport**: HTTPS + TLS 1.3 enforced on all non-loopback hosts; plaintext `http://` is permitted strictly on loopback (`127.0.0.0/8`, `::1`, `localhost`). Redirects are disabled (`Policy::none()`).
 
----
+## Feature Flags (`Cargo.toml`)
+| Feature | Enables | Notes |
+| :--- | :--- | :--- |
+| `default` | `core`, `webhooks`, `intentions`, `manage`, `inquiries`, `quicklinks`, `splits`, `saved-cards`, `subscriptions`, `payouts`, `onboarding`, `rustls-tls` | Batteries-included |
+| `core` | `PaymobClient`, `ClientConfig`, `PaymobRegion`, 4-regime auth, `MinorUnitAmount`, `Currency`, `PaymobError` | Minimal base (`default-features = false`) |
+| `webhooks` | `PaymobWebhookEngine` (Protocols A–E), `InMemoryWebhookDeduplicator` | Constant-time HMAC-SHA512 |
+| `intentions` / `manage` / `inquiries` / `legacy-v2` | Unified Checkout Intentions, Refund/Void/Capture, Inquiries, Legacy v2 | Add as needed |
+| `quicklinks` / `splits` / `saved-cards` / `subscriptions` | Payment Links, Marketplace Splits, CIT/MIT Tokenization, Subscriptions | Add as needed |
+| `payouts` / `onboarding` / `some-payments-adapter` | Disbursements (OAuth2), Partner Onboarding, Unified Gateway Traits | Add as needed |
+| `rustls-tls` / `native-tls` | TLS backend for `reqwest` | Pick one when `default-features = false` |
 
-## Rule 0: Mandatory `git` & `gh` Preflight Gate (Hard Blocker Before Starting)
+## 4 Authentication Regimes
+| Regime | Mechanism | Env Vars | Primary Endpoints |
+| :--- | :--- | :--- | :--- |
+| 1. Secret Key | `Authorization: Token <secret_key>` | `PAYMOB_SECRET_KEY`, `PAYMOB_PUBLIC_KEY` | `/v1/intention/`, `/v1/payment-links/`, Refunds/Voids/Captures, Saved Cards, Subscriptions |
+| 2. Accept JWT | `POST /api/auth/tokens` (60m cached) | `PAYMOB_API_KEY` | Inquiries (`/api/ecommerce/orders/transaction_inquiry`), Legacy v2, some Manage calls |
+| 3. Payouts OAuth2 | `POST /api/secure/o/token/` (Basic + password/refresh) | `PAYMOB_PAYOUTS_CLIENT_ID`, `PAYMOB_PAYOUTS_CLIENT_SECRET`, `PAYMOB_PAYOUTS_USERNAME`, `PAYMOB_PAYOUTS_PASSWORD` | `/api/secure/disburse/`, Bulk Payouts, Budget/Topups |
+| 4. Partner | Bearer or API Key + `Merchant-ID` | `PAYMOB_PARTNER_BEARER_TOKEN` / `PAYMOB_PARTNER_API_KEY` | Partner Onboarding (`/api/partner/...`) + `client.with_merchant("id")` |
 
-1. **Zero Execution Without `git` and `gh`**:
-   - Before decomposing any specification, creating worktrees, or spawning any subagent, the Main Agent MUST verify that both **`git`** (with `git worktree` support) and **`gh`** (GitHub CLI, authenticated via `gh auth status`) are installed and available on `$PATH`.
-   - Run `./scripts/preflight-check.sh` (automatically triggered by the `SessionStart` hook in `hooks.json`).
-   - If `git` is missing, `gh` is missing, or `gh auth status` fails, the agent MUST immediately **STOP** and instruct the user to install/authenticate `git` and `gh` before proceeding.
+## Minimal Copy-Paste Recipes
 
----
+```rust
+use some_paymob::prelude::*;
 
-## Rule 1: Monolithic Docs $\to$ Modules $\to$ User Stories $\to$ Dynamic $K$-Unit Decomposition
+// 1. Client init (auto-infers region from key prefix if PAYMOB_REGION is omitted)
+let client = PaymobClient::from_env()?;
+// Or explicit builder:
+let cfg = ClientConfig::builder()
+    .region(PaymobRegion::Egypt)
+    .secret_key(SecretKey::new("$PAYMOB_SECRET_KEY")?)
+    .public_key(PublicKey::new("$PAYMOB_PUBLIC_KEY")?)
+    .hmac_secret(HmacSecret::new("$PAYMOB_HMAC_SECRET")?)
+    .build()?;
+let client = PaymobClient::new(cfg)?;
 
-1. **Four-Level Decomposition Hierarchy**:
-   - **Level 0 (Monolithic Input)**: Architecture RFCs, PRD documents, API specifications, financial models, marketing briefs, or research docs.
-   - **Level 1 (Modules — `module-M`)**: Bounded contexts, workstreams, or architectural subsystems (e.g., Core Runtime, Auth, Billing, Research Methodology, Campaign Funnel). Branch: `feat/module-M-<slug>`.
-   - **Level 2 (User Stories — `us-M.S.0`)**: Cohesive feature or domain deliverables within a module. Branch: `feat/us-M.S.0-<slug>`.
-   - **Level 3 (Implementation Units — `unit-1..K`)**: Atomic, self-contained vertical deliverable slices with their own unit tests or verification checks. Branch: `feat/us-M.S.0/unit-N-<slug>`.
-2. **Dynamic Implementation Unit Sizing Matrix ($K \in [1, N]$, Not Fixed at 5)**:
-   - The number of implementation units per User Story is **dynamically determined** using the `spec-decomposition` skill's field-adapted **Unit Sizing Decision Matrix** (`S_story = 0.35 D1 + 0.25 D2 + 0.20 D3 + 0.20 D4` from `profiles/fields.json`) based on:
-     1. **$D_1$ (35% — Functional / Deliverable Surface)**: Distinct entities/endpoints/components (`software`/`game-dev`) or user flows/channels/models/hypotheses/pathways/layers (`product`/`marketing`/`finance`/`research`/`healthcare`/`gis`).
-     2. **$D_2$ (25% — Artifact Volume)**: Estimated production LOC ($<300$ to $>1,400$ LOC) or deliverable depth ($<1,000$ to $>5,000$ words / $1$ to $7+$ sheets).
-     3. **$D_3$ (20% — Logic / Analytical Complexity)**: CRUD / narrative summary to concurrency / multi-variable statistical or regulatory modeling.
-     4. **$D_4$ (20% — Orthogonal File Boundaries)**: Independent files/modules/chapters ($1-2$ to $7+$).
-   - A small story decomposes into **1–2 or 3 units**; a medium story into **4 or 5 units**; a large subsystem story into **6 to 8+ units**.
-3. **Pure Deliverable Production Only & Non-Blocking Unit Invariant**:
-   - **Pure Deliverable Production Only**: Every unit MUST produce real primary artifacts (production code + unit tests in software; drafted sections, models, or campaign assets + self-checks in non-software). **Never create a "validation-only", "review-only", or "integration-only" unit** that waits on other units to finish before it can start.
-   - **Zero Inter-Unit Blocking**: Units $1..K$ within a User Story MUST be designed with orthogonal file/module/section boundaries or shared base contracts so that **all $K$ Unit Implementers execute 100% in parallel** without blocking one another.
-4. **Mandatory Architecture Roadmap & Per-Module User Story Spec Kit Folder (`docs/user-stories/`)**:
-   - Alongside `docs/architecture/DECOMPOSITION_ROADMAP.md`, decomposition MUST create `docs/user-stories/module-M-<slug>/README.md` (containing the module overview, story/unit index, and a copy-paste-ready **Module Execution Prompt** detailing the exact agent roster/counts, skills, anti-regression rules, Wave 1–4 execution steps, and strict merge-order constraint to `main` per Section 4.1 of `skills/spec-decomposition/SKILL.md`) AND `docs/user-stories/module-M-<slug>/us-M.S.0-<story-slug>.md` for every User Story under its Module folder, containing all 6 mandatory sections defined in `skills/spec-decomposition/SKILL.md`: (1) Spec Kit Specifications (`1.1` Narrative with `1.1.1` Preconditions & `1.1.2` Postconditions, `1.2` Gherkin Acceptance Criteria, `1.3` Test Cases & Traceability Matrix), (2) Technical Implementation Plan (`2.1` Domain Invariants & Storage Schema, `2.2` Activity Diagram or Sequence Diagram), (3) Expected Folder Architecture at the Project, (4) Implementation Units in Detail & Specialist Agent Assignment (`4.1–4.4`), (5) Security Gateway powered by `security-audit` (`5.1` Trust Boundaries & Actors, `5.2` STRIDE/ASVS Threat Matrix, `5.3` Crypto & Global Data Protection Controls for worldwide legal compliance, `5.4` Automated Security Verification Checklist, `5.5` Gate G2 Sign-Off Checklist), and (6) Validation Gates & Acceptance Sign-Off.
+// 2. Intention + Unified Checkout URL
+let params = IntentionParams::builder()
+    .amount(MinorUnitAmount::new(10_000)) // 100.00 EGP
+    .currency(Currency::EGP)
+    .payment_method(4_097_558)
+    .billing_data(BillingData::minimal("Jane", "Doe", "jane@example.com", "+201000000000"))
+    .build()?;
+let intention = client.intentions().create(params).await?;
+let checkout_url = client.checkout().unified_url(&intention.client_secret)?;
 
----
+// 3. Refund / Void / Capture & Inquiries
+client.manage().refund(RefundParams::new(tx_id, MinorUnitAmount::new(5_000))).await?;
+client.manage().void(VoidParams::new(tx_id)).await?;
+client.manage().capture(CaptureParams::new(tx_id, MinorUnitAmount::new(10_000))).await?;
+let tx = client.inquiries().by_transaction_id(tx_id).await?;
 
-## Rule 2: Mandatory `.worktrees/` Isolation & Parallel Execution
+// 4. Saved Cards (CIT/MIT), Subscriptions, Payouts, Partner, Unified Adapter
+client.saved_cards().pay_with_token(PayWithTokenParams::new(payment_key, card_token)).await?;
+client.subscriptions().plans().list(PageQuery::first()).await?;
+client.payouts().cashin().vodafone(MobileWalletCashinParams::new("01012345678", 5_000)).await?;
+let scoped = client.with_merchant("merchant_42")?;
+let session = client.create_payment_session(&unified_req).await?; // `some-payments-adapter`
+```
 
-1. **Strict `.worktrees/` Directory Invariant**:
-   - All modifications, builds, and verification executions MUST take place inside `.worktrees/<branch-sanitized-name>` at the repository root. Direct editing on `main` or in the root working tree is strictly prohibited.
-   - Worktrees are provisioned and pruned exclusively by **`Git Workflow Master`**.
-2. **Full Parallelism Across Tiers**:
-   - All Unit Implementers ($1..K$) for a User Story are spawned simultaneously in separate `.worktrees/` and execute their vertical slices in parallel.
-   - Multiple User Story Leaders and multiple **Reviewing Councils** run concurrently in parallel.
-3. **Shared Build Cache Optimization**:
-   - When the project toolchain supports shared build caches across worktrees (e.g., `CARGO_TARGET_DIR`, `TURBO_CACHE_DIR`, `GRADLE_USER_HOME`, `PIP_CACHE_DIR`, `GOMODCACHE`), export the shared cache path inside every worktree to avoid redundant compilation.
+## Webhook Verification & Replay Protection (`webhooks`)
+```rust
+use some_paymob::webhooks::{InMemoryWebhookDeduplicator, PaymobWebhookEngine, WebhookIdempotencyStore};
 
----
+let engine = PaymobWebhookEngine::new("$PAYMOB_HMAC_SECRET")?
+    .with_payouts_secret("$PAYMOB_PAYOUTS_HMAC_SECRET")?; // required (fail-closed) for Protocol E
+let dedup = InMemoryWebhookDeduplicator::new();
 
-## Rule 3: Strict 3-Tier Hierarchical Delegation & Watchdog Schedules
+// Protocols A, C, D, E (POST): auto-dispatch & constant-time verify
+let event = engine.construct_event(raw_body, query_hmac.as_deref())?;
+dedup.claim_or_reject(&event)?;
 
-1. **Zero Cross-Tier Spawning**:
-   - **Main Supervisor**: Spawns and supervises **Module Leaders** and the End-of-Module Whole-Codebase Reviewing Council.
-   - **Module Leader (`module-M`)**: Immediately spawns and supervises **User Story Leaders** (`US-M.1.0`, `US-M.2.0`, ...) in its very first step. **Module Leaders MUST NEVER spawn Unit Implementers directly.**
-   - **User Story Leader (`us-M.S.0`)**: Immediately spawns and supervises its **$K$ Unit Implementers** (`unit-1..K`) in its very first step.
-2. **Zero Idle Talk Before Spawning**:
-   - Leaders must spawn their child subagents immediately in step 1 without protracted monologues.
-3. **Hierarchical Supervision Schedules**:
-   - **Main Supervisor**: Runs a 3-minute watchdog (`schedule` cron `*/3 * * * *`) to monitor Module/Story Leaders and intervene if any leader idles for $>3$ minutes without spawning its children.
-   - **Module Leader**: Maintains a 3-minute supervision schedule (`*/3 * * * *`) to coordinate Story Leaders, PR queues, and cascading merges.
-   - **Story Leader**: Maintains a 1-minute supervision schedule (`* * * * *`) to track active Unit Implementers, `patch-implementer` runs, and parallel Reviewing Councils.
+// Protocol B (GET redirect): ALWAYS pass raw query string to reject duplicate keys (HPP)
+let redirect = engine.verify_transaction_get_query_str(raw_query)?;
+```
+- **Protocol D (Subscriptions)**: Paymob's HMAC authenticates **only** `(trigger_type, subscription_data.id)`. Always re-query `client.subscriptions()` for authoritative subscription state before mutating billing records.
+- **Protocol E (Payouts)**: Fail-closed — `construct_event` / `verify_payout_*` reject unsigned callbacks when no payouts HMAC secret is configured.
 
----
-
-## Rule 4: Parallel Multi-Council Review & Mandatory `patch-implementer` Loop
-
-1. **Field-Adapted Federated Gatekeeper Council (Zero Self-Approval)**:
-   - No PR at any tier (Unit, Story, Patch, or Module) may be merged via `gh pr merge` without an independent **Reviewing Council** sign-off posted to the PR conversation. Self-approval by the authoring agent is strictly forbidden.
-   - Multiple Reviewing Councils can and should be invoked in parallel across concurrent units and stories.
-   - Every Council evaluates the active `--field` profile from `.agents/field-profile.json` / `profiles/fields.json` (default: `software`):
-     - **Gate G0 (Format/Build or Structure/Schema)**: 0 compiler/linter warnings & 100% formatter compliance (`software`/`game-dev`), or schema, template, brand-voice, formula balance, citation, terminology, or CRS validation (`product`/`marketing`/`finance`/`research`/`healthcare`/`gis`).
-     - **Gate G1 (Verification & Coverage)**: $\ge 90\%$ line and $\ge 85\%$ branch test coverage (`software`), or 100% acceptance-criteria, KPI/hypothesis, stress-test sensitivity, statistical methodology, clinical evidence, frame-time, or spatial topology verification.
-     - **Gate G2 (Risk, Safety & Security Audit — `security-audit` skill)**: OWASP/CWE vulnerability scan, secret hygiene, and constant-time crypto (`software`/`game-dev`), or WCAG/privacy, FTC/brand safety, SOX/IFRS/GAAP, plagiarism/bias, HIPAA/PHI, or geoprivacy compliance.
-     - **Gate G-Complexity (`cyclomatic-complexity` skill)**: Cyclomatic Complexity $CC \le 6$ target, $CC \le 10$ ceiling, **$CC > 15$ hard merge blocker** for executable code/scripts; **Structural Complexity Mode** (nesting depth $\le 2$, single responsibility per file/section, zero circular cross-references, clear decision tables) for prose and analytical deliverables.
-     - **Gate G-Docs**: Public API docstrings, runnable examples/doctests, citations, assumptions, and module `README.md`.
-     - **Gate G-Review (Council President Sign-Off)**: Formal approval comment posted to the GitHub PR conversation.
-2. **3-Tier Iterative Review & `patch-implementer` Self-Correction Loop (Never Terminate Until Clean)**:
-   - **Tier 1 — Unit Level**: Upon finishing implementation, each Unit Implementer invokes its own `Code Reviewer` council. If issues or complexity violations are flagged, the Unit Implementer fixes them and re-invokes the reviewer until 0 issues remain. **A Unit Implementer NEVER terminates until its Reviewer confirms 100% clean sign-off.**
-   - **Tier 2 — User Story Level & Mandatory `patch-implementer` Invariant**: After all $K$ units are merged into the story branch (`feat/us-M.S.0-<slug>`), the Story Leader runs story-wide integration checks and invokes a fresh Story-level `Code Reviewer` council.
-     - **Story-Level `patch-implementer` Rule**: If ANY review, security/compliance, complexity, or integration issue is flagged at the story level, the **Story Leader MUST NOT fix the artifact directly in its own context**. Instead, the Story Leader MUST spawn a dedicated **`patch-implementer`** subagent in an isolated worktree on branch `patch/us-M.S.0-<scope>`, open a patch PR (`fix(us-M.S.0): <summary>`), have it reviewed and merged into the story branch via `gh pr merge`, and **re-invoke the Story `Code Reviewer` council**, repeating this loop until 0 problems remain. **The Story Leader NEVER terminates until the Reviewer confirms everything is OK.**
-   - **Tier 3 — Module Level & Mandatory `patch-implementer` Invariant**: After all User Stories are merged into the module branch (`feat/module-M-<slug>`), the Module Leader invokes a Module-level `Code Reviewer` council.
-     - **Module-Level `patch-implementer` Rule**: If ANY issue is flagged at the module level, the **Module Leader MUST NOT fix it directly**. It MUST spawn a dedicated **`patch-implementer`** subagent on branch `patch/module-M-<scope>`, open a patch PR (`fix(module-M): <summary>`), merge it into the module branch via `gh pr merge`, and re-invoke the Module `Code Reviewer` council until 100% clean sign-off is achieved. **The Module Leader NEVER terminates until the Reviewer gives a 100% clean sign-off.**
-   - **Tier 4 — End-of-Module Whole-Codebase Validation**: Once the module PR merges into `main`, the Main Supervisor runs full-workspace validation and invokes a Whole-Codebase Gatekeeper Council across Modules $1..M$ to guarantee zero regressions.
-
----
-
-## Rule 5: Bottom-Up Streaming PR Pipeline & Ordered Cascading Merge (`gh pr merge`)
-
-1. **Strict Naming Conventions**:
-   - **Unit Branch**: `feat/us-M.S.0/unit-N-<scope>` | **Unit PR Title**: `feat(us-M.S.0/unit-N): <summary>` (never omit `/unit-N`).
-   - **Patch Branch**: `patch/us-M.S.0-<scope>` or `patch/module-M-<scope>` | **Patch PR Title**: `fix(us-M.S.0): <summary>`.
-   - **Story Branch**: `feat/us-M.S.0-<scope>` | **Story PR Title**: `feat(us-M.S.0): <story-title> (Units 1..K Promotion)`.
-   - **Module Branch**: `feat/module-M-<scope>` | **Module PR Title**: `feat(module-M): <module-title>`.
-2. **Bottom-Up PR Creation & Streaming Cascading Merge**:
-   - Child unit PRs (`unit-1..K`) MUST be opened before the parent Story PR is opened.
-   - As soon as each unit finishes implementation and passes its Unit Reviewer Council, `Git Workflow Master` immediately commits, pushes (`git push -u origin <branch>`), and opens its GitHub PR (`gh pr create`).
-   - Merges into the story branch happen strictly via **`gh pr merge <PR> --merge`** in ordered cascading sequence ($1 \to 2 \to \dots \to K$): Unit 1 merges immediately upon approval; Unit 2 syncs the updated story branch, re-verifies tests/gates, and merges; continuing through Unit $K$. Local cross-tier `git merge` bypassing GitHub PRs is prohibited.
-
----
-
-## Rule 6: In-PR Conversation Reporting & GitHub Projects Kanban (Zero Local Report/Kanban Clutter)
-
-1. **All Reports Posted Directly to GitHub PR Conversations (`gh pr comment`)**:
-   - **Do NOT generate local markdown report files** in `.agents/reports/`.
-   - Every Implementation Report, Security/Compliance Audit Report (`security-audit`), Cyclomatic/Structural Complexity Evaluation (`cyclomatic-complexity`), Patch Remediation Summary, and Gate G-Review Sign-Off MUST be posted directly as structured comments on the GitHub Pull Request conversation using `gh pr comment <PR> --body "..."` (or `./scripts/post-pr-report.sh --field <FIELD>`).
-   - Merging any PR without a complete in-conversation audit trail (Implementation Report + Security/Complexity Audit + Independent Reviewer Sign-Off) is strictly blocked.
-2. **GitHub Projects v2 Kanban Board + Local `checkpoint.json`**:
-   - **Do NOT maintain local `KANBAN.md` files.**
-   - All visual Kanban task tracking (`Todo`, `In Progress`, `In Review / PR Open`, `Merged`) MUST be managed through **GitHub Projects** (`gh project item-add` / `gh project item-edit` via `./scripts/gh-kanban-sync.sh`).
-   - Simultaneously, maintain `.agents/checkpoints/<module-id>/checkpoint.json` on every worktree creation, PR creation, and PR merge for instant, idempotent state reconciliation and zero-duplication recovery.
-
----
-
-## Rule 7: `--field` Industry Targeting (`profiles/fields.json`), Pluggable Roster (`msitarzewski/agency-agents`) & Quota Sentinel
-
-1. **Field-Targeted Domain Presets (`--field <FIELD_PROFILE>`)**:
-   - This plugin is 100% language-, framework-, and industry-agnostic. Use `--field <software|product|marketing|finance|research|healthcare|game-dev|gis|all>` with `./scripts/install-plugin.sh`, `./scripts/select-agents.sh`, or `./scripts/post-pr-report.sh` to automatically configure the project's specialist divisions, $D_1..D_4$ decomposition metrics, and 6-gate review criteria in `.agents/field-profile.json` from [`profiles/fields.json`](profiles/fields.json).
-   - Users can also select any combination of the **283 specialist agents across all 18 divisions** from the bundled **[`msitarzewski/agency-agents`](https://github.com/msitarzewski/agency-agents)** catalog via `./scripts/select-agents.sh`.
-2. **Single-Profile Operation & Autonomous `quota-sentinel`**:
-   - This plugin operates on **a single profile at a time**.
-   - An autonomous **`quota-sentinel`** subagent monitors token velocity and API quota consumption. If remaining quota drops to **1%** or a rate-limit (`429` / `RESOURCE_EXHAUSTED`) is detected, `quota-sentinel` broadcasts an immediate pause alert, flushes state to `.agents/checkpoints/<module-id>/checkpoint.json`, and schedules a wakeup timer until quota resets—resuming without duplicating any worktree, branch, or PR.
+## Error Handling & Top Rules
+- `PaymobError`: Check `err.is_retryable()`, `err.is_auth_error()`, `err.status_code()`, `err.retry_after_secs()`.
+- `WebhookError`: Return `err.suggested_http_status_code()` (`401` signature, `400` malformed, `409` duplicate, `500` config).
+- **DO**: Use `MinorUnitAmount`, `verify_transaction_get_query_str`, `InMemoryWebhookDeduplicator` (or DB-backed `WebhookIdempotencyStore`), and clone `PaymobClient` across tasks.
+- **DON'T**: Use floats for currency, call `.unwrap()` in production, trust unverified Protocol D body fields without API re-query, or pass untrusted `HashMap` query maps to `verify_transaction_get` without duplicate-key rejection.

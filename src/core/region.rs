@@ -501,33 +501,28 @@ impl CustomUrlCandidate<'_> {
     }
 }
 
-/// Returns `true` when `parsed` targets a loopback IP (`127.0.0.0/8`, `::1`),
-/// `localhost`, or a `.local` test host permitted for `http://`.
+/// Returns `true` when `parsed` targets a loopback IP (`127.0.0.0/8`, `::1`)
+/// or `localhost` permitted for cleartext `http://`.
 #[must_use]
 pub(crate) fn is_loopback_or_local_url(parsed: &Url) -> bool {
     match parsed.host() {
         Some(Host::Ipv4(ip)) => ip.is_loopback(),
         Some(Host::Ipv6(ip)) => ip.is_loopback(),
-        Some(Host::Domain(domain)) => {
-            domain.eq_ignore_ascii_case("localhost")
-                || domain.to_ascii_lowercase().ends_with(".local")
-        }
+        Some(Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
         None => false,
     }
 }
 
-/// Returns `true` when `parsed` uses plaintext `http://` targeting a loopback or `.local` host.
+/// Returns `true` when `parsed` uses plaintext `http://` targeting a strict loopback host.
 #[must_use]
 pub(crate) fn is_loopback_http_url(parsed: &Url) -> bool {
     parsed.scheme() == "http" && is_loopback_or_local_url(parsed)
 }
 
-/// Returns `true` when `parsed` uses plaintext `http://` targeting a strict loopback host
-/// (`127.0.0.1`, `localhost`, or `[::1]`).
+/// Returns `true` when `parsed` uses plaintext `http://` targeting a strict loopback host.
 #[must_use]
 pub(crate) fn is_strict_loopback_http_url(parsed: &Url) -> bool {
-    parsed.scheme() == "http"
-        && matches!(parsed.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
+    is_loopback_http_url(parsed)
 }
 
 impl RawEndpointPath<'_> {
@@ -751,7 +746,7 @@ mod tests {
             accept_base_url: "http://localhost:8080/".to_string(),
             checkout_base_url: "http://[::1]:8080/unifiedcheckout/".to_string(),
             payouts_base_url: "http://127.0.0.2:8080/".to_string(),
-            payouts_staging_base_url: "http://mock-payouts.local".to_string(),
+            payouts_staging_base_url: "http://127.0.0.1:8081".to_string(),
         };
         let eps = valid.endpoints().expect("valid local custom endpoints");
         assert_eq!(
@@ -765,9 +760,22 @@ mod tests {
                 "http://localhost:8080",
                 "http://[::1]:8080/unifiedcheckout/",
                 Some("http://127.0.0.2:8080"),
-                Some("http://mock-payouts.local"),
+                Some("http://127.0.0.1:8081"),
             )
         );
+        let rejected_mdns = PaymobRegion::Custom {
+            accept_base_url: "https://accept.paymob.com".to_string(),
+            checkout_base_url: "https://accept.paymob.com/unifiedcheckout/".to_string(),
+            payouts_base_url: "https://payouts.paymobsolutions.com".to_string(),
+            payouts_staging_base_url: "http://mock-payouts.local".to_string(),
+        };
+        assert!(matches!(
+            rejected_mdns.endpoints(),
+            Err(PaymobError::ValidationError {
+                field: "payouts_staging_base_url",
+                ..
+            })
+        ));
     }
 
     #[test]

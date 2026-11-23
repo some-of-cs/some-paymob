@@ -426,7 +426,7 @@ impl PaymobClient {
         &self,
         request: &HttpRequest,
     ) -> Result<HttpResponse, PaymobError> {
-        if !crate::core::region::is_strict_loopback_http_url(request.url()) {
+        if !crate::core::region::is_loopback_http_url(request.url()) {
             return self
                 .http()
                 .execute(request)

@@ -286,8 +286,10 @@ pub fn inject_secret_key_token(
         return Err(StrategyError::InvalidHeaderValue);
     }
     let resolved = if raw_input.starts_with('$') {
-        crate::core::credentials::resolve_secret_or_env("secret_key", raw_input)
-            .map_err(|_| StrategyError::EmptySecretKey)?
+        crate::core::credentials::resolve_secret_or_env_with("secret_key", raw_input, |var| {
+            std::env::var(var).ok().filter(|v| !v.trim().is_empty())
+        })
+        .map_err(|_| StrategyError::EmptySecretKey)?
     } else {
         secret_key.clone()
     };

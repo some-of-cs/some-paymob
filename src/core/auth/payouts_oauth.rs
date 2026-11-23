@@ -23,9 +23,10 @@ use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::core::auth::cache::{CachedToken, TokenCache};
 use crate::core::auth::{
-    build_default_auth_client, format_sanitized_transport_error, format_sensitive_auth_header,
-    join_http_url,
+    MAX_AUTH_RESPONSE_BYTES, build_default_auth_client, format_sanitized_transport_error,
+    format_sensitive_auth_header, join_http_url, read_bounded_auth_body,
 };
+use crate::core::error::redact_sensitive;
 
 /// Relative endpoint path for Paymob Payouts OAuth 2.0 token issuance and renewal.
 pub const PAYOUTS_OAUTH_TOKEN_PATH: &str = "/api/secure/o/token/";
@@ -404,7 +405,11 @@ async fn parse_token_response(
     if !status.is_success() {
         return Err(classify_error_response(response, status).await);
     }
-    let body: OAuthTokenResponse = response.json().await?;
+    let bytes = read_bounded_auth_body(response, MAX_AUTH_RESPONSE_BYTES)
+        .await
+        .map_err(PayoutsOAuthError::Transport)?;
+    let body: OAuthTokenResponse = serde_json::from_slice(&bytes)
+        .map_err(|err| PayoutsOAuthError::Transport(redact_sensitive(&err.to_string())))?;
     if body.access_token.expose_secret().trim().is_empty() {
         return Err(PayoutsOAuthError::MissingAccessToken);
     }
@@ -424,7 +429,9 @@ async fn parse_token_response(
 }
 
 async fn classify_error_response(response: Response, status: StatusCode) -> PayoutsOAuthError {
-    let bytes = response.bytes().await.unwrap_or_default();
+    let bytes = read_bounded_auth_body(response, MAX_AUTH_RESPONSE_BYTES)
+        .await
+        .unwrap_or_default();
     let parsed = serde_json::from_slice::<OAuthErrorBody>(&bytes).ok();
     if status == StatusCode::BAD_REQUEST && is_invalid_grant(parsed.as_ref()) {
         return PayoutsOAuthError::InvalidCredentials;
@@ -443,7 +450,7 @@ fn is_invalid_grant(parsed: Option<&OAuthErrorBody>) -> bool {
 }
 
 fn extract_sanitized_detail(status: StatusCode, parsed: Option<OAuthErrorBody>) -> String {
-    parsed
+    let raw = parsed
         .and_then(|body| body.error.or(body.detail))
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
@@ -452,7 +459,8 @@ fn extract_sanitized_detail(status: StatusCode, parsed: Option<OAuthErrorBody>) 
                 .canonical_reason()
                 .unwrap_or("unknown error")
                 .to_owned()
-        })
+        });
+    redact_sensitive(&raw)
 }
 
 #[cfg(test)]

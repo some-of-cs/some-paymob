@@ -25,9 +25,10 @@ use url::Url;
 
 use crate::core::auth::cache::{CachedToken, TokenCache};
 use crate::core::auth::{
-    build_default_auth_client, format_sanitized_transport_error, format_sensitive_auth_header,
-    join_http_url,
+    MAX_AUTH_RESPONSE_BYTES, build_default_auth_client, format_sanitized_transport_error,
+    format_sensitive_auth_header, join_http_url, read_bounded_auth_body,
 };
+use crate::core::error::redact_sensitive;
 
 /// Relative endpoint path for Paymob Accept JWT acquisition.
 pub const ACCEPT_AUTH_TOKENS_PATH: &str = "/api/auth/tokens";
@@ -279,7 +280,9 @@ impl AcceptJwtProvider {
         Fut: Future<Output = Result<Response, AcceptJwtError>>,
     {
         let status = response.status();
-        let body = response.bytes().await?;
+        let body = read_bounded_auth_body(response, MAX_AUTH_RESPONSE_BYTES)
+            .await
+            .map_err(AcceptJwtError::Transport)?;
         if !is_incorrect_credentials_401(status, &body) {
             return Err(AcceptJwtError::InvalidCredentials);
         }
@@ -407,7 +410,11 @@ async fn parse_token_response(response: Response) -> Result<SecretString, Accept
         });
     }
 
-    let parsed: AuthTokenResponse = response.json().await?;
+    let bytes = read_bounded_auth_body(response, MAX_AUTH_RESPONSE_BYTES)
+        .await
+        .map_err(AcceptJwtError::Transport)?;
+    let parsed: AuthTokenResponse = serde_json::from_slice(&bytes)
+        .map_err(|err| AcceptJwtError::Transport(redact_sensitive(&err.to_string())))?;
     if parsed.token.expose_secret().trim().is_empty() {
         return Err(AcceptJwtError::MissingTokenField);
     }
@@ -423,13 +430,16 @@ fn parse_error_detail(body: &[u8]) -> Option<String> {
 
 async fn extract_error_detail(response: Response) -> String {
     let status = response.status();
-    let bytes = response.bytes().await.unwrap_or_default();
-    parse_error_detail(&bytes).unwrap_or_else(|| {
+    let bytes = read_bounded_auth_body(response, MAX_AUTH_RESPONSE_BYTES)
+        .await
+        .unwrap_or_default();
+    let raw = parse_error_detail(&bytes).unwrap_or_else(|| {
         status
             .canonical_reason()
             .unwrap_or("unknown error")
             .to_owned()
-    })
+    });
+    redact_sensitive(&raw)
 }
 
 #[cfg(test)]

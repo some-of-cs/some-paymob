@@ -332,8 +332,9 @@ pub const DEFAULT_DOTENV_PATHS: &[&str] = &[".env", ".env.local"];
 /// Extracts the environment variable name if `trimmed` uses `$ENV_VARNAME` or
 /// `${ENV_VARNAME}` syntax (`[A-Za-z_][A-Za-z0-9_]*`).
 ///
-/// Returns `Ok(None)` when `trimmed` does not begin with `'$'` (treated as a literal secret).
-/// Returns `Err(PaymobError::ValidationError)` when `trimmed` begins with `'$'` but the
+/// Returns `Ok(None)` when `trimmed` does not begin with `'$'` or uses `$$` escaping
+/// (treated as a literal secret).
+/// Returns `Err(PaymobError::ValidationError)` when `trimmed` begins with a single `'$'` but the
 /// variable name is empty, unclosed, or contains non-identifier characters.
 ///
 /// # Examples
@@ -351,6 +352,9 @@ pub fn parse_env_secret_reference<'a>(
     field: &'static str,
     trimmed: &'a str,
 ) -> Result<Option<&'a str>, PaymobError> {
+    if trimmed.starts_with("$$") {
+        return Ok(None);
+    }
     let Some(rest) = trimmed.strip_prefix('$') else {
         return Ok(None);
     };
@@ -445,7 +449,7 @@ fn lookup_env_or_dotenv_files(var_name: &str) -> Option<String> {
 }
 
 fn read_dotenv_var(path: &str, var_name: &str) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = Zeroizing::new(std::fs::read_to_string(path).ok()?);
     parse_dotenv_content(&content, var_name).filter(|val| !val.trim().is_empty())
 }
 
@@ -492,6 +496,9 @@ where
             reason: format!("{field} must not be empty"),
         });
     }
+    if let Some(escaped) = trimmed.strip_prefix("$$") {
+        return Ok(SecretString::from(format!("${escaped}")));
+    }
     if let Some(var_name) = parse_env_secret_reference(field, trimmed)? {
         let resolved = Zeroizing::new(lookup(var_name).ok_or_else(|| {
             PaymobError::ValidationError {
@@ -520,7 +527,7 @@ where
 ///
 /// Built-in reusable secret resolver used across [`SecretKey`], [`PublicKey`], [`ApiKey`],
 /// [`HmacSecret`], [`PayoutsCredentials`], [`PartnerCredentials`],
-/// [`PaymobWebhookEngine`](crate::webhooks::PaymobWebhookEngine), and resource token builders.
+/// `PaymobWebhookEngine`, and resource token builders.
 ///
 /// # Errors
 ///
@@ -1271,5 +1278,17 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn core_05_double_dollar_escapes_literal_secret() {
+        assert_eq!(
+            parse_env_secret_reference("secret_key", "$$literal_dollar_secret").unwrap(),
+            None
+        );
+        let resolved =
+            resolve_secret_or_env_with("secret_key", "$$literal_dollar_secret", |_| None)
+                .expect("escaped literal secret");
+        assert_eq!(resolved.expose_secret(), "$literal_dollar_secret");
     }
 }

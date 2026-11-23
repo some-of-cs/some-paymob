@@ -31,6 +31,8 @@ jobs:
         run: cargo check
       - name: Check --no-default-features
         run: cargo check --no-default-features
+      - name: Check core + native-tls
+        run: cargo check --no-default-features --features core,native-tls
       - name: Check --all-features
         run: cargo check --all-features
       - name: Clippy
@@ -39,7 +41,11 @@ jobs:
         run: cargo test --all-features
       - name: Doc Tests
         run: cargo test --doc --all-features
-      - name: Rustdoc
+      - name: Rustdoc (--all-features)
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --all-features
+      - name: Rustdoc (--no-default-features)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --no-default-features

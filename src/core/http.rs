@@ -114,7 +114,7 @@ impl fmt::Debug for HttpError {
             Self::Transport { request_id, source } => f
                 .debug_struct("Transport")
                 .field("request_id", request_id)
-                .field("source", &scrub_url_query(&source.to_string()))
+                .field("source", &scrub_transport_source(source))
                 .finish(),
             Self::ResponseTooLarge {
                 request_id,
@@ -160,7 +160,22 @@ fn scrub_url_query(input: &str) -> String {
 }
 
 fn scrub_transport_source(source: &reqwest::Error) -> String {
-    scrub_url_query(&source.to_string())
+    let mut sanitized = scrub_url_query(&source.to_string());
+    if let Some(url) = source.url() {
+        let mut scrubbed = url.clone();
+        let _ = scrubbed.set_username("");
+        let _ = scrubbed.set_password(None);
+        scrubbed.set_query(None);
+        scrubbed.set_fragment(None);
+        let query_scrubbed_orig = scrub_url_query(url.as_str());
+        let replacement = if url.query().is_some() {
+            format!("{}?[REDACTED]", scrubbed.as_str())
+        } else {
+            scrubbed.as_str().to_owned()
+        };
+        sanitized = sanitized.replace(&query_scrubbed_orig, &replacement);
+    }
+    sanitized
 }
 
 /// Retry and exponential backoff configuration for [`HttpClient`].
@@ -602,7 +617,7 @@ impl HttpClient {
             .await
             .map_err(|err| self.classify_body_error(err, request_id, attempt, idempotent))?;
 
-        if is_retryable_status(status) {
+        if should_retry_status(status, idempotent) {
             return Err(self.build_retryable_status_error(RetryableStatusContext {
                 status,
                 headers: &headers,
@@ -646,13 +661,16 @@ impl HttpClient {
 
     fn retryable_outcome(&self, spec: RetryableOutcomeSpec<'_>) -> AttemptOutcome {
         let delay = compute_backoff_delay(&self.config.retry, spec.attempt, spec.retry_after);
-        tracing::warn!(
-            request_id = %spec.request_id,
-            attempt = spec.attempt,
-            delay_ms = delay.as_millis() as u64,
-            reason = spec.reason,
-            "scheduling HTTP retry"
-        );
+        if spec.attempt < self.config.retry.max_retries {
+            let delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
+            tracing::warn!(
+                request_id = %spec.request_id,
+                attempt = spec.attempt,
+                delay_ms = delay_ms,
+                reason = spec.reason,
+                "scheduling HTTP retry"
+            );
+        }
         AttemptOutcome::Retryable {
             delay,
             last_error: spec.last_error,
@@ -764,6 +782,10 @@ pub fn is_retryable_status(status: StatusCode) -> bool {
     )
 }
 
+fn should_retry_status(status: StatusCode, idempotent: bool) -> bool {
+    status == StatusCode::TOO_MANY_REQUESTS || (idempotent && is_retryable_status(status))
+}
+
 /// Parses an integer-seconds `Retry-After` header into a [`Duration`].
 ///
 /// Returns `None` if the header is missing, non-UTF-8, negative, an HTTP-date,
@@ -798,8 +820,8 @@ pub fn compute_backoff_delay(
         return server_delay.min(policy.max_delay);
     }
 
-    let base_ms = policy.base_delay.as_millis() as u64;
-    let max_ms = policy.max_delay.as_millis() as u64;
+    let base_ms = u64::try_from(policy.base_delay.as_millis()).unwrap_or(u64::MAX);
+    let max_ms = u64::try_from(policy.max_delay.as_millis()).unwrap_or(u64::MAX);
     let multiplier = 1_u64.checked_shl(attempt.min(30)).unwrap_or(u64::MAX);
     let cap_ms = base_ms.saturating_mul(multiplier).min(max_ms);
 
@@ -1376,5 +1398,21 @@ mod tests {
             .get(reqwest::header::LOCATION)
             .and_then(|v| v.to_str().ok());
         assert_eq!(location, Some(redirect_target.as_str()));
+    }
+
+    #[tokio::test]
+    async fn core_02_non_idempotent_post_does_not_retry_503() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/charge"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("upstream unavailable"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let resp = execute_on_server(&server, fast_config(), Method::POST, "/charge")
+            .await
+            .expect("non-idempotent POST 503 returns response without retrying");
+        assert_eq!(resp.status, StatusCode::SERVICE_UNAVAILABLE);
     }
 }

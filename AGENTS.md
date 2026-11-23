@@ -20,12 +20,12 @@ Rust microkernel SDK and constant-time HMAC-SHA512 webhook engine for Paymob (Eg
 | `rustls-tls` / `native-tls` | TLS backend for `reqwest` | Pick one when `default-features = false` |
 
 ## 4 Authentication Regimes
-| Regime | Mechanism | Env Vars | Primary Endpoints |
+| Regime | Mechanism | Configuration / Env Vars | Primary Endpoints |
 | :--- | :--- | :--- | :--- |
-| 1. Secret Key | `Authorization: Token <secret_key>` | `PAYMOB_SECRET_KEY`, `PAYMOB_PUBLIC_KEY` | `/v1/intention/`, `/v1/payment-links/`, Refunds/Voids/Captures, Saved Cards, Subscriptions |
-| 2. Accept JWT | `POST /api/auth/tokens` (60m cached) | `PAYMOB_API_KEY` | Inquiries (`/api/ecommerce/orders/transaction_inquiry`), Legacy v2, some Manage calls |
-| 3. Payouts OAuth2 | `POST /api/secure/o/token/` (Basic + password/refresh) | `PAYMOB_PAYOUTS_CLIENT_ID`, `PAYMOB_PAYOUTS_CLIENT_SECRET`, `PAYMOB_PAYOUTS_USERNAME`, `PAYMOB_PAYOUTS_PASSWORD` | `/api/secure/disburse/`, Bulk Payouts, Budget/Topups |
-| 4. Partner | Bearer or API Key + `Merchant-ID` | `PAYMOB_PARTNER_BEARER_TOKEN` / `PAYMOB_PARTNER_API_KEY` | Partner Onboarding (`/api/partner/...`) + `client.with_merchant("id")` |
+| 1. Secret Key | `Authorization: Token <secret_key>` | Auto-loaded by `ClientConfig::from_env()`: `PAYMOB_SECRET_KEY`, `PAYMOB_PUBLIC_KEY` | `/v1/intention/`, `/v1/payment-links/`, Refunds/Voids/Captures, Saved Cards, Subscriptions |
+| 2. Accept JWT | `POST /api/auth/tokens` (60m cached) | Auto-loaded by `ClientConfig::from_env()`: `PAYMOB_API_KEY` | Inquiries (`/api/ecommerce/orders/transaction_inquiry`), Legacy v2, some Manage calls |
+| 3. Payouts OAuth2 | `POST /api/secure/o/token/` (Basic + password/refresh) | **Not** auto-loaded by `from_env()`; supply via `PayoutsCredentials` (supports `$VAR` resolution, e.g. `$PAYMOB_PAYOUTS_*`) | `/api/secure/disburse/`, Bulk Payouts, Budget/Topups |
+| 4. Partner | Bearer or API Key + `Merchant-ID` | **Not** auto-loaded by `from_env()`; supply via `PartnerCredentials` (supports `$VAR` resolution, e.g. `$PAYMOB_PARTNER_*`) | Partner Onboarding (`/api/partner/...`) + `client.with_merchant(42)` |
 
 ## Minimal Copy-Paste Recipes
 
@@ -33,7 +33,7 @@ Rust microkernel SDK and constant-time HMAC-SHA512 webhook engine for Paymob (Eg
 use some_paymob::prelude::*;
 
 // 1. Client init (auto-infers region from key prefix if PAYMOB_REGION is omitted)
-let client = PaymobClient::from_env()?;
+let client = PaymobClient::new(ClientConfig::from_env()?)?;
 // Or explicit builder:
 let cfg = ClientConfig::builder()
     .region(PaymobRegion::Egypt)
@@ -44,26 +44,33 @@ let cfg = ClientConfig::builder()
 let client = PaymobClient::new(cfg)?;
 
 // 2. Intention + Unified Checkout URL
-let params = IntentionParams::builder()
+let params = CreateIntentionParams::builder()
     .amount(MinorUnitAmount::new(10_000)) // 100.00 EGP
     .currency(Currency::EGP)
-    .payment_method(4_097_558)
-    .billing_data(BillingData::minimal("Jane", "Doe", "jane@example.com", "+201000000000"))
+    .payment_methods(vec![PaymentMethodInput::Id(4_097_558)])
+    .billing_data(
+        BillingData::builder()
+            .phone_number("+201000000000")
+            .first_name("Jane")
+            .last_name("Doe")
+            .email("jane@example.com")
+            .build()?,
+    )
     .build()?;
 let intention = client.intentions().create(params).await?;
 let checkout_url = client.checkout().unified_url(&intention.client_secret)?;
 
 // 3. Refund / Void / Capture & Inquiries
-client.manage().refund(RefundParams::new(tx_id, MinorUnitAmount::new(5_000))).await?;
+client.manage().refund(RefundParams::new(tx_id, 5_000)).await?;
 client.manage().void(VoidParams::new(tx_id)).await?;
-client.manage().capture(CaptureParams::new(tx_id, MinorUnitAmount::new(10_000))).await?;
+client.manage().capture(CaptureParams::new(tx_id, 10_000)).await?;
 let tx = client.inquiries().by_transaction_id(tx_id).await?;
 
 // 4. Saved Cards (CIT/MIT), Subscriptions, Payouts, Partner, Unified Adapter
-client.saved_cards().pay_with_token(PayWithTokenParams::new(payment_key, card_token)).await?;
-client.subscriptions().plans().list(PageQuery::first()).await?;
+client.saved_cards().pay_with_token_mit(&MitPayParams::new(payment_key, card_token)?).await?;
+client.subscriptions().plans().list(Some(1)).await?;
 client.payouts().cashin().vodafone(MobileWalletCashinParams::new("01012345678", 5_000)).await?;
-let scoped = client.with_merchant("merchant_42")?;
+let scoped = client.with_merchant(42)?;
 let session = client.create_payment_session(&unified_req).await?; // `some-payments-adapter`
 ```
 
@@ -72,7 +79,7 @@ let session = client.create_payment_session(&unified_req).await?; // `some-payme
 use some_paymob::webhooks::{InMemoryWebhookDeduplicator, PaymobWebhookEngine, WebhookIdempotencyStore};
 
 let engine = PaymobWebhookEngine::new("$PAYMOB_HMAC_SECRET")?
-    .with_payouts_secret("$PAYMOB_PAYOUTS_HMAC_SECRET")?; // required (fail-closed) for Protocol E
+    .with_payouts_hmac_secret("$PAYMOB_PAYOUTS_HMAC_SECRET")?; // required (fail-closed) for Protocol E
 let dedup = InMemoryWebhookDeduplicator::new();
 
 // Protocols A, C, D, E (POST): auto-dispatch & constant-time verify

@@ -6,6 +6,8 @@
 //! under Regime 4 [`PartnerApiKey`](crate::core::auth::strategy::AuthStrategy::PartnerApiKey)
 //! authentication.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -34,7 +36,7 @@ const SUBMIT_STEP_PATH: &str = "/api/onboarding/flow/step";
 /// assert_eq!(resp.completed, Some(true));
 /// # Ok::<(), serde_json::Error>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubmitOnboardingStepResponse {
     /// Sub-merchant Paymob MID, if echoed by the API.
     #[serde(default, alias = "id", alias = "merchant_id")]
@@ -51,6 +53,18 @@ pub struct SubmitOnboardingStepResponse {
     /// Additional response fields returned by Paymob.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl fmt::Debug for SubmitOnboardingStepResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SubmitOnboardingStepResponse")
+            .field("paymob_mid", &self.paymob_mid)
+            .field("step_id", &self.step_id)
+            .field("status", &self.status)
+            .field("completed", &self.completed)
+            .field("extra_keys", &self.extra.len())
+            .finish()
+    }
 }
 
 impl PartnerFlowService {

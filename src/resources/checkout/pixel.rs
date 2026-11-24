@@ -405,10 +405,9 @@ impl PixelConfigBuilder {
     /// is empty or uses an `sk_*` prefix, `payment_methods` is empty, or Apple Pay
     /// / Google Pay settings contain empty identifiers.
     pub fn build(self) -> Result<PixelConfig, PaymobError> {
-        let client_secret = resolve_if_env_secret("client_secret", self.client_secret)?;
         let config = PixelConfig {
             public_key: self.public_key,
-            client_secret,
+            client_secret: self.client_secret,
             payment_methods: self.payment_methods,
             show_save_card: self.show_save_card,
             force_save_card: self.force_save_card,
@@ -421,16 +420,6 @@ impl PixelConfigBuilder {
     }
 }
 
-fn resolve_if_env_secret(
-    field: &'static str,
-    secret: SecretString,
-) -> Result<SecretString, PaymobError> {
-    if secret.expose_secret().trim().starts_with('$') {
-        return crate::core::credentials::resolve_secret_or_env(field, secret.expose_secret());
-    }
-    Ok(secret)
-}
-
 fn validate_pixel_config(config: &PixelConfig) -> Result<(), PaymobError> {
     validate_pixel_credentials(&config.public_key, config.client_secret.expose_secret())?;
     validate_pixel_methods(&config.payment_methods)?;
@@ -438,17 +427,12 @@ fn validate_pixel_config(config: &PixelConfig) -> Result<(), PaymobError> {
 }
 
 fn validate_pixel_credentials(public_key: &str, client_secret: &str) -> Result<(), PaymobError> {
-    validate_key_not_secret("public_key", public_key)?;
-    validate_key_not_secret("client_secret", client_secret)
-}
-
-fn validate_key_not_secret(field: &'static str, value: &str) -> Result<(), PaymobError> {
-    validate_non_empty(field, value)?;
-    let lower = value.trim().to_ascii_lowercase();
-    if super::unified::is_secret_key_like(&lower) {
+    super::unified::validate_public_key_str(public_key, "PixelConfig")?;
+    let trimmed = super::unified::validate_non_empty_no_control("client_secret", client_secret)?;
+    if super::unified::is_secret_key_like(&trimmed.to_ascii_lowercase()) {
         return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("secret key (`sk_*`) cannot be used as {field}"),
+            field: "client_secret",
+            reason: "secret key (`sk_*`) cannot be used as client_secret".to_owned(),
         });
     }
     Ok(())
@@ -682,5 +666,28 @@ mod tests {
             .build()
             .expect("valid PixelConfig");
         assert_eq!(pixel.public_key, "egy_pk_test_FACADE");
+    }
+
+    #[test]
+    fn res1_01_and_05_pixel_config_literal_secret_and_pk_validation() {
+        let pk = PublicKey::new("egy_pk_test_ABC").expect("valid pk");
+        let cfg = PixelConfig::builder(&pk, SecretString::from("$DATABASE_URL".to_owned()))
+            .add_payment_method(PixelPaymentMethod::Card)
+            .build()
+            .expect("literal $-prefixed token must not attempt env expansion");
+        assert_eq!(cfg.client_secret.expose_secret(), "$DATABASE_URL");
+
+        let bad_prefix = r#"{"public_key":"invalid_key_123","client_secret":"csk_1","payment_methods":["card"],"show_save_card":false,"force_save_card":false}"#;
+        assert!(serde_json::from_str::<PixelConfig>(bad_prefix).is_err());
+
+        let ctrl_secret = PixelConfig::builder(&pk, SecretString::from("csk_1\nbad".to_owned()))
+            .add_payment_method(PixelPaymentMethod::Card)
+            .build();
+        assert!(ctrl_secret.is_err());
+
+        let trailing_nl = PixelConfig::builder(&pk, SecretString::from("csk_1\n".to_owned()))
+            .add_payment_method(PixelPaymentMethod::Card)
+            .build();
+        assert!(trailing_nl.is_err());
     }
 }

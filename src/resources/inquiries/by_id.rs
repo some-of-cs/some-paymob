@@ -10,16 +10,43 @@ use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::core::error::PaymobError;
-use crate::core::types::validate_non_zero_u64;
+use crate::core::types::{
+    deserialize_opt_u64_flexible, deserialize_u64_flexible, validate_non_zero_u64,
+};
 use crate::resources::inquiries::{InquiriesService, execute_inquiry_bearer_get};
 
-/// Summary of an order nested inside a [`Transaction`] response.
+/// Order reference nested inside a [`Transaction`] response.
+///
+/// Paymob endpoints may return `"order"` either as a bare numeric ID (`212245716`)
+/// or as an expanded JSON object (`{"id": 212245716, ...}`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TransactionOrder {
+    /// Bare numeric order identifier.
+    Id(#[serde(deserialize_with = "deserialize_u64_flexible")] u64),
+    /// Expanded order summary object.
+    Details(TransactionOrderDetails),
+}
+
+impl TransactionOrder {
+    /// Returns the numeric Paymob order identifier regardless of wire representation.
+    #[must_use]
+    pub const fn id(&self) -> u64 {
+        match self {
+            Self::Id(id) => *id,
+            Self::Details(details) => details.id,
+        }
+    }
+}
+
+/// Expanded summary of an order nested inside [`TransactionOrder::Details`].
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TransactionOrder {
+pub struct TransactionOrderDetails {
     /// Paymob order identifier.
+    #[serde(deserialize_with = "deserialize_u64_flexible")]
     pub id: u64,
     /// Order amount in integer minor units (for example, piasters/halalas).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_u64_flexible")]
     pub amount_cents: u64,
     /// ISO-4217 currency code.
     #[serde(default)]
@@ -32,9 +59,9 @@ pub struct TransactionOrder {
     pub payment_status: Option<String>,
 }
 
-impl fmt::Debug for TransactionOrder {
+impl fmt::Debug for TransactionOrderDetails {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TransactionOrder")
+        f.debug_struct("TransactionOrderDetails")
             .field("id", &self.id)
             .field("amount_cents", &self.amount_cents)
             .field("currency", &self.currency)
@@ -81,11 +108,13 @@ impl fmt::Debug for TransactionSourceData {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Transaction {
     /// Unique Paymob transaction identifier.
+    #[serde(deserialize_with = "deserialize_u64_flexible")]
     pub id: u64,
     /// Whether the transaction is still pending settlement/completion.
     #[serde(default)]
     pub pending: bool,
     /// Transaction amount in integer minor units.
+    #[serde(default, deserialize_with = "deserialize_u64_flexible")]
     pub amount_cents: u64,
     /// Whether the transaction succeeded.
     #[serde(default)]
@@ -109,15 +138,15 @@ pub struct Transaction {
     #[serde(default)]
     pub is_3d_secure: bool,
     /// Paymob integration ID used for this transaction.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_u64_flexible")]
     pub integration_id: u64,
     /// Paymob merchant profile ID.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_u64_flexible")]
     pub profile_id: Option<u64>,
     /// Whether this transaction references a parent transaction.
     #[serde(default)]
     pub has_parent_transaction: bool,
-    /// Nested order summary, when present.
+    /// Nested order reference (numeric ID or expanded object), when present.
     #[serde(default)]
     pub order: Option<TransactionOrder>,
     /// ISO-8601 creation timestamp.
@@ -139,23 +168,34 @@ pub struct Transaction {
     #[serde(default)]
     pub error_occured: bool,
     /// Total refunded amount in integer minor units.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_u64_flexible")]
     pub refunded_amount_cents: u64,
     /// Total captured amount in integer minor units.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_u64_flexible")]
     pub captured_amount: u64,
     /// Paymob owner identifier.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_u64_flexible")]
     pub owner: Option<u64>,
     /// Parent transaction ID for captures, voids, or refunds.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_u64_flexible")]
     pub parent_transaction: Option<u64>,
     /// Merchant commission in integer minor units, if reported.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_u64_flexible")]
     pub merchant_commission: Option<u64>,
     /// Accept processing fees in integer minor units, if reported.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_u64_flexible")]
     pub accept_fees: Option<u64>,
+}
+
+impl Transaction {
+    /// Returns the numeric order identifier if [`Transaction::order`] is present.
+    #[must_use]
+    pub const fn order_id(&self) -> Option<u64> {
+        match &self.order {
+            Some(order) => Some(order.id()),
+            None => None,
+        }
+    }
 }
 
 impl fmt::Debug for Transaction {
@@ -308,7 +348,7 @@ mod tests {
         assert_eq!(tx.id, 192_036_465);
         assert_eq!(tx.amount_cents, 10_000);
         assert!(tx.success);
-        assert_eq!(tx.order.as_ref().map(|o| o.id), Some(212_245_716));
+        assert_eq!(tx.order_id(), Some(212_245_716));
         let dbg = format!("{tx:?}");
         assert!(dbg.contains("[REDACTED]"));
         assert!(!dbg.contains("411111xxxxxx1111"));
@@ -391,5 +431,24 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn res1_05_transaction_deserializes_string_u64_and_bare_order_id() {
+        let payload = serde_json::json!({
+            "id": "192036465",
+            "amount_cents": "50000",
+            "integration_id": "445566",
+            "order": 212245716,
+            "parent_transaction": "192036400",
+            "refunded_amount_cents": "1000"
+        });
+        let tx: Transaction = serde_json::from_value(payload).expect("valid flexible Transaction");
+        assert_eq!(tx.id, 192_036_465);
+        assert_eq!(tx.amount_cents, 50_000);
+        assert_eq!(tx.integration_id, 445_566);
+        assert_eq!(tx.order_id(), Some(212_245_716));
+        assert_eq!(tx.parent_transaction, Some(192_036_400));
+        assert_eq!(tx.refunded_amount_cents, 1_000);
     }
 }

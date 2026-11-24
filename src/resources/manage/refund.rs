@@ -8,13 +8,12 @@
 //! and structured mapping of over-refund HTTP 400 responses into
 //! [`PaymobError::RefundExceedsPermissibleAmount`].
 
-use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 
 use crate::core::error::PaymobError;
-use crate::core::http::{HttpRequest, HttpResponse};
+use crate::core::http::HttpResponse;
+use crate::resources::manage::ManageService;
 use crate::resources::manage::models::Transaction;
-use crate::resources::manage::{ManageService, execute_manage_request, map_http_error};
 
 const REFUND_PATH: &str = "/api/acceptance/void_refund/refund";
 const PERMISSIBLE_REFUND_SNIPPET: &str = "maximum refund amount permissible";
@@ -127,8 +126,13 @@ impl<'a> ManageService<'a> {
     /// ```
     pub async fn refund(&self, params: RefundParams) -> Result<Transaction, PaymobError> {
         params.validate()?;
-        let request = self.build_refund_request(&params).await?;
-        let response = execute_manage_request(self.client(), &request).await?;
+        let response = self
+            .execute_post_json(
+                REFUND_PATH,
+                &params,
+                "secret_key is required for Regime 1 refund requests",
+            )
+            .await?;
 
         if !response.status.is_success() {
             return Err(parse_refund_error(&response));
@@ -136,25 +140,7 @@ impl<'a> ManageService<'a> {
 
         response
             .json::<Transaction>()
-            .map_err(|err| PaymobError::TransportError(err.to_string()))
-    }
-
-    async fn build_refund_request(
-        &self,
-        params: &RefundParams,
-    ) -> Result<HttpRequest, PaymobError> {
-        let auth_header = self
-            .resolve_auth_header("secret_key is required for Regime 1 refund requests")
-            .await?;
-        let url = self.client().accept_url(REFUND_PATH)?;
-        HttpRequest::post(url.as_str())
-            .map_err(map_http_error)?
-            .with_header(AUTHORIZATION, auth_header)
-            .with_json(params)
-            .map_err(|err| PaymobError::ValidationError {
-                field: "params",
-                reason: err.to_string(),
-            })
+            .map_err(|err| PaymobError::TransportError(format!("invalid JSON response: {err}")))
     }
 }
 
@@ -424,5 +410,60 @@ mod tests {
             .await
             .expect_err("malformed json must fail");
         assert!(matches!(err, PaymobError::TransportError(_)));
+    }
+
+    #[tokio::test]
+    async fn res1_04_legacy_bearer_evicts_stale_jwt_and_retries_on_401() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/auth/tokens"))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_json(serde_json::json!({ "token": "fresh_jwt" })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path(REFUND_PATH))
+            .and(header("authorization", "Bearer stale_jwt"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .set_body_json(serde_json::json!({ "detail": "incorrect credentials" })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path(REFUND_PATH))
+            .and(header("authorization", "Bearer fresh_jwt"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 99001,
+                "amount_cents": 5000,
+                "success": true,
+                "is_refund": true
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client_legacy_bearer(&server.uri());
+        client
+            .auth()
+            .accept_cache()
+            .store(crate::core::auth::CachedToken::with_default_ttl(
+                "stale_jwt",
+                None,
+            ));
+
+        let tx = client
+            .manage()
+            .refund(RefundParams::new(192_036_465, 5_000))
+            .await
+            .expect("stale JWT must be evicted and retried with fresh JWT");
+        assert_eq!(tx.id, 99001);
+        assert!(tx.is_refund);
     }
 }

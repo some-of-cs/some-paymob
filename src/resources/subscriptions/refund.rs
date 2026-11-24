@@ -34,8 +34,14 @@ pub struct SubscriptionLastTransaction {
     /// Whether the deduction transaction has already been refunded.
     #[serde(default)]
     pub is_refunded: bool,
+    /// Whether the deduction transaction has been voided.
+    #[serde(default)]
+    pub is_voided: bool,
     /// Charged transaction amount in integer minor units (for example, piasters/halalas).
     pub amount_cents: u64,
+    /// Cumulative amount already refunded in integer minor units, if reported.
+    #[serde(default)]
+    pub refunded_amount_cents: Option<u64>,
     /// Originating Paymob API source (for example, `"SUBSCRIPTION"`).
     #[serde(default)]
     pub api_source: Option<String>,
@@ -106,7 +112,9 @@ pub struct SubscriptionRefundResponse {
 ///     success: true,
 ///     pending: false,
 ///     is_refunded: false,
+///     is_voided: false,
 ///     amount_cents: 50_000,
+///     refunded_amount_cents: None,
 ///     api_source: Some(String::from("SUBSCRIPTION")),
 ///     currency: Some(String::from("EGP")),
 ///     created_at: None,
@@ -127,7 +135,10 @@ pub fn prepare_refund_payload(
     amount_cents: Option<u64>,
 ) -> Result<SubscriptionRefundRequest, PaymobError> {
     validate_refundable_transaction(tx)?;
-    let resolved_amount = resolve_refund_amount(tx.amount_cents, amount_cents)?;
+    let remaining_cents = tx
+        .amount_cents
+        .saturating_sub(tx.refunded_amount_cents.unwrap_or(0));
+    let resolved_amount = resolve_refund_amount(remaining_cents, amount_cents)?;
     Ok(SubscriptionRefundRequest {
         transaction_id: tx.id,
         amount_cents: resolved_amount,
@@ -149,10 +160,12 @@ fn validate_refundable_transaction(tx: &SubscriptionLastTransaction) -> Result<(
             ),
         });
     }
-    if tx.is_refunded {
+    if tx.is_refunded || tx.is_voided {
         return Err(PaymobError::ValidationError {
             field: "is_refunded",
-            reason: String::from("latest subscription transaction has already been refunded"),
+            reason: String::from(
+                "latest subscription transaction has already been refunded or voided",
+            ),
         });
     }
     Ok(())
@@ -250,6 +263,12 @@ async fn execute_refund_for_client(
     amount_cents: Option<u64>,
 ) -> Result<SubscriptionRefundResponse, PaymobError> {
     super::validate_positive_id("sub_id", sub_id)?;
+    if amount_cents == Some(0) {
+        return Err(PaymobError::ValidationError {
+            field: "amount_cents",
+            reason: String::from("refund amount must be greater than zero minor units"),
+        });
+    }
     let last_tx = fetch_last_transaction(client, sub_id).await?;
     let payload = prepare_refund_payload(&last_tx, amount_cents)?;
     dispatch_refund(client, &payload).await
@@ -497,7 +516,7 @@ mod tests {
                 "is_refunded": false,
                 "amount_cents": 50_000
             })))
-            .expect(2)
+            .expect(1)
             .mount(&server)
             .await;
 
@@ -551,7 +570,9 @@ mod tests {
             success: false,
             pending: false,
             is_refunded: false,
+            is_voided: false,
             amount_cents: 10_000,
+            refunded_amount_cents: None,
             api_source: None,
             currency: None,
             created_at: None,
@@ -569,7 +590,9 @@ mod tests {
             success: true,
             pending: true,
             is_refunded: false,
+            is_voided: false,
             amount_cents: 10_000,
+            refunded_amount_cents: None,
             api_source: None,
             currency: None,
             created_at: None,
@@ -581,5 +604,41 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn res2_07_rejects_voided_and_accounts_for_partial_refunded_balance() {
+        let voided = SubscriptionLastTransaction {
+            id: 103,
+            success: true,
+            pending: false,
+            is_refunded: false,
+            is_voided: true,
+            amount_cents: 10_000,
+            refunded_amount_cents: None,
+            api_source: None,
+            currency: None,
+            created_at: None,
+        };
+        assert!(prepare_refund_payload(&voided, None).is_err());
+
+        let partially_refunded = SubscriptionLastTransaction {
+            id: 104,
+            success: true,
+            pending: false,
+            is_refunded: false,
+            is_voided: false,
+            amount_cents: 10_000,
+            refunded_amount_cents: Some(7_000),
+            api_source: None,
+            currency: None,
+            created_at: None,
+        };
+        assert!(matches!(
+            prepare_refund_payload(&partially_refunded, Some(4_000)),
+            Err(PaymobError::RefundExceedsPermissibleAmount { .. })
+        ));
+        let full_rem = prepare_refund_payload(&partially_refunded, None).expect("remaining 3000");
+        assert_eq!(full_rem.amount_cents, 3_000);
     }
 }

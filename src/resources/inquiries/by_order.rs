@@ -70,7 +70,13 @@ impl TransactionInquiryParams {
     /// Returns [`PaymobError::ValidationError`] if both selectors are absent,
     /// `order_id` is `Some(0)`, or `merchant_order_id` is empty/whitespace.
     pub fn validate(&self) -> Result<(), PaymobError> {
-        let valid_order = self.order_id.is_some_and(|id| id > 0);
+        if self.order_id == Some(0) {
+            return Err(PaymobError::ValidationError {
+                field: "order_id",
+                reason: "order_id must be greater than zero when provided".to_owned(),
+            });
+        }
+        let valid_order = self.order_id.is_some();
         let valid_ref = self
             .merchant_order_id
             .as_deref()
@@ -391,5 +397,14 @@ mod tests {
             .await
             .expect("merchant_order_id inquiry should succeed");
         assert_eq!(tx.id, 192_036_999);
+    }
+
+    #[test]
+    fn res1_05_rejects_zero_order_id_even_with_merchant_order_id() {
+        let params = TransactionInquiryParams {
+            order_id: Some(0),
+            merchant_order_id: Some("ref-123".to_owned()),
+        };
+        assert!(params.validate().is_err());
     }
 }

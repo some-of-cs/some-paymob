@@ -86,9 +86,21 @@ impl AddSecondaryCardParams {
     ///
     /// Returns [`PaymobError::ValidationError`] if `card_token` is empty or whitespace.
     pub fn new(card_token: impl Into<String>) -> Result<Self, PaymobError> {
-        let token = crate::core::credentials::resolve_secret_or_env("card_token", card_token)?;
+        let raw = card_token.into();
+        if raw.trim().is_empty() {
+            return Err(PaymobError::ValidationError {
+                field: "card_token",
+                reason: "card_token must not be empty".to_owned(),
+            });
+        }
+        if raw.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(PaymobError::ValidationError {
+                field: "card_token",
+                reason: "card_token must not contain whitespace or control characters".to_owned(),
+            });
+        }
         Ok(Self {
-            token,
+            token: SecretString::from(raw),
             integration_id: None,
             redirect_url: None,
         })
@@ -110,14 +122,8 @@ impl AddSecondaryCardParams {
         mut self,
         redirect_url: impl Into<String>,
     ) -> Result<Self, PaymobError> {
-        let trimmed = redirect_url.into().trim().to_owned();
-        if trimmed.is_empty() {
-            return Err(PaymobError::ValidationError {
-                field: "redirect_url",
-                reason: "redirect URL must not be empty".to_owned(),
-            });
-        }
-        self.redirect_url = Some(trimmed);
+        let validated = super::validate_webhook_url("redirect_url", &redirect_url.into())?;
+        self.redirect_url = Some(validated);
         Ok(self)
     }
 
@@ -743,10 +749,7 @@ mod tests {
         ));
         assert!(matches!(
             service.list(1264).await,
-            Err(PaymobError::ValidationError {
-                field: "api_key",
-                ..
-            })
+            Err(PaymobError::AuthenticationError(_))
         ));
     }
 }

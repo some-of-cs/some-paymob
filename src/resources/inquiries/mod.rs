@@ -6,7 +6,7 @@ pub mod by_order;
 pub mod card_tokens;
 pub mod order_inquiry;
 
-pub use by_id::{Transaction, TransactionOrder, TransactionSourceData};
+pub use by_id::{Transaction, TransactionOrder, TransactionOrderDetails, TransactionSourceData};
 pub use by_order::TransactionInquiryParams;
 pub use card_tokens::{CardTokenEnvelope, CardTokenObject};
 pub use order_inquiry::{OrderInquiryResponse, OrderShippingData, OrderTransactionAttempt};

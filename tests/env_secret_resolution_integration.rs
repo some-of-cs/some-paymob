@@ -200,7 +200,7 @@ fn env_secret_resolution_works_on_webhook_engine_and_rejects_missing_vars() {
 
 #[cfg(all(feature = "intentions", feature = "legacy-v2"))]
 #[test]
-fn env_secret_resolution_works_for_checkout_and_legacy_v2() {
+fn runtime_checkout_and_legacy_tokens_do_not_expand_env_vars() {
     use some_paymob::resources::checkout::{PixelConfig, PixelPaymentMethod};
 
     with_temp_env(
@@ -208,8 +208,8 @@ fn env_secret_resolution_works_for_checkout_and_legacy_v2() {
             ("TEST_SK", "egy_sk_test_111"),
             ("TEST_PK", "egy_pk_test_222"),
             ("TEST_API_KEY", "accept_api_key_333"),
-            ("TEST_CSK", "egy_csk_test_client_secret_444"),
-            ("TEST_PAY_TOK", "pay_tok_from_env_555"),
+            ("PAYMOB_HMAC_SECRET", "leaked_hmac_secret_value"),
+            ("DATABASE_URL", "postgres://user:pass@db/prod"),
         ],
         || {
             let cfg = ClientConfig::builder()
@@ -226,33 +226,33 @@ fn env_secret_resolution_works_for_checkout_and_legacy_v2() {
 
             let checkout_url = client
                 .checkout()
-                .unified_url(&SecretString::from("$TEST_CSK"))
-                .expect("unified_url with $TEST_CSK");
+                .unified_url(&SecretString::from("$PAYMOB_HMAC_SECRET"))
+                .expect("unified_url must treat $-prefixed token literally");
+            assert!(!checkout_url.as_str().contains("leaked_hmac_secret_value"));
             assert!(
                 checkout_url
-                    .as_str()
-                    .contains("clientSecret=egy_csk_test_client_secret_444")
+                    .query_pairs()
+                    .any(|(k, v)| k == "clientSecret" && v == "$PAYMOB_HMAC_SECRET")
             );
 
             let pk = PublicKey::new("$TEST_PK").unwrap();
-            let pixel = PixelConfig::builder(&pk, SecretString::from("${TEST_CSK}"))
+            let pixel = PixelConfig::builder(&pk, SecretString::from("$DATABASE_URL"))
                 .add_payment_method(PixelPaymentMethod::Card)
                 .build()
-                .expect("PixelConfig with ${TEST_CSK}");
-            assert_eq!(
-                pixel.client_secret.expose_secret(),
-                "egy_csk_test_client_secret_444"
-            );
+                .expect("PixelConfig must treat $-prefixed token literally");
+            assert_eq!(pixel.client_secret.expose_secret(), "$DATABASE_URL");
+            assert!(!pixel.client_secret.expose_secret().contains("postgres://"));
 
             let legacy_url = client
                 .legacy_v2()
                 .unwrap()
-                .iframe_url(812_345, &SecretString::from("$TEST_PAY_TOK"))
-                .expect("iframe_url with $TEST_PAY_TOK");
+                .iframe_url(812_345, &SecretString::from("$PAYMOB_HMAC_SECRET"))
+                .expect("iframe_url must treat $-prefixed token literally");
+            assert!(!legacy_url.as_str().contains("leaked_hmac_secret_value"));
             assert!(
                 legacy_url
-                    .as_str()
-                    .contains("payment_token=pay_tok_from_env_555")
+                    .query_pairs()
+                    .any(|(k, v)| k == "payment_token" && v == "$PAYMOB_HMAC_SECRET")
             );
         },
     );
@@ -260,7 +260,7 @@ fn env_secret_resolution_works_for_checkout_and_legacy_v2() {
 
 #[cfg(all(feature = "saved-cards", feature = "subscriptions"))]
 #[test]
-fn env_secret_resolution_works_for_saved_cards_and_subscriptions() {
+fn runtime_saved_cards_and_subscriptions_tokens_do_not_expand_env_vars() {
     use some_paymob::resources::saved_cards::cit_mit::{CitCardTokenConfig, MitChargeParams};
     use some_paymob::resources::saved_cards::service::{KioskPayParams, MitPayParams};
     use some_paymob::resources::saved_cards::sources::PaymentSource;
@@ -268,49 +268,62 @@ fn env_secret_resolution_works_for_saved_cards_and_subscriptions() {
 
     with_temp_env(
         &[
-            ("TEST_PAY_TOK", "pay_tok_from_env_555"),
-            ("TEST_SAVED_TOK", "saved_tok_from_env_666"),
+            ("PAYMOB_HMAC_SECRET", "leaked_hmac_secret_value"),
+            ("DATABASE_URL", "postgres://user:pass@db/prod"),
             ("TEST_CVN", "789"),
         ],
         || {
-            let cit = CitCardTokenConfig::from_single(SecretString::from("$TEST_SAVED_TOK"))
-                .expect("CitCardTokenConfig with $TEST_SAVED_TOK");
-            assert_eq!(cit.to_wire_tokens(), vec!["saved_tok_from_env_666"]);
+            let cit = CitCardTokenConfig::from_single(SecretString::from("$PAYMOB_HMAC_SECRET"))
+                .expect("CitCardTokenConfig must treat token literally");
+            assert_eq!(cit.to_wire_tokens(), vec!["$PAYMOB_HMAC_SECRET"]);
 
             let mit = MitChargeParams::with_moto_cvc(
-                SecretString::from("$TEST_PAY_TOK"),
-                SecretString::from("${TEST_SAVED_TOK}"),
-                SecretString::from("$TEST_CVN"),
+                SecretString::from("$PAYMOB_HMAC_SECRET"),
+                SecretString::from("$DATABASE_URL"),
+                SecretString::from("789"),
             )
-            .expect("MitChargeParams with $VAR");
-            assert_eq!(mit.payment_token().expose_secret(), "pay_tok_from_env_555");
-            assert_eq!(mit.saved_token().expose_secret(), "saved_tok_from_env_666");
+            .expect("MitChargeParams with literal tokens");
+            assert_eq!(mit.payment_token().expose_secret(), "$PAYMOB_HMAC_SECRET");
+            assert_eq!(mit.saved_token().expose_secret(), "$DATABASE_URL");
             assert_eq!(mit.cvn().unwrap().expose_secret(), "789");
 
-            let tok_pay = MitPayParams::new("$TEST_PAY_TOK", "${TEST_SAVED_TOK}")
+            assert!(
+                MitChargeParams::with_moto_cvc(
+                    SecretString::from("pay_tok_1"),
+                    SecretString::from("saved_tok_1"),
+                    SecretString::from("$TEST_CVN"),
+                )
+                .is_err(),
+                "CVN must reject $ENV references rather than expanding them"
+            );
+
+            let tok_pay = MitPayParams::new("$PAYMOB_HMAC_SECRET", "$DATABASE_URL")
                 .unwrap()
-                .with_cvn("$TEST_CVN")
+                .with_cvn("789")
                 .unwrap();
             assert_eq!(
                 tok_pay.payment_token().expose_secret(),
-                "pay_tok_from_env_555"
+                "$PAYMOB_HMAC_SECRET"
             );
-            assert_eq!(
-                tok_pay.saved_token().expose_secret(),
-                "saved_tok_from_env_666"
+            assert_eq!(tok_pay.saved_token().expose_secret(), "$DATABASE_URL");
+            assert!(
+                MitPayParams::new("pay_tok_1", "saved_tok_1")
+                    .unwrap()
+                    .with_cvn("$TEST_CVN")
+                    .is_err()
             );
-            assert_eq!(tok_pay.cvn().unwrap().expose_secret(), "789");
 
-            let kiosk_pay = KioskPayParams::new("$TEST_PAY_TOK").unwrap();
+            let kiosk_pay = KioskPayParams::new("$PAYMOB_HMAC_SECRET").unwrap();
             assert_eq!(
                 kiosk_pay.payment_token().expose_secret(),
-                "pay_tok_from_env_555"
+                "$PAYMOB_HMAC_SECRET"
             );
 
-            let src = PaymentSource::saved_token_with_cvn("$TEST_SAVED_TOK", "$TEST_CVN").unwrap();
+            let src = PaymentSource::saved_token("$PAYMOB_HMAC_SECRET").unwrap();
             assert_eq!(src.subtype(), "TOKEN");
+            assert!(PaymentSource::saved_token_with_cvn("tok_1", "$TEST_CVN").is_err());
 
-            let sec_card = AddSecondaryCardParams::new("$TEST_SAVED_TOK").unwrap();
+            let sec_card = AddSecondaryCardParams::new("$PAYMOB_HMAC_SECRET").unwrap();
             assert!(format!("{sec_card:?}").contains("[REDACTED]"));
         },
     );

@@ -95,10 +95,7 @@ impl PaymentSource {
     /// # Ok::<(), some_paymob::PaymobError>(())
     /// ```
     pub fn saved_token(identifier: impl Into<SecretString>) -> Result<Self, PaymobError> {
-        let raw = identifier.into();
-        let secret =
-            crate::core::credentials::resolve_secret_or_env("identifier", raw.expose_secret())?;
-        validate_token(secret.expose_secret())?;
+        let secret = super::validate_runtime_token("identifier", identifier.into())?;
         Ok(Self::SavedToken {
             identifier: secret,
             cvn: None,
@@ -123,17 +120,8 @@ impl PaymentSource {
         identifier: impl Into<SecretString>,
         cvn: impl Into<SecretString>,
     ) -> Result<Self, PaymobError> {
-        let raw_tok = identifier.into();
-        let raw_cvn = cvn.into();
-        let token_secret =
-            crate::core::credentials::resolve_secret_or_env("identifier", raw_tok.expose_secret())?;
-        let cvn_secret = if raw_cvn.expose_secret().trim().starts_with('$') {
-            crate::core::credentials::resolve_secret_or_env("cvn", raw_cvn.expose_secret())?
-        } else {
-            raw_cvn
-        };
-        validate_token(token_secret.expose_secret())?;
-        validate_cvn(cvn_secret.expose_secret())?;
+        let token_secret = super::validate_runtime_token("identifier", identifier.into())?;
+        let cvn_secret = super::validate_cvn_secret(cvn.into())?;
         Ok(Self::SavedToken {
             identifier: token_secret,
             cvn: Some(cvn_secret),
@@ -156,7 +144,7 @@ impl PaymentSource {
     /// ```
     pub fn mobile_wallet(identifier: impl Into<String>) -> Result<Self, PaymobError> {
         let phone = identifier.into();
-        validate_wallet_identifier(&phone)?;
+        super::validate_wallet_msisdn("identifier", &phone)?;
         Ok(Self::MobileWallet { identifier: phone })
     }
 
@@ -194,13 +182,15 @@ impl PaymentSource {
     pub fn validate(&self) -> Result<(), PaymobError> {
         match self {
             Self::SavedToken { identifier, cvn } => {
-                validate_token(identifier.expose_secret())?;
+                super::validate_token_str("identifier", identifier.expose_secret())?;
                 if let Some(code) = cvn {
-                    validate_cvn(code.expose_secret())?;
+                    super::validate_cvn_str(code.expose_secret())?;
                 }
                 Ok(())
             }
-            Self::MobileWallet { identifier } => validate_wallet_identifier(identifier),
+            Self::MobileWallet { identifier } => {
+                super::validate_wallet_msisdn("identifier", identifier)
+            }
             Self::KioskAggregator { identifier } => validate_kiosk_identifier(identifier),
         }
     }
@@ -229,40 +219,6 @@ impl fmt::Debug for PaymentSource {
                 .finish(),
         }
     }
-}
-
-fn validate_token(token: &str) -> Result<(), PaymobError> {
-    if token.trim().is_empty() {
-        return Err(PaymobError::ValidationError {
-            field: "identifier",
-            reason: "saved card token identifier must not be empty".to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_cvn(cvn: &str) -> Result<(), PaymobError> {
-    let valid_len = cvn.len() == 3 || cvn.len() == 4;
-    if !valid_len || !cvn.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(PaymobError::ValidationError {
-            field: "cvn",
-            reason: "CVN must be 3 or 4 ASCII digits".to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_wallet_identifier(identifier: &str) -> Result<(), PaymobError> {
-    let digits = identifier.strip_prefix('+').unwrap_or(identifier);
-    let valid_len = (7..=15).contains(&digits.len());
-    if !valid_len || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(PaymobError::ValidationError {
-            field: "identifier",
-            reason: "mobile wallet identifier must be 7 to 15 ASCII digits (optional leading '+')"
-                .to_owned(),
-        });
-    }
-    Ok(())
 }
 
 fn validate_kiosk_identifier(identifier: &str) -> Result<(), PaymobError> {

@@ -68,6 +68,7 @@ impl fmt::Debug for BulkDisbursementItem {
 impl BulkDisbursementItem {
     fn validate(&self) -> Result<(), PaymobError> {
         validate_positive_amount(self.amount)?;
+        self.validate_issuer_required_fields()?;
         if let Some(msisdn) = &self.msisdn {
             validate_msisdn(msisdn)?;
         }
@@ -76,6 +77,33 @@ impl BulkDisbursementItem {
         validate_optional_clean_field("client_reference_id", self.client_reference_id.as_deref())?;
         Ok(())
     }
+
+    fn validate_issuer_required_fields(&self) -> Result<(), PaymobError> {
+        match self.issuer {
+            DisburseIssuer::Vodafone
+            | DisburseIssuer::Etisalat
+            | DisburseIssuer::Orange
+            | DisburseIssuer::BankWallet => require_some("msisdn", self.msisdn.as_deref()),
+            DisburseIssuer::BankCard | DisburseIssuer::InstantBank => {
+                require_some("bank_code", self.bank_code.as_deref())?;
+                require_some("full_name", self.full_name.as_deref())
+            }
+            DisburseIssuer::EgyptianPost => {
+                require_some("msisdn", self.msisdn.as_deref())?;
+                require_some("full_name", self.full_name.as_deref())
+            }
+        }
+    }
+}
+
+fn require_some(field: &'static str, value: Option<&str>) -> Result<(), PaymobError> {
+    if value.is_none() {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} is required for this disbursement issuer"),
+        });
+    }
+    Ok(())
 }
 
 /// Request payload for `POST /disburse/api/v1/disburse/bulk_transaction/`.
@@ -227,5 +255,38 @@ mod tests {
             .expect("bulk disbursement should succeed");
         assert_eq!(resp.results.len(), 1);
         assert_eq!(resp.results[0].transaction_id, "tx_bulk_1");
+    }
+
+    #[test]
+    fn res2_10_bulk_enforces_issuer_required_fields() {
+        let missing_wallet_msisdn = BulkDisbursementItem {
+            issuer: DisburseIssuer::Vodafone,
+            amount: 100,
+            msisdn: None,
+            full_name: None,
+            bank_code: None,
+            client_reference_id: None,
+        };
+        assert!(missing_wallet_msisdn.validate().is_err());
+
+        let missing_bank_code = BulkDisbursementItem {
+            issuer: DisburseIssuer::BankCard,
+            amount: 100,
+            msisdn: None,
+            full_name: Some(String::from("Recipient Name")),
+            bank_code: None,
+            client_reference_id: None,
+        };
+        assert!(missing_bank_code.validate().is_err());
+
+        let missing_post_name = BulkDisbursementItem {
+            issuer: DisburseIssuer::EgyptianPost,
+            amount: 100,
+            msisdn: Some(String::from("01023456789")),
+            full_name: None,
+            bank_code: None,
+            client_reference_id: None,
+        };
+        assert!(missing_post_name.validate().is_err());
     }
 }

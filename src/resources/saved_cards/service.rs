@@ -73,7 +73,7 @@ impl MitPayParams {
     ///
     /// Returns [`PaymobError::ValidationError`] if `cvn` is empty or whitespace-only.
     pub fn with_cvn(mut self, cvn: impl Into<SecretString>) -> Result<Self, PaymobError> {
-        self.cvn = Some(validate_non_empty_secret("cvn", cvn.into())?);
+        self.cvn = Some(super::validate_cvn_secret(cvn.into())?);
         Ok(self)
     }
 
@@ -138,7 +138,8 @@ impl WalletPayParams {
         wallet_phone: impl Into<String>,
     ) -> Result<Self, PaymobError> {
         let payment_token = validate_non_empty_secret("payment_token", payment_token.into())?;
-        let wallet_phone = validate_non_empty_string("wallet_phone", wallet_phone.into())?;
+        let wallet_phone = wallet_phone.into();
+        super::validate_wallet_msisdn("wallet_phone", &wallet_phone)?;
         Ok(Self {
             payment_token,
             wallet_phone,
@@ -228,6 +229,14 @@ pub struct RawPayParams {
     payment_token: SecretString,
     source: Value,
 }
+
+impl Drop for RawPayParams {
+    fn drop(&mut self) {
+        super::zeroize_json_value(&mut self.source);
+    }
+}
+
+impl ZeroizeOnDrop for RawPayParams {}
 
 impl RawPayParams {
     /// Creates validated [`RawPayParams`] from a `payment_token` and JSON `source` object.
@@ -588,17 +597,7 @@ fn validate_non_empty_secret(
     field: &'static str,
     secret: SecretString,
 ) -> Result<SecretString, PaymobError> {
-    crate::core::credentials::resolve_secret_or_env(field, secret.expose_secret())
-}
-
-fn validate_non_empty_string(field: &'static str, value: String) -> Result<String, PaymobError> {
-    if value.trim().is_empty() {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must not be empty"),
-        });
-    }
-    Ok(value)
+    super::validate_runtime_token(field, secret)
 }
 
 fn validate_raw_source(source: &Value) -> Result<(), PaymobError> {

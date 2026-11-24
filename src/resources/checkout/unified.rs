@@ -149,8 +149,7 @@ impl<'a> CheckoutService<'a> {
             }
                 })?;
         let pk_value = validate_public_key(public_key)?;
-        let resolved_secret = resolve_client_secret_if_env(client_secret)?;
-        let secret_value = validate_client_secret(&resolved_secret)?;
+        let secret_value = validate_client_secret(client_secret)?;
 
         let mut url = Url::parse(&self.client.endpoints().checkout_base_url).map_err(|err| {
             PaymobError::ValidationError {
@@ -244,10 +243,16 @@ pub(super) fn has_valid_pk_prefix(lower: &str) -> bool {
     }
 }
 
-fn validate_non_empty_no_control<'a>(
+pub(super) fn validate_non_empty_no_control<'a>(
     field: &'static str,
     value: &'a str,
 ) -> Result<&'a str, PaymobError> {
+    if value.chars().any(char::is_control) {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
     let raw = value.trim();
     if raw.is_empty() {
         return Err(PaymobError::ValidationError {
@@ -255,22 +260,19 @@ fn validate_non_empty_no_control<'a>(
             reason: format!("{field} must not be empty"),
         });
     }
-    if raw.chars().any(|ch| ch.is_ascii_control()) {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: format!("{field} must not contain control characters"),
-        });
-    }
     Ok(raw)
 }
 
-fn validate_public_key(public_key: &PublicKey) -> Result<&str, PaymobError> {
-    let raw = validate_non_empty_no_control("public_key", public_key.expose_secret())?;
+pub(super) fn validate_public_key_str<'a>(
+    value: &'a str,
+    context: &str,
+) -> Result<&'a str, PaymobError> {
+    let raw = validate_non_empty_no_control("public_key", value)?;
     let lower = raw.to_ascii_lowercase();
     if is_secret_key_like(&lower) {
         return Err(PaymobError::ValidationError {
             field: "public_key",
-            reason: "secret key (`sk_*`) cannot be used in Unified Checkout URLs".to_owned(),
+            reason: format!("secret key (`sk_*`) cannot be used in {context}"),
         });
     }
     if !has_valid_pk_prefix(&lower) {
@@ -283,14 +285,8 @@ fn validate_public_key(public_key: &PublicKey) -> Result<&str, PaymobError> {
     Ok(raw)
 }
 
-fn resolve_client_secret_if_env(client_secret: &SecretString) -> Result<SecretString, PaymobError> {
-    if client_secret.expose_secret().trim().starts_with('$') {
-        return crate::core::credentials::resolve_secret_or_env(
-            "client_secret",
-            client_secret.expose_secret(),
-        );
-    }
-    Ok(client_secret.clone())
+fn validate_public_key(public_key: &PublicKey) -> Result<&str, PaymobError> {
+    validate_public_key_str(public_key.expose_secret(), "Unified Checkout URLs")
 }
 
 fn validate_client_secret(client_secret: &SecretString) -> Result<&str, PaymobError> {
@@ -467,5 +463,30 @@ mod tests {
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("egy_sk_test_supersecret"));
         assert!(!debug.contains("egy_pk_test_superpublic"));
+    }
+
+    #[test]
+    fn res1_01_unified_url_does_not_expand_env_vars() {
+        let cfg = ClientConfig::builder()
+            .region(PaymobRegion::Egypt)
+            .public_key(PublicKey::new("egy_pk_test_ENVTEST").expect("valid pk"))
+            .build()
+            .expect("valid config");
+        let client = PaymobClient::new(cfg).expect("valid client");
+        let literal_ref = SecretString::from("$PAYMOB_HMAC_SECRET".to_owned());
+        let url = client
+            .checkout()
+            .unified_url(&literal_ref)
+            .expect("literal $-prefixed token must not attempt env expansion");
+        let query_pairs: Vec<(String, String)> = url
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        assert!(
+            query_pairs
+                .iter()
+                .any(|(k, v)| k == "clientSecret" && v == "$PAYMOB_HMAC_SECRET"),
+            "client_secret must be treated literally without env expansion"
+        );
     }
 }

@@ -388,7 +388,7 @@ impl fmt::Debug for SubscriptionCard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubscriptionCard")
             .field("id", &self.id)
-            .field("card_data", &self.card_data)
+            .field("card_data", &self.card_data.as_ref().map(|_| "[REDACTED]"))
             .field("token", &"[REDACTED]")
             .field("created_at", &self.created_at)
             .field("is_primary", &self.is_primary)

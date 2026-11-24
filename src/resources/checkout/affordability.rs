@@ -327,19 +327,7 @@ fn validate_affordability_core(
     public_key: &str,
     amount: MinorUnitAmount,
 ) -> Result<(), PaymobError> {
-    let trimmed = public_key.trim();
-    if trimmed.is_empty() {
-        return Err(PaymobError::ValidationError {
-            field: "public_key",
-            reason: "public_key must not be empty".to_owned(),
-        });
-    }
-    if super::unified::is_secret_key_like(&trimmed.to_ascii_lowercase()) {
-        return Err(PaymobError::ValidationError {
-            field: "public_key",
-            reason: "secret key (`sk_*`) cannot be used in AffordabilityWidgetConfig".to_owned(),
-        });
-    }
+    super::unified::validate_public_key_str(public_key, "AffordabilityWidgetConfig")?;
     if amount.is_zero() {
         return Err(PaymobError::ValidationError {
             field: "amount",
@@ -552,5 +540,16 @@ mod tests {
             .build()
             .expect("valid CreateIntentionParams");
         assert_eq!(wired_params.pre_selected_plan(), Some(55));
+    }
+
+    #[test]
+    fn res1_05_affordability_rejects_bad_pk_prefix_and_control_chars() {
+        let bad_prefix =
+            r#"{"public_key":"invalid_key_123","amount_cents":10000,"currency":"EGP"}"#;
+        assert!(serde_json::from_str::<AffordabilityWidgetConfig>(bad_prefix).is_err());
+
+        let ctrl_pk = r#"{"public_key":"egy_pk_test_
+123","amount_cents":10000,"currency":"EGP"}"#;
+        assert!(serde_json::from_str::<AffordabilityWidgetConfig>(ctrl_pk).is_err());
     }
 }

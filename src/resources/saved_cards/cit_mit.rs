@@ -210,7 +210,7 @@ impl MitChargeParams {
     ) -> Result<Self, PaymobError> {
         let payment_token = resolve_and_validate_token(payment_token, "payment_token")?;
         let saved_token = resolve_and_validate_token(saved_token, "saved_token")?;
-        let cvn = resolve_if_env_token(cvn, "cvn")?;
+        let cvn = super::validate_cvn_secret(cvn)?;
         validate_use_cvc_with_moto(true, Some(&cvn))?;
         Ok(Self {
             payment_token,
@@ -226,8 +226,8 @@ impl MitChargeParams {
     ///
     /// Returns [`PaymobError::ValidationError`] if any token or CVN rule is violated.
     pub fn validate(&self) -> Result<(), PaymobError> {
-        validate_token(self.payment_token.expose_secret(), "payment_token")?;
-        validate_token(self.saved_token.expose_secret(), "saved_token")?;
+        super::validate_token_str("payment_token", self.payment_token.expose_secret())?;
+        super::validate_token_str("saved_token", self.saved_token.expose_secret())?;
         validate_use_cvc_with_moto(self.use_cvc_with_moto, self.cvn.as_ref())
     }
 
@@ -311,7 +311,7 @@ pub fn validate_use_cvc_with_moto(
     cvn: Option<&SecretString>,
 ) -> Result<(), PaymobError> {
     match (use_cvc_with_moto, cvn) {
-        (true, Some(code)) => validate_cvn_digits(code.expose_secret()),
+        (true, Some(code)) => super::validate_cvn_str(code.expose_secret()),
         (true, None) => Err(PaymobError::ValidationError {
             field: "cvn",
             reason: "cvn is required when use_cvc_with_moto is true".to_owned(),
@@ -324,50 +324,11 @@ pub fn validate_use_cvc_with_moto(
     }
 }
 
-fn resolve_if_env_token(
-    token: SecretString,
-    field: &'static str,
-) -> Result<SecretString, PaymobError> {
-    if token.expose_secret().trim().starts_with('$') {
-        return crate::core::credentials::resolve_secret_or_env(field, token.expose_secret());
-    }
-    Ok(token)
-}
-
 fn resolve_and_validate_token(
     token: SecretString,
     field: &'static str,
 ) -> Result<SecretString, PaymobError> {
-    let resolved = resolve_if_env_token(token, field)?;
-    validate_token(resolved.expose_secret(), field)?;
-    Ok(resolved)
-}
-
-fn validate_token(value: &str, field: &'static str) -> Result<(), PaymobError> {
-    if value.trim().is_empty() {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: "token must not be empty".to_owned(),
-        });
-    }
-    if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return Err(PaymobError::ValidationError {
-            field,
-            reason: "token must not contain whitespace or control characters".to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_cvn_digits(cvn: &str) -> Result<(), PaymobError> {
-    let len = cvn.len();
-    if !(3..=4).contains(&len) || !cvn.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(PaymobError::ValidationError {
-            field: "cvn",
-            reason: "cvn must be 3 or 4 ASCII digits".to_owned(),
-        });
-    }
-    Ok(())
+    super::validate_runtime_token(field, token)
 }
 
 #[cfg(test)]

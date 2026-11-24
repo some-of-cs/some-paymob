@@ -8,6 +8,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::core::error::PaymobError;
 
@@ -146,7 +147,11 @@ impl SplitDescription {
                 ));
             }
         }
-        if !expect_fixed && self.total_percentage_bps()? > MAX_BASIS_POINTS {
+        if expect_fixed {
+            self.total_fixed_cents()?;
+            return Ok(());
+        }
+        if self.total_percentage_bps()? > MAX_BASIS_POINTS {
             return Err(validation_err(
                 "percentage_bps",
                 "total percentage_bps across recipients cannot exceed 10_000",
@@ -192,8 +197,9 @@ impl SplitDescription {
 
 /// Single customer card portion in a multi-card [`SplitPaymentConfig`].
 ///
-/// Any attached `card_token` is redacted as `"[REDACTED]"` in [`fmt::Debug`].
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Any attached `card_token` is redacted as `"[REDACTED]"` in [`fmt::Debug`] and
+/// zeroized on drop via [`ZeroizeOnDrop`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct SplitCardPortion {
     /// Portion charged to this card in integer minor units.
     pub amount_cents: u64,
@@ -257,6 +263,12 @@ impl SplitCardPortion {
             return Err(validation_err(
                 "amount_cents",
                 "card portion amount_cents must be greater than zero",
+            ));
+        }
+        if self.integration_id == Some(0) {
+            return Err(validation_err(
+                "integration_id",
+                "integration_id must be greater than zero when provided",
             ));
         }
         if self
@@ -563,5 +575,17 @@ mod tests {
             cfg.validate_total(12_000),
             Err(PaymobError::ValidationError { field: "cards", .. })
         ));
+    }
+
+    #[test]
+    fn res1_05_split_fixed_overflow_and_zero_integration_id_rejected() {
+        let overflow = SplitDescription::new(vec![
+            SplitRecipientRule::fixed("seller_1", u64::MAX),
+            SplitRecipientRule::fixed("seller_2", 1),
+        ]);
+        assert!(overflow.is_err());
+
+        let zero_int = SplitCardPortion::new(10_000).with_integration_id(0);
+        assert!(zero_int.validate().is_err());
     }
 }

@@ -216,6 +216,25 @@ impl Drop for CreateIntentionParams {
 }
 
 impl CreateIntentionParams {
+    /// Re-validates all required and optional intention creation invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if any required or optional field
+    /// violates Paymob's intention constraints.
+    pub fn validate(&self) -> Result<(), PaymobError> {
+        validate_required_amount(Some(self.amount))?;
+        validate_currency_value(&self.currency)?;
+        validate_methods_slice(&self.payment_methods)?;
+        validate_common_optional_fields(
+            self.items.as_deref(),
+            self.notification_url.as_deref(),
+            self.redirection_url.as_deref(),
+            self.expiration,
+            self.pre_selected_plan,
+            self.card_tokens.as_deref(),
+        )
+    }
     /// Creates a new [`CreateIntentionParamsBuilder`].
     #[must_use]
     pub fn builder() -> CreateIntentionParamsBuilder {
@@ -605,6 +624,16 @@ impl Drop for UpdateIntentionParams {
 }
 
 impl UpdateIntentionParams {
+    /// Re-validates all populated intention update fields and ensures at least
+    /// one field is present.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PaymobError::ValidationError`] if no fields are set or any
+    /// populated field fails validation.
+    pub fn validate(&self) -> Result<(), PaymobError> {
+        validate_update_params(self)
+    }
     /// Creates a new [`UpdateIntentionParamsBuilder`].
     #[must_use]
     pub fn builder() -> UpdateIntentionParamsBuilder {
@@ -928,14 +957,26 @@ fn validate_optional_urls(
 }
 
 fn validate_http_url(raw: &str, field: &'static str) -> Result<(), PaymobError> {
-    let parsed = Url::parse(raw).map_err(|err| PaymobError::ValidationError {
+    if raw.chars().any(char::is_control) {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
+    let parsed = Url::parse(raw.trim()).map_err(|err| PaymobError::ValidationError {
         field,
         reason: format!("invalid URL: {err}"),
     })?;
-    if !matches!(parsed.scheme(), "http" | "https") {
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
         return Err(PaymobError::ValidationError {
             field,
-            reason: "URL scheme must be http or https".to_owned(),
+            reason: format!("{field} must use http or https with a valid host"),
+        });
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(PaymobError::ValidationError {
+            field,
+            reason: format!("{field} must not contain embedded credentials"),
         });
     }
     Ok(())
@@ -1226,5 +1267,18 @@ mod tests {
         let update_zero_plan =
             serde_json::from_str::<UpdateIntentionParams>(r#"{"pre_selected_plan":0}"#);
         assert!(update_zero_plan.is_err());
+    }
+
+    #[test]
+    fn res1_06_validate_http_url_rejects_control_chars_missing_host_and_userinfo() {
+        assert!(validate_http_url("https://example.com/hook\n", "notification_url").is_err());
+        assert!(
+            validate_http_url("https://user:pass@example.com/hook", "redirection_url").is_err()
+        );
+        assert!(validate_http_url("https://user@example.com/hook", "notification_url").is_err());
+        assert!(validate_http_url("http://:8080/no-host", "redirection_url").is_err());
+        assert!(
+            validate_http_url("https://merchant.example.com/callback", "notification_url").is_ok()
+        );
     }
 }

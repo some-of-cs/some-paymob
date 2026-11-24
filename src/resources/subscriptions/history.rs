@@ -16,12 +16,13 @@ use std::fmt;
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use url::Url;
 
-use super::{SubscriptionsService, execute_subscription_bearer_json, validate_positive_id};
+use super::{
+    SubscriptionsService, execute_subscription_bearer_json, validate_positive_id,
+    validate_webhook_url,
+};
 use crate::core::client::PaymobClient;
 use crate::core::error::PaymobError;
-use crate::core::region::is_strict_loopback_http_url;
 
 const SUBSCRIPTION_API_SOURCE: &str = "SUBSCRIPTION";
 
@@ -56,7 +57,7 @@ impl RegisterWebhookParams {
     /// malformed, contains control characters/whitespace, or uses a non-HTTPS scheme
     /// outside loopback hosts.
     pub fn new(url: impl Into<String>) -> Result<Self, PaymobError> {
-        let validated = validate_webhook_url(&url.into())?;
+        let validated = validate_webhook_url("url", &url.into())?;
         Ok(Self {
             webhook_url: validated,
         })
@@ -225,10 +226,11 @@ impl SubscriptionTransaction {
         self.api_source.as_deref() == Some(SUBSCRIPTION_API_SOURCE)
     }
 
-    /// Returns `true` when the transaction succeeded, is not pending, and has not been refunded.
+    /// Returns `true` when the transaction succeeded, is not pending, is not voided,
+    /// and has not been fully refunded.
     #[must_use]
     pub const fn is_refundable(&self) -> bool {
-        self.success && !self.pending && !self.is_refunded
+        self.success && !self.pending && !self.is_refunded && !self.is_voided
     }
 }
 
@@ -497,42 +499,6 @@ impl SubscriptionsService {
     ) -> Result<Vec<SubscriptionTransaction>, PaymobError> {
         self.history().list_transactions(sub_id).await
     }
-}
-
-fn is_control_or_whitespace(b: u8) -> bool {
-    b.is_ascii_control() || b.is_ascii_whitespace()
-}
-
-fn has_invalid_url_chars(s: &str) -> bool {
-    s.is_empty() || s.bytes().any(is_control_or_whitespace)
-}
-
-fn has_allowed_scheme_and_host(parsed: &Url) -> bool {
-    parsed.host_str().is_some()
-        && (parsed.scheme() == "https" || is_strict_loopback_http_url(parsed))
-}
-
-fn validate_webhook_url(raw: &str) -> Result<String, PaymobError> {
-    let trimmed = raw.trim();
-    if has_invalid_url_chars(trimmed) {
-        return Err(PaymobError::ValidationError {
-            field: "url",
-            reason: String::from(
-                "webhook URL must be non-empty without whitespace or control characters",
-            ),
-        });
-    }
-    let parsed = Url::parse(trimmed).map_err(|err| PaymobError::ValidationError {
-        field: "url",
-        reason: format!("invalid webhook URL: {err}"),
-    })?;
-    if !has_allowed_scheme_and_host(&parsed) {
-        return Err(PaymobError::ValidationError {
-            field: "url",
-            reason: String::from("webhook URL must use https scheme with a valid host"),
-        });
-    }
-    Ok(trimmed.to_owned())
 }
 
 #[cfg(test)]
@@ -808,13 +774,7 @@ mod tests {
             .list_transactions(1264)
             .await
             .expect_err("missing api_key must fail");
-        assert!(matches!(
-            err_key,
-            PaymobError::ValidationError {
-                field: "api_key",
-                ..
-            }
-        ));
+        assert!(matches!(err_key, PaymobError::AuthenticationError(_)));
     }
 
     #[tokio::test]

@@ -140,11 +140,31 @@ fn redact_quoted_literals(input: &str) -> String {
         return input.to_owned();
     }
     let mut out = String::with_capacity(input.len());
-    for (idx, part) in input.split('"').enumerate() {
-        let piece = if idx % 2 == 0 { part } else { "\"[REDACTED]\"" };
-        out.push_str(piece);
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for ch in input.chars() {
+        step_quote_redactor(ch, &mut in_quotes, &mut escaped, &mut out);
     }
     out
+}
+
+fn step_quote_redactor(ch: char, in_quotes: &mut bool, escaped: &mut bool, out: &mut String) {
+    if *in_quotes {
+        if *escaped {
+            *escaped = false;
+        } else if ch == '\\' {
+            *escaped = true;
+        } else if ch == '"' {
+            *in_quotes = false;
+        }
+        return;
+    }
+    if ch == '"' {
+        *in_quotes = true;
+        out.push_str("\"[REDACTED]\"");
+    } else {
+        out.push(ch);
+    }
 }
 
 /// Constant-time HMAC-SHA512 webhook verification engine for Paymob callbacks.
@@ -595,5 +615,15 @@ mod tests {
         let msg = webhook_err.to_string();
         assert!(msg.contains("[REDACTED]"));
         assert!(!msg.contains("4111-2222-3333-4444"));
+    }
+
+    #[test]
+    fn whk_09_redact_quoted_literals_handles_escaped_quotes() {
+        let raw = r#"invalid value: string "foo \"bar\" baz", expected integer"#;
+        let redacted = redact_quoted_literals(raw);
+        assert_eq!(
+            redacted,
+            r#"invalid value: string "[REDACTED]", expected integer"#
+        );
     }
 }

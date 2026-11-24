@@ -66,7 +66,7 @@ async fn us_5_1_0_oauth_token_generation_and_expired_token_auto_refresh() {
     client.auth().payouts_cache().store(CachedToken::new(
         "expired_access",
         Some(SecretString::from("valid_refresh")),
-        Duration::from_secs(1),
+        Duration::from_secs(0),
     ));
 
     let resp = client

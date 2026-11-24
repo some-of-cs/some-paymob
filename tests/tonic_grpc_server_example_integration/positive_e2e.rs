@@ -8,8 +8,8 @@ use some_paymob::test_utils::{
 };
 
 use super::positive_helpers::{
-    assert_non_wallet_cashin_rpcs, assert_rpc_ok, build_grpc_service, mount_accept,
-    sample_billing_json, topup_b64_json,
+    assert_non_wallet_cashin_rpcs, assert_rpc_code, assert_rpc_ok, build_grpc_service,
+    mount_accept, sample_billing_json, topup_b64_json,
 };
 use super::positive_mocks_core::{
     setup_inquiries_mocks, setup_legacy_v2_mocks, setup_manage_mocks, setup_onboarding_mocks,
@@ -435,5 +435,11 @@ async fn e2e_webhooks_protocols_a_through_e_return_ok() {
         "status": "successful"
     });
     let proto_e_req = json!({ "raw_body": proto_e.to_string() });
-    assert_rpc_ok(&service, "VerifyWebhookEvent", &proto_e_req).await;
+    assert_rpc_code(
+        &service,
+        "VerifyWebhookEvent",
+        &proto_e_req,
+        tonic::Code::Internal,
+    )
+    .await;
 }

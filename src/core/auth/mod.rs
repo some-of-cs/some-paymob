@@ -38,6 +38,8 @@ pub use strategy::{
 };
 
 const DEFAULT_AUTH_HTTP_TIMEOUT_SECS: u64 = 30;
+/// Maximum allowed response body size for authentication token endpoints (256 KiB).
+pub(crate) const MAX_AUTH_RESPONSE_BYTES: usize = 256 * 1024;
 
 /// Central authentication token cache manager holding isolated single-flight
 /// [`TokenCache`] instances for Regime 2 (Accept JWT) and Regime 3 (Payouts OAuth2).
@@ -108,9 +110,11 @@ impl AuthManager {
     }
 }
 
-/// Builds a default `reqwest::Client` with a bounded timeout and TLS 1.3 minimum for auth token acquisition.
+/// Builds a default `reqwest::Client` with a bounded timeout, no redirects, and TLS 1.3 minimum for auth token acquisition.
 pub(crate) fn build_default_auth_client() -> Result<Client, reqwest::Error> {
-    let builder = Client::builder().timeout(Duration::from_secs(DEFAULT_AUTH_HTTP_TIMEOUT_SECS));
+    let builder = Client::builder()
+        .timeout(Duration::from_secs(DEFAULT_AUTH_HTTP_TIMEOUT_SECS))
+        .redirect(reqwest::redirect::Policy::none());
 
     #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
     let builder = builder.min_tls_version(reqwest::tls::Version::TLS_1_3);
@@ -166,17 +170,46 @@ pub(crate) fn join_http_url(base_url: &str, path: &str) -> Result<Url, String> {
     parsed.join(path).map_err(|err| err.to_string())
 }
 
-/// Formats a `reqwest::Error` with any URL query string stripped to prevent secret leakage.
+/// Reads an authentication HTTP response body up to `max_bytes` using streaming chunks.
+pub(crate) async fn read_bounded_auth_body(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|len| len > max_bytes as u64)
+    {
+        return Err(format!(
+            "auth response body exceeds maximum allowed size of {max_bytes} bytes"
+        ));
+    }
+    let mut buf = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|err| format_sanitized_transport_error(&err))?
+    {
+        if buf.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(format!(
+                "auth response body exceeds maximum allowed size of {max_bytes} bytes"
+            ));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
+/// Formats a `reqwest::Error` with URL credentials, query string, and fragment stripped.
 pub(crate) fn format_sanitized_transport_error(err: &reqwest::Error) -> String {
     let raw = err.to_string();
     let Some(url) = err.url() else {
         return raw;
     };
-    if url.query().is_none() {
-        return raw;
-    }
     let mut scrubbed = url.clone();
+    let _ = scrubbed.set_username("");
+    let _ = scrubbed.set_password(None);
     scrubbed.set_query(None);
+    scrubbed.set_fragment(None);
     raw.replace(url.as_str(), scrubbed.as_str())
 }
 

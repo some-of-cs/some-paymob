@@ -196,10 +196,8 @@ impl PaymobError {
         if let Some(msg) = extract_top_message(&value) {
             return classify_message_error(status, msg, extract_code(&value), retry_after_secs);
         }
-        if !matches!(status, 401 | 403 | 429) && status < 500 {
-            if let Some((field, reason)) = extract_field_error(&value) {
-                return Self::ValidationError { field, reason };
-            }
+        if let Some(validation_err) = try_extract_validation_error(status, &value) {
+            return validation_err;
         }
         fallback_error(status, body, retry_after_secs)
     }
@@ -610,7 +608,7 @@ fn fallback_error(status: u16, body: &str, retry_after_secs: Option<u64>) -> Pay
     classify_message_error(status, message, None, retry_after_secs)
 }
 
-fn redact_sensitive(input: &str) -> String {
+pub(crate) fn redact_sensitive(input: &str) -> String {
     let kv_scrubbed = redact_kv_patterns(input);
     let pre_scrubbed = redact_spaced_digit_runs(&kv_scrubbed);
     let mut out = String::with_capacity(pre_scrubbed.len());
@@ -830,10 +828,24 @@ fn is_secret_token(core: &str) -> bool {
     is_secret_prefix(core) || is_email(core)
 }
 
+fn try_extract_validation_error(status: u16, value: &Value) -> Option<PaymobError> {
+    if matches!(status, 401 | 403 | 429) || status >= 500 {
+        return None;
+    }
+    let (field, reason) = extract_field_error(value)?;
+    Some(PaymobError::ValidationError { field, reason })
+}
+
 fn is_secret_prefix(core: &str) -> bool {
-    SECRET_PREFIXES
-        .iter()
-        .any(|prefix| core.starts_with(prefix))
+    SECRET_PREFIXES.iter().any(|prefix| {
+        if *prefix == "eyJ" {
+            core.starts_with(prefix)
+        } else {
+            core.len() >= prefix.len()
+                && core.is_char_boundary(prefix.len())
+                && core[..prefix.len()].eq_ignore_ascii_case(prefix)
+        }
+    })
 }
 
 fn is_email(core: &str) -> bool {
@@ -1110,5 +1122,14 @@ mod tests {
             (false, false, true)
         );
         assert_eq!(transport_err.status_code(), None);
+    }
+
+    #[test]
+    fn core_09_secret_prefix_redaction_is_case_insensitive_except_jwt() {
+        assert_no_leaks(
+            &redact_sensitive("leaked EGY_SK_TEST_UPPER123456"),
+            &["EGY_SK_TEST_UPPER123456"],
+        );
+        assert_eq!(redact_sensitive("eyj_not_a_jwt"), "eyj_not_a_jwt");
     }
 }

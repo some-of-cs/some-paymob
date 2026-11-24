@@ -40,40 +40,10 @@ async fn non_loopback_plaintext_http_is_rejected_across_all_resource_modules() {
         })
     ));
 
-    let client = try_custom_http_client("http://untrusted-gateway.local")
-        .expect("mDNS .local parses at region level");
-    client
-        .auth()
-        .accept_cache()
-        .store(CachedToken::with_default_ttl("seeded_jwt", None));
-    client
-        .auth()
-        .payouts_cache()
-        .store(CachedToken::with_default_ttl("seeded_oauth", None));
-
-    let inq_err = client.inquiries().by_transaction_id(192_036_465).await;
     assert!(matches!(
-        inq_err,
+        try_custom_http_client("http://untrusted-gateway.local"),
         Err(PaymobError::ValidationError {
-            field: "http_config",
-            ..
-        })
-    ));
-
-    let mng_err = client.manage().void(VoidParams::new(192_036_465)).await;
-    assert!(matches!(
-        mng_err,
-        Err(PaymobError::ValidationError {
-            field: "http_config",
-            ..
-        })
-    ));
-
-    let pay_err = client.payouts().inquiries().user_budget().await;
-    assert!(matches!(
-        pay_err,
-        Err(PaymobError::ValidationError {
-            field: "http_config",
+            field: "accept_base_url",
             ..
         })
     ));

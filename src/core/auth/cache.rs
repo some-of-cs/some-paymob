@@ -48,6 +48,9 @@ pub struct CachedToken {
     /// Monotonic expiration timestamp (excluded from zeroization).
     #[zeroize(skip)]
     pub expires_at: Instant,
+    /// Original TTL when created via [`CachedToken::new`], used to clamp proactive refresh margins.
+    #[zeroize(skip)]
+    ttl: Option<Duration>,
 }
 
 impl CachedToken {
@@ -67,6 +70,7 @@ impl CachedToken {
             access_token: access_token.into(),
             refresh_token,
             expires_at,
+            ttl: Some(ttl),
         }
     }
 
@@ -94,6 +98,7 @@ impl CachedToken {
             access_token: access_token.into(),
             refresh_token,
             expires_at,
+            ttl: None,
         }
     }
 
@@ -103,10 +108,17 @@ impl CachedToken {
         Instant::now() >= self.expires_at
     }
 
-    /// Returns `true` if remaining lifetime at `now` strictly exceeds `margin`.
+    /// Returns `true` if remaining lifetime at `now` strictly exceeds the effective refresh margin.
+    ///
+    /// When the token was created with a `ttl <= margin`, the effective margin is clamped to
+    /// `ttl / 2` to prevent continuous refresh storms on short-lived tokens.
     #[must_use]
     pub fn is_fresh_at(&self, now: Instant, margin: Duration) -> bool {
-        self.expires_at.saturating_duration_since(now) > margin
+        let effective_margin = match self.ttl {
+            Some(ttl) if ttl <= margin => ttl / 2,
+            _ => margin,
+        };
+        self.expires_at.saturating_duration_since(now) > effective_margin
     }
 
     /// Returns `true` if the token is expired or within `margin` of expiring.
@@ -482,5 +494,11 @@ mod tests {
             .await;
         assert!(evicted_match);
         assert!(cache.peek().is_none());
+    }
+
+    #[test]
+    fn core_11_short_ttl_clamps_refresh_margin_to_half_ttl() {
+        let short = CachedToken::new("short-tok", None, Duration::from_secs(20));
+        assert!(!short.needs_refresh(Duration::from_secs(60)));
     }
 }

@@ -94,14 +94,16 @@ impl ClientConfig {
 
     /// Loads and validates [`ClientConfig`] from `PAYMOB_*` environment variables.
     ///
-    /// Reads `PAYMOB_REGION` (required) plus optional `PAYMOB_ENVIRONMENT`,
+    /// Reads `PAYMOB_REGION` (optional when inferable from `PAYMOB_SECRET_KEY` or
+    /// `PAYMOB_PUBLIC_KEY` country prefix) plus optional `PAYMOB_ENVIRONMENT`,
     /// `PAYMOB_SECRET_KEY`, `PAYMOB_PUBLIC_KEY`, `PAYMOB_API_KEY`,
     /// `PAYMOB_HMAC_SECRET`, `PAYMOB_TIMEOUT_SECS`, `PAYMOB_MAX_RETRIES`,
     /// `PAYMOB_USE_PAYOUTS_STAGING`, and `PAYMOB_USE_LEGACY_V2_BEARER`.
     ///
     /// # Errors
     ///
-    /// Returns [`PaymobError::ValidationError`] if `PAYMOB_REGION` is missing or
+    /// Returns [`PaymobError::ValidationError`] if `PAYMOB_REGION` is missing and
+    /// cannot be auto-inferred from a configured key prefix, or
     /// any configured variable is empty or malformed, or
     /// [`PaymobError::EnvironmentMismatch`] if key prefixes conflict with
     /// `PAYMOB_ENVIRONMENT`.

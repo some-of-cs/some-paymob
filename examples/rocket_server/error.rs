@@ -94,12 +94,16 @@ impl From<PaymobError> for ApiServerError {
 impl From<WebhookError> for ApiServerError {
     fn from(err: WebhookError) -> Self {
         let message = err.to_string();
-        let (status, code) = match err {
-            WebhookError::SignatureMismatch => (Status::Unauthorized, "webhook_signature_mismatch"),
-            WebhookError::DuplicateWebhookDelivery { .. } => {
-                (Status::Conflict, "duplicate_webhook_delivery")
-            }
-            _ => (Status::BadRequest, "webhook_error"),
+        let status = Status::from_code(err.suggested_http_status_code())
+            .unwrap_or(Status::InternalServerError);
+        let code = if err.is_signature_error() {
+            "webhook_signature_error"
+        } else if err.is_replay_or_duplicate() {
+            "duplicate_webhook_delivery"
+        } else if err.is_configuration_error() {
+            "webhook_configuration_error"
+        } else {
+            "webhook_error"
         };
         Self::new(status, code, message, None)
     }

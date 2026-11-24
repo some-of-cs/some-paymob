@@ -41,12 +41,18 @@ pub(super) fn find_handler(method: &str) -> Option<RpcHandler> {
         .map(|(_, handler)| *handler)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct WebhookEventInput {
     #[serde(alias = "body")]
     raw_body: String,
     #[serde(default)]
     hmac: Option<String>,
+}
+
+impl std::fmt::Debug for WebhookEventInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookEventInput").finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,12 +87,19 @@ struct UnifiedSessionDto {
     confirmed: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct UnifiedSavedChargeInput {
     payment_token: String,
     saved_method_token: String,
     #[serde(default)]
     cvn: Option<String>,
+}
+
+impl std::fmt::Debug for UnifiedSavedChargeInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnifiedSavedChargeInput")
+            .finish_non_exhaustive()
+    }
 }
 
 async fn verify_and_claim_event(

@@ -39,26 +39,22 @@ pub fn build_rocket(state: AppState) -> Rocket<Build> {
 
 #[cfg(not(test))]
 #[rocket::main]
-async fn main() -> Result<(), Box<rocket::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use some_paymob::{ClientConfig, PaymobRegion};
     let config = ClientConfig::builder()
         .region(PaymobRegion::Egypt)
-        .try_secret_key("egy_sk_test_placeholder")
-        .expect("valid secret key")
-        .try_public_key("egy_pk_test_placeholder")
-        .expect("valid public key")
-        .try_hmac_secret("0123456789abcdef0123456789abcdef")
-        .expect("valid hmac secret")
-        .build()
-        .expect("valid default config");
-    let client = Arc::new(PaymobClient::new(config).expect("valid client"));
-    let webhook_engine = Arc::new(client.webhook_engine().expect("valid webhook engine"));
+        .try_secret_key("egy_sk_test_placeholder")?
+        .try_public_key("egy_pk_test_placeholder")?
+        .try_hmac_secret("0123456789abcdef0123456789abcdef")?
+        .build()?;
+    let client = Arc::new(PaymobClient::new(config)?);
+    let webhook_engine = Arc::new(client.webhook_engine()?);
     let deduplicator = Arc::new(InMemoryWebhookDeduplicator::new());
     let state = AppState {
         client,
         webhook_engine,
         deduplicator,
     };
-    let _rocket = build_rocket(state).launch().await.map_err(Box::new)?;
+    let _rocket = build_rocket(state).launch().await?;
     Ok(())
 }

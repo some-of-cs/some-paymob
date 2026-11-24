@@ -167,7 +167,7 @@ fn payouts_router() -> Router<Arc<AppState>> {
 // ---------------------------------------------------------------------------
 
 /// Request payload for `POST /saved-cards/pay/mit`.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct MitPayRequest {
     /// Short-lived payment key token from the Intention/Payment Key step.
     pub payment_token: String,
@@ -179,6 +179,12 @@ pub struct MitPayRequest {
     /// Optional 3- or 4-digit CVN (required when `use_cvc_with_moto` is `true`).
     #[serde(default)]
     pub cvn: Option<String>,
+}
+
+impl std::fmt::Debug for MitPayRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MitPayRequest").finish_non_exhaustive()
+    }
 }
 
 /// Request payload for `POST /saved-cards/pay/wallet`.
@@ -953,14 +959,21 @@ async fn refund_last_subscription_transaction(
 // ---------------------------------------------------------------------------
 
 /// Request payload for `POST /payouts/auth/refresh`.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct RefreshPayoutsTokenRequest {
     /// OAuth 2.0 refresh token obtained from `POST /payouts/auth/token`.
     pub refresh_token: String,
 }
 
+impl std::fmt::Debug for RefreshPayoutsTokenRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RefreshPayoutsTokenRequest")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Serializable response DTO for Payouts OAuth 2.0 tokens with redacted secret markers.
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct PayoutsTokenResponseDto {
     /// Redacted OAuth 2.0 bearer access token marker (`"[REDACTED]"`).
     pub access_token: &'static str,
@@ -976,6 +989,13 @@ pub struct PayoutsTokenResponseDto {
     pub scope: String,
     /// Token type (typically `"Bearer"`).
     pub token_type: String,
+}
+
+impl std::fmt::Debug for PayoutsTokenResponseDto {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PayoutsTokenResponseDto")
+            .finish_non_exhaustive()
+    }
 }
 
 impl From<PayoutsTokenResponse> for PayoutsTokenResponseDto {

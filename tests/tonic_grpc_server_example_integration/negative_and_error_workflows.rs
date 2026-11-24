@@ -246,7 +246,8 @@ async fn security_tampered_hmac_and_malformed_hex_rejected() {
     assert_eq!(s1.code(), Code::Unauthenticated);
     let s2 = grpc_err(svc.clone(), "UnifiedVerifyWebhook", &bad_wh).await;
     assert_eq!(s2.code(), Code::Unauthenticated);
-    assert_invalid(&svc, "VerifyWebhookEvent", &bad_hex).await;
+    let s3 = grpc_err(svc, "VerifyWebhookEvent", &bad_hex).await;
+    assert_eq!(s3.code(), Code::Unauthenticated);
 }
 
 #[tokio::test]
@@ -322,7 +323,7 @@ async fn recovery_regime3_oauth2_refresh_token_and_password_fallback() {
     cache.store(CachedToken::new(
         "stale-acc",
         Some(SecretString::from("stale-ref")),
-        Duration::from_secs(5),
+        Duration::from_secs(0),
     ));
     let provider = PayoutsOAuthProvider::with_client_and_cache(
         &server.uri(),

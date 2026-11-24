@@ -8,10 +8,17 @@ use some_paymob::prelude::*;
 
 use super::{ApiServerError, AppState, parse_currency};
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct PartnerLoginPayload {
     pub username: String,
     pub password: String,
+}
+
+impl std::fmt::Debug for PartnerLoginPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PartnerLoginPayload")
+            .finish_non_exhaustive()
+    }
 }
 
 /// `POST /onboarding/auth/login` — Authenticates a partner and returns a redacted bearer token summary.

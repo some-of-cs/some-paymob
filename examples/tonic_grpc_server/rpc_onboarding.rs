@@ -84,10 +84,16 @@ pub(super) fn find_handler(method: &str) -> Option<RpcHandler> {
         .map(|(_, handler)| *handler)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct PartnerLoginInput {
     username: String,
     password: String,
+}
+
+impl std::fmt::Debug for PartnerLoginInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PartnerLoginInput").finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Serialize)]

@@ -35,7 +35,7 @@ async fn test_negative_moto_cvc_mismatch_and_tampered_webhooks() {
         .to_request();
     assert_eq!(
         test::call_service(&app, bad_hex).await.status(),
-        StatusCode::BAD_REQUEST
+        StatusCode::UNAUTHORIZED
     );
 
     let zeros_hmac = "0".repeat(128);

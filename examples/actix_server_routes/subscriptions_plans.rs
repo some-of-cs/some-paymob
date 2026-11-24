@@ -8,25 +8,36 @@ use some_paymob::prelude::*;
 
 use super::{ApiServerError, AppState};
 
+const FREQUENCY_ALIASES: &[(&str, PlanFrequency)] = &[
+    ("weekly", PlanFrequency::Days7),
+    ("biweekly", PlanFrequency::Days15),
+    ("bi_weekly", PlanFrequency::Days15),
+    ("monthly", PlanFrequency::Days30),
+    ("bimonthly", PlanFrequency::Days60),
+    ("bi_monthly", PlanFrequency::Days60),
+    ("quarterly", PlanFrequency::Days90),
+    ("semiannual", PlanFrequency::Days180),
+    ("semi_annual", PlanFrequency::Days180),
+    ("yearly", PlanFrequency::Days360),
+    ("annual", PlanFrequency::Days360),
+];
+
 fn parse_frequency(raw: &str) -> Result<PlanFrequency, ApiServerError> {
     let trimmed = raw.trim();
     if let Ok(days) = trimmed.parse::<u16>() {
         return Ok(PlanFrequency::from_days(days)?);
     }
-    match trimmed.to_ascii_lowercase().as_str() {
-        "weekly" => Ok(PlanFrequency::Days7),
-        "biweekly" | "bi_weekly" => Ok(PlanFrequency::Days15),
-        "monthly" => Ok(PlanFrequency::Days30),
-        "bimonthly" | "bi_monthly" => Ok(PlanFrequency::Days60),
-        "quarterly" => Ok(PlanFrequency::Days90),
-        "semiannual" | "semi_annual" => Ok(PlanFrequency::Days180),
-        "yearly" | "annual" => Ok(PlanFrequency::Days360),
-        _ => Err(PaymobError::ValidationError {
-            field: "frequency",
-            reason: "unsupported plan frequency".to_owned(),
-        }
-        .into()),
-    }
+    FREQUENCY_ALIASES
+        .iter()
+        .find(|(alias, _)| alias.eq_ignore_ascii_case(trimmed))
+        .map(|(_, freq)| *freq)
+        .ok_or_else(|| {
+            PaymobError::ValidationError {
+                field: "frequency",
+                reason: "unsupported plan frequency".to_owned(),
+            }
+            .into()
+        })
 }
 
 fn plan_json(plan: &SubscriptionPlan) -> serde_json::Value {

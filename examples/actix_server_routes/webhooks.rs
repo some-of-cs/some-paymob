@@ -1,27 +1,26 @@
 #![forbid(unsafe_code)]
 //! Service 11a: Constant-Time HMAC-SHA512 Webhooks (Protocols A–E + Replay Deduplication).
 
-use std::collections::BTreeMap;
+use std::fmt;
 
-use actix_web::{HttpResponse, web};
+use actix_web::{HttpRequest, HttpResponse, web};
 use serde::Deserialize;
 use serde_json::json;
 use some_paymob::prelude::*;
 
 use super::{ApiServerError, AppState};
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct HmacQuery {
     pub hmac: Option<String>,
 }
 
-pub(crate) fn build_webhook_engine(
-    state: &AppState,
-) -> Result<PaymobWebhookEngine, ApiServerError> {
-    let secret = state.client.config().hmac_secret().ok_or_else(|| {
-        PaymobError::AuthenticationError("HMAC secret is not configured".to_owned())
-    })?;
-    Ok(PaymobWebhookEngine::new(secret.expose_secret())?)
+impl fmt::Debug for HmacQuery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HmacQuery")
+            .field("hmac", &self.hmac.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 /// `POST /webhooks/paymob` — Verifies Protocols A, C, D, or E and guards against replays.
@@ -30,7 +29,7 @@ pub async fn handle_webhook_post(
     query: web::Query<HmacQuery>,
     body: web::Bytes,
 ) -> Result<HttpResponse, ApiServerError> {
-    let engine = build_webhook_engine(&state)?;
+    let engine = state.client.webhooks()?;
     let event = engine.construct_event_from_slice(&body, query.hmac.as_deref())?;
     state.webhook_dedup.claim_or_reject(&event)?;
     let (idempotency_key, correlation_id) = event.idempotency_tuple();
@@ -42,13 +41,13 @@ pub async fn handle_webhook_post(
     })))
 }
 
-/// `GET /webhooks/paymob/redirect` — Verifies Protocol B redirect query parameters and guards against replay.
+/// `GET /webhooks/paymob/redirect` — Verifies Protocol B redirect query string (rejecting duplicate keys) and guards against replay.
 pub async fn handle_webhook_redirect(
     state: web::Data<AppState>,
-    query: web::Query<BTreeMap<String, String>>,
+    req: HttpRequest,
 ) -> Result<HttpResponse, ApiServerError> {
-    let engine = build_webhook_engine(&state)?;
-    let params = engine.verify_transaction_get(&query.into_inner())?;
+    let engine = state.client.webhooks()?;
+    let params = engine.verify_transaction_get_query_str(req.query_string())?;
     state.webhook_dedup.claim_or_reject(&params)?;
     Ok(HttpResponse::Ok().json(json!({
         "verified": true,

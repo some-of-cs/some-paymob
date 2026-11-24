@@ -159,7 +159,7 @@ fn verify_optional_payouts_hmac(
     signature_hex: Option<&str>,
 ) -> super::verifier::WebhookResult<()> {
     match (payouts_secret, signature_hex) {
-        (None, None) => Ok(()),
+        (None, None) => Err(super::verifier::WebhookError::InvalidSecretKeyLength),
         (None, Some(_)) => Err(super::verifier::WebhookError::SignatureMismatch),
         (Some(_), None) => Err(super::verifier::WebhookError::MissingQueryHmac),
         (Some(secret), Some(sig_hex)) => {
@@ -357,7 +357,10 @@ mod tests {
 
     #[test]
     fn optional_payouts_hmac_handles_unconfigured_and_missing_states() {
-        assert_eq!(verify_optional_payouts_hmac(None, "{}", None), Ok(()));
+        assert_eq!(
+            verify_optional_payouts_hmac(None, "{}", None),
+            Err(WebhookError::InvalidSecretKeyLength)
+        );
         assert_eq!(
             verify_optional_payouts_hmac(None, "{}", Some("")),
             Err(WebhookError::SignatureMismatch)
@@ -405,7 +408,11 @@ mod tests {
 
     #[test]
     fn verify_payout_methods_reject_empty_ids_and_unknown_enums() {
-        let engine = PaymobWebhookEngine::new("accept_secret").expect("engine");
+        let secret = "payouts_secret";
+        let engine = PaymobWebhookEngine::new("accept_secret")
+            .expect("engine")
+            .with_payouts_secret(secret)
+            .expect("payouts secret");
         let empty_tx = "{\"transaction_id\":\"  \",\"issuer\":\"bank_wallet\",\
             \"amount_cents\":100,\"currency\":\"EGP\",\"status\":\"ok\"}";
         let empty_topup = "{\"topup_id\":\"\",\"amount_cents\":100,\
@@ -416,20 +423,43 @@ mod tests {
             \"currency\":\"EGP\",\"status\":\"Pending\"}";
 
         assert_eq!(
-            engine.verify_payout_disbursement(empty_tx, None),
+            engine.verify_payout_disbursement(
+                empty_tx,
+                Some(&compute_test_hmac_hex(secret, empty_tx))
+            ),
             Err(WebhookError::MissingRequiredField("transaction_id".into()))
         );
         assert_eq!(
-            engine.verify_payout_topup(empty_topup, None),
+            engine.verify_payout_topup(
+                empty_topup,
+                Some(&compute_test_hmac_hex(secret, empty_topup))
+            ),
             Err(WebhookError::MissingRequiredField("topup_id".into()))
         );
         assert!(matches!(
-            engine.verify_payout_disbursement_bytes(bad_issuer.as_bytes(), None),
+            engine.verify_payout_disbursement_bytes(
+                bad_issuer.as_bytes(),
+                Some(&compute_test_hmac_hex(secret, bad_issuer))
+            ),
             Err(WebhookError::InvalidJsonPayload(_))
         ));
         assert!(matches!(
-            engine.verify_payout_topup_bytes(bad_status.as_bytes(), None),
+            engine.verify_payout_topup_bytes(
+                bad_status.as_bytes(),
+                Some(&compute_test_hmac_hex(secret, bad_status))
+            ),
             Err(WebhookError::InvalidJsonPayload(_))
         ));
+    }
+
+    #[test]
+    fn whk_01_construct_event_rejects_unsigned_protocol_e_without_payouts_secret() {
+        let engine = PaymobWebhookEngine::new("accept_secret").expect("engine");
+        let disb_json = "{\"transaction_id\":\"tx_1\",\"issuer\":\"bank_wallet\",\
+            \"amount_cents\":100,\"currency\":\"EGP\",\"status\":\"ok\"}";
+        assert_eq!(
+            engine.construct_event(disb_json, None),
+            Err(WebhookError::InvalidSecretKeyLength)
+        );
     }
 }

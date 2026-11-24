@@ -4,7 +4,7 @@
 //! (Protocols A–E + replay deduplication), and the `some-payments-adapter`
 //! unified cross-gateway traits.
 
-use std::collections::BTreeMap;
+use axum::extract::RawQuery;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
@@ -21,8 +21,7 @@ use some_paymob::prelude::{
     RegisterMerchantParams, SplitRecipientRule, SubmitOnboardingStepParams, SubscriptionProvider,
     UnifiedCaptureRequest, UnifiedPaymentSessionRequest, UnifiedPayoutRequest,
     UnifiedRefundRequest, UnifiedSavedMethodChargeRequest, UnifiedSubscriptionRefundRequest,
-    UnifiedVoidRequest, UnifiedWebhookInput, UpdateIntentionParams, VoidParams, WebhookEvent,
-    WebhookVerifier, normalize_webhook_event,
+    UnifiedVoidRequest, UpdateIntentionParams, VoidParams, WebhookEvent, normalize_webhook_event,
 };
 
 use super::state::{ApiServerError, AppState};
@@ -125,12 +124,19 @@ fn parse_currency(raw: &str) -> Result<Currency, ApiServerError> {
 // ---------------------------------------------------------------------------
 
 /// Request body for `POST /onboarding/auth/login`.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct OnboardingLoginPayload {
     /// Partner account username.
     pub username: String,
     /// Partner account password.
     pub password: String,
+}
+
+impl std::fmt::Debug for OnboardingLoginPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OnboardingLoginPayload")
+            .finish_non_exhaustive()
+    }
 }
 
 /// `POST /onboarding/auth/login` — Authenticates a partner and obtains a Regime 4 bearer token.
@@ -510,6 +516,19 @@ pub struct ScopedUpdateIntentionPayload {
     pub redirection_url: Option<String>,
 }
 
+fn apply_scoped_urls(
+    mut builder: some_paymob::resources::intentions::UpdateIntentionParamsBuilder,
+    body: &ScopedUpdateIntentionPayload,
+) -> some_paymob::resources::intentions::UpdateIntentionParamsBuilder {
+    if let Some(url) = &body.notification_url {
+        builder = builder.notification_url(url);
+    }
+    if let Some(url) = &body.redirection_url {
+        builder = builder.redirection_url(url);
+    }
+    builder
+}
+
 fn build_scoped_update_params(
     body: &ScopedUpdateIntentionPayload,
 ) -> Result<UpdateIntentionParams, ApiServerError> {
@@ -520,13 +539,7 @@ fn build_scoped_update_params(
     if let Some(cur) = &body.currency {
         builder = builder.currency(parse_currency(cur)?);
     }
-    if let Some(url) = &body.notification_url {
-        builder = builder.notification_url(url);
-    }
-    if let Some(url) = &body.redirection_url {
-        builder = builder.redirection_url(url);
-    }
-    Ok(builder.build()?)
+    Ok(apply_scoped_urls(builder, body).build()?)
 }
 
 /// `PUT /merchants/{mid}/intentions` — Updates an intention scoped to a sub-merchant.
@@ -717,10 +730,16 @@ async fn merchant_capture(
 // ---------------------------------------------------------------------------
 
 /// Query string parameters carrying the optional `hmac` digest.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct HmacQuery {
     /// Hex-encoded HMAC-SHA512 signature.
     pub hmac: Option<String>,
+}
+
+impl std::fmt::Debug for HmacQuery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HmacQuery").finish_non_exhaustive()
+    }
 }
 
 /// `POST /webhooks/paymob` — Verifies Protocols A, C, D, or E webhooks in constant time
@@ -736,14 +755,14 @@ async fn webhook_post(
     Ok(ok_serialized(normalize_webhook_event(&event)))
 }
 
-/// `GET /webhooks/paymob/redirect` — Verifies Protocol B transaction redirect query
-/// parameters in constant time and enforces atomic replay deduplication.
+/// `GET /webhooks/paymob/redirect` — Verifies Protocol B transaction redirect raw query
+/// string in constant time (rejecting duplicate keys) and enforces atomic replay deduplication.
 async fn webhook_redirect(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<BTreeMap<String, String>>,
+    RawQuery(raw_query): RawQuery,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
     let engine = state.paymob.webhooks()?;
-    let verified = engine.verify_transaction_get(&params)?;
+    let verified = engine.verify_transaction_get_query_str(raw_query.as_deref().unwrap_or(""))?;
     let approved = verified.is_approved();
     let event = WebhookEvent::TransactionResponseRedirect(verified);
     state.deduplicator.claim_or_reject(&event)?;
@@ -945,7 +964,7 @@ async fn unified_void(
 }
 
 /// Request body for `POST /unified/charge-saved`.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct UnifiedChargeSavedPayload {
     /// Short-lived payment key token.
     pub payment_token: String,
@@ -953,6 +972,13 @@ pub struct UnifiedChargeSavedPayload {
     pub saved_method_token: String,
     /// Optional card security code.
     pub cvn: Option<String>,
+}
+
+impl std::fmt::Debug for UnifiedChargeSavedPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnifiedChargeSavedPayload")
+            .finish_non_exhaustive()
+    }
 }
 
 /// `POST /unified/charge-saved` — Charges a saved payment method via [`PaymentProvider`].
@@ -1031,15 +1057,14 @@ async fn unified_payout(
     ))
 }
 
-/// `POST /unified/webhooks` — Verifies and normalizes a webhook via [`WebhookVerifier`].
+/// `POST /unified/webhooks` — Verifies, deduplicates, and normalizes a webhook.
 async fn unified_webhook(
     State(state): State<Arc<AppState>>,
     Query(query): Query<HmacQuery>,
     raw_body: String,
 ) -> Result<(StatusCode, Json<Value>), ApiServerError> {
-    let input = UnifiedWebhookInput::new(&raw_body, query.hmac.as_deref());
-    Ok(ok_serialized(WebhookVerifier::verify_webhook(
-        client_ref(&state),
-        &input,
-    )?))
+    let engine = state.paymob.webhooks()?;
+    let event = engine.construct_event(&raw_body, query.hmac.as_deref())?;
+    state.deduplicator.claim_or_reject(&event)?;
+    Ok(ok_serialized(normalize_webhook_event(&event)))
 }

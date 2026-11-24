@@ -432,9 +432,20 @@ mod tests {
         );
     }
 
+    fn sign_test_hmac(secret: &str, payload: &str) -> String {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha512;
+        let mut mac = Hmac::<Sha512>::new_from_slice(secret.as_bytes()).expect("hmac");
+        mac.update(payload.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
     #[test]
     fn construct_event_dispatches_card_token_and_payouts_end_to_end() {
-        let engine = PaymobWebhookEngine::new(SAMPLE_SECRET).expect("engine");
+        let engine = PaymobWebhookEngine::new(SAMPLE_SECRET)
+            .expect("engine")
+            .with_payouts_secret(SAMPLE_SECRET)
+            .expect("payouts secret");
         let tok_evt = engine
             .construct_event(TOKEN_VEC_JSON, Some(TOKEN_VEC_HMAC))
             .expect("card token dispatch");
@@ -444,8 +455,9 @@ mod tests {
 
         let topup_json =
             r#"{"topup_id":"top_1","amount_cents":5000,"currency":"EGP","status":"Approved"}"#;
+        let topup_sig = sign_test_hmac(SAMPLE_SECRET, topup_json);
         let topup_evt = engine
-            .construct_event_from_slice(topup_json.as_bytes(), None)
+            .construct_event_from_slice(topup_json.as_bytes(), Some(&topup_sig))
             .expect("topup dispatch");
         assert!(topup_evt.is_payout() && topup_evt.is_payout_topup());
         assert_eq!(topup_evt.event_type(), "payout_topup");
@@ -475,11 +487,15 @@ mod tests {
 
     #[test]
     fn webhook_event_accessors_cover_disbursement_and_subscription() {
-        let engine = PaymobWebhookEngine::new(SAMPLE_SECRET).expect("engine");
+        let engine = PaymobWebhookEngine::new(SAMPLE_SECRET)
+            .expect("engine")
+            .with_payouts_secret(SAMPLE_SECRET)
+            .expect("payouts secret");
         let disb_json = "{\"transaction_id\":\"tx_7\",\"issuer\":\"bank_card\",\
             \"amount_cents\":900,\"currency\":\"EGP\",\"status\":\"ok\"}";
+        let disb_sig = sign_test_hmac(SAMPLE_SECRET, disb_json);
         let disb_evt = engine
-            .construct_event(disb_json, None)
+            .construct_event(disb_json, Some(&disb_sig))
             .expect("disb dispatch");
         assert!(disb_evt.is_payout_disbursement());
         assert_eq!(disb_evt.event_type(), "payout_disbursement");

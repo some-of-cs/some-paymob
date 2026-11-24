@@ -55,16 +55,18 @@ impl<T> Default for PaginatedResponse<T> {
 }
 
 impl<T> PaginatedResponse<T> {
-    /// Returns `true` if a subsequent page URL is present.
+    /// Returns `true` if a non-blank subsequent page URL is present.
     #[must_use]
     pub fn has_next(&self) -> bool {
-        self.next.is_some()
+        self.next.as_deref().is_some_and(|s| !s.trim().is_empty())
     }
 
-    /// Returns `true` if a preceding page URL is present.
+    /// Returns `true` if a non-blank preceding page URL is present.
     #[must_use]
     pub fn has_previous(&self) -> bool {
-        self.previous.is_some()
+        self.previous
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
     }
 
     /// Returns `true` if the current page contains zero items.

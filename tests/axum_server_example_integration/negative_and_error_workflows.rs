@@ -323,7 +323,7 @@ async fn router_webhooks_tampered_hmac_malformed_hex_and_replay_409() {
     );
     assert_eq!(
         post_status(&router, "/webhooks/paymob?hmac=zzzz", tx_val.clone()).await,
-        StatusCode::BAD_REQUEST
+        StatusCode::UNAUTHORIZED
     );
     let ok_uri = format!("/webhooks/paymob?hmac={SAMPLE_TX_192036465_HMAC}");
     assert_eq!(
@@ -458,7 +458,7 @@ async fn regime3_oauth2_refresh_token_and_password_fallback() {
     provider.cache().store(CachedToken::new(
         "stale",
         Some(SecretString::from("expired-ref")),
-        Duration::from_secs(5),
+        Duration::from_secs(0),
     ));
     let token = provider
         .access_token()

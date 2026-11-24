@@ -69,13 +69,20 @@ macro_rules! inquiry_rpc {
 // Service 12: Paymob Send (Payouts)
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct PayoutsTokenResponseDto {
     access_token: String,
     refresh_token: String,
     expires_in: u64,
     scope: String,
     token_type: String,
+}
+
+impl std::fmt::Debug for PayoutsTokenResponseDto {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PayoutsTokenResponseDto")
+            .finish_non_exhaustive()
+    }
 }
 
 impl From<PayoutsTokenResponse> for PayoutsTokenResponseDto {
@@ -90,9 +97,16 @@ impl From<PayoutsTokenResponse> for PayoutsTokenResponseDto {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct RefreshTokenRequest {
     refresh_token: String,
+}
+
+impl std::fmt::Debug for RefreshTokenRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RefreshTokenRequest")
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Deserialize)]

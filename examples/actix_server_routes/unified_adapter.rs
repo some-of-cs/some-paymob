@@ -7,8 +7,8 @@ use serde::Deserialize;
 use serde_json::json;
 use some_paymob::prelude::*;
 
-use super::webhooks::build_webhook_engine;
 use super::{ApiServerError, AppState, parse_currency};
+use some_paymob::adapter::normalize_webhook_event;
 
 #[derive(Debug, Deserialize)]
 pub struct UnifiedSessionPayload {
@@ -111,11 +111,18 @@ pub async fn void(
     })))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct UnifiedChargeSavedPayload {
     pub payment_token: String,
     pub saved_method_token: String,
     pub cvn: Option<String>,
+}
+
+impl std::fmt::Debug for UnifiedChargeSavedPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnifiedChargeSavedPayload")
+            .finish_non_exhaustive()
+    }
 }
 
 /// `POST /unified/charge-saved` — Charges a saved card via unified trait.
@@ -194,12 +201,20 @@ pub async fn payout(
     })))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct UnifiedWebhookQuery {
     pub hmac: Option<String>,
 }
 
-/// `POST /unified/webhooks` — Verifies, deduplicates, and normalizes a webhook via unified trait.
+impl std::fmt::Debug for UnifiedWebhookQuery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnifiedWebhookQuery")
+            .field("hmac", &self.hmac.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
+}
+
+/// `POST /unified/webhooks` — Verifies once, deduplicates, and normalizes a webhook.
 pub async fn webhook(
     state: web::Data<AppState>,
     query: web::Query<UnifiedWebhookQuery>,
@@ -208,11 +223,10 @@ pub async fn webhook(
     let raw_body = std::str::from_utf8(&body).map_err(|_| {
         WebhookError::InvalidJsonPayload("request body is not valid UTF-8".to_owned())
     })?;
-    let engine = build_webhook_engine(&state)?;
+    let engine = state.client.webhooks()?;
     let event = engine.construct_event(raw_body, query.hmac.as_deref())?;
     state.webhook_dedup.claim_or_reject(&event)?;
-    let input = UnifiedWebhookInput::new(raw_body, query.hmac.as_deref());
-    let outcome = state.client.verify_webhook(&input)?;
+    let outcome = normalize_webhook_event(&event);
     Ok(HttpResponse::Ok().json(json!({
         "event_type": outcome.event_type,
         "idempotency_key": outcome.idempotency_key,

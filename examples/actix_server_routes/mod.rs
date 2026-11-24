@@ -88,28 +88,36 @@ impl From<SandboxConstraintError> for ApiServerError {
     }
 }
 
-fn map_paymob_status(err: &PaymobError) -> StatusCode {
+fn map_client_paymob_status(err: &PaymobError) -> Option<StatusCode> {
     match err {
         PaymobError::ValidationError { .. } | PaymobError::WebhookError(_) => {
-            StatusCode::BAD_REQUEST
+            Some(StatusCode::BAD_REQUEST)
         }
-        PaymobError::AuthenticationError(_) => StatusCode::UNAUTHORIZED,
+        PaymobError::AuthenticationError(_) => Some(StatusCode::UNAUTHORIZED),
         PaymobError::EnvironmentMismatch(_)
-        | PaymobError::RefundExceedsPermissibleAmount { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        | PaymobError::RefundExceedsPermissibleAmount { .. } => {
+            Some(StatusCode::UNPROCESSABLE_ENTITY)
+        }
+        _ => None,
+    }
+}
+
+fn map_paymob_status(err: &PaymobError) -> StatusCode {
+    if let Some(status) = map_client_paymob_status(err) {
+        return status;
+    }
+    match err {
         PaymobError::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
         PaymobError::ApiError { status, .. } => {
             StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
         }
-        PaymobError::TransportError(_) => StatusCode::BAD_GATEWAY,
+        _ => StatusCode::BAD_GATEWAY,
     }
 }
 
 fn map_webhook_status(err: &WebhookError) -> StatusCode {
-    match err {
-        WebhookError::SignatureMismatch => StatusCode::UNAUTHORIZED,
-        WebhookError::DuplicateWebhookDelivery { .. } => StatusCode::CONFLICT,
-        _ => StatusCode::BAD_REQUEST,
-    }
+    StatusCode::from_u16(err.suggested_http_status_code())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 impl ResponseError for ApiServerError {
@@ -139,19 +147,15 @@ impl ResponseError for ApiServerError {
 }
 
 pub(crate) fn parse_currency(raw: &str) -> Result<Currency, ApiServerError> {
-    match raw.trim().to_ascii_uppercase().as_str() {
-        "EGP" => Ok(Currency::EGP),
-        "SAR" => Ok(Currency::SAR),
-        "AED" => Ok(Currency::AED),
-        "OMR" => Ok(Currency::OMR),
-        "PKR" => Ok(Currency::PKR),
-        "USD" => Ok(Currency::USD),
-        _ => Err(PaymobError::ValidationError {
+    let currency = Currency::from_code(raw);
+    if !currency.is_known() {
+        return Err(PaymobError::ValidationError {
             field: "currency",
             reason: "unsupported currency code".to_owned(),
         }
-        .into()),
+        .into());
     }
+    Ok(currency)
 }
 
 /// Configures Unit 1 routes (Services 1–6).

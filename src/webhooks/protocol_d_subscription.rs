@@ -460,6 +460,13 @@ impl super::verifier::PaymobWebhookEngine {
     /// constructs `"{trigger_type}for{subscription_data.id}"`, and verifies the
     /// `HMAC-SHA512` signature via [`Self::verify_concatenated_str`].
     ///
+    /// # Security Note
+    ///
+    /// Paymob's Protocol D HMAC authenticates **only** `(trigger_type, subscription_data.id)`.
+    /// Other JSON body fields (including `paymob_request_id` and `subscription_data.state`) are
+    /// not covered by the HMAC; callers **must** re-query the Paymob Subscription API for
+    /// authoritative subscription state before mutating billing records.
+    ///
     /// # Errors
     ///
     /// - [`super::verifier::WebhookError::InvalidJsonPayload`] if `raw_body` is not valid JSON
